@@ -1,6 +1,6 @@
 # mmapstruct
 
-Memory-mapped binary serialisation for Rust. Define your file format as a Rust struct, derive `MmapStruct`, and get zero-copy readers + efficient writers.
+Memory-mapped binary serialization for Rust. Define your file format as a Rust struct, derive `MmapStruct`, and get zero-copy readers + efficient writers.
 
 ```rust
 use mmapstruct::MmapStruct;
@@ -23,7 +23,7 @@ assert_eq!(reader.name, "hello");
 assert_eq!(reader.values, &[1u32, 2, 3]);
 ```
 
-No serde, no deserialisation — the reader is a projection over `&[u8]` via `bytemuck`.
+No serde, no deserialization — the reader is a projection over `&[u8]` via `bytemuck`.
 
 ## Crates
 
