@@ -1,0 +1,21 @@
+[package]
+name = "mmapstruct"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+memmap2 = "0.9"
+mmapstruct-derive = { path = "../mmapstruct-derive" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
+safe-strings = []
+strict-validation = ["safe-strings"]
+dyn = ["mmapstruct-derive/dyn"]
+
+[lib]
+proc-macro = false

@@ -1,0 +1,30 @@
+use crate::traits::{MmapRead, MmapWrite};
+use std::ops::Range;
+
+/// Layout for `Option<T>`: `[present: u8, data_if_present...]`
+
+impl<T: MmapRead> MmapRead for Option<T> {
+    type Reader<'a> = Option<T::Reader<'a>> where T: 'a;
+
+    fn read<'a>(data: &'a [u8], range: Range<usize>) -> Self::Reader<'a> {
+        if range.len() < 1 || data[range.start] == 0 {
+            None
+        } else {
+            Some(T::read(data, (range.start + 1)..range.end))
+        }
+    }
+}
+
+impl<T: MmapWrite> MmapWrite for Option<T> {
+    fn write<'data>(&'data self, ctx: &mut crate::WriteContext<'data>) {
+        match self {
+            Some(value) => {
+                ctx.write_u8(1u8);
+                value.write(ctx);
+            }
+            None => {
+                ctx.write_u8(0u8);
+            }
+        }
+    }
+}

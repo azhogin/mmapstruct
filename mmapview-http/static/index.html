@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>mmapview</title>
+    <link rel="stylesheet" href="/static/viewer.css">
+</head>
+<body>
+    <div id="app">
+        <div class="query-bar">
+            <input type="text" id="query-input"
+                   placeholder="/sections[?id>10]"
+                   autofocus>
+            <button id="query-btn">Query</button>
+            <button id="schema-btn" title="Show schema">📋</button>
+            <button id="help-btn" title="DSL help">?</button>
+        </div>
+
+        <div class="json-tree" id="json-container">
+            <span class="jv-count">Enter a query or click 📋 to see schema</span>
+        </div>
+
+        <div class="status-bar" id="status-bar"></div>
+        <div class="pagination" id="pagination"></div>
+    </div>
+
+    <script src="/static/viewer.js"></script>
+    <script>
+        const viewer = new JsonTreeViewer(
+            document.getElementById('json-container'),
+            { collapseDepth: 2 }
+        );
+
+        const queryInput = document.getElementById('query-input');
+        const queryBtn = document.getElementById('query-btn');
+        const statusBar = document.getElementById('status-bar');
+        const pagination = document.getElementById('pagination');
+
+        let currentPage = 0;
+        const pageSize = 50;
+
+        async function runQuery(page = 0) {
+            const q = queryInput.value || '/';
+            currentPage = page;
+
+            statusBar.textContent = 'Loading...';
+
+            try {
+                const params = new URLSearchParams({ q, page, limit: pageSize });
+                const response = await fetch(`/api/query?${params}`);
+                const result = await response.json();
+
+                if (result.error) {
+                    statusBar.textContent = `Error: ${result.error}`;
+                    return;
+                }
+
+                viewer.render(result.data);
+                updatePagination(result.pagination);
+                statusBar.textContent = `Query: ${q} | ${result.pagination ? result.pagination.total + ' items' : ''} | ${result.elapsed_ms}ms`;
+
+                history.pushState({}, '', `?q=${encodeURIComponent(q)}&page=${page}`);
+            } catch (err) {
+                statusBar.textContent = `Error: ${err.message}`;
+            }
+        }
+
+        function updatePagination(pg) {
+            if (!pg || pg.pages <= 1) {
+                pagination.innerHTML = '';
+                return;
+            }
+
+            let html = '';
+            if (pg.has_prev) {
+                html += `<button onclick="runQuery(${pg.page - 1})">← Prev</button>`;
+            }
+            html += `<span style="padding:4px 8px">Page ${pg.page + 1}/${pg.pages}</span>`;
+            if (pg.has_next) {
+                html += `<button onclick="runQuery(${pg.page + 1})">Next →</button>`;
+            }
+            pagination.innerHTML = html;
+        }
+
+        queryBtn.addEventListener('click', () => runQuery(0));
+        queryInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') runQuery(0);
+        });
+
+        document.getElementById('schema-btn').addEventListener('click', async () => {
+            const res = await fetch('/api/schema');
+            const schema = await res.json();
+            if (schema.error) {
+                statusBar.textContent = `Error: ${schema.error}`;
+                return;
+            }
+            viewer.render(schema);
+            statusBar.textContent = 'Schema view';
+        });
+
+        document.getElementById('help-btn').addEventListener('click', () => {
+            viewer.container.innerHTML = `
+                <div style="padding:16px; font-size:13px;">
+                    <h3>mmapview DSL Reference</h3>
+                    <pre style="background:#1e1e1e; padding:12px; border-radius:4px;">
+    /path/to/field          navigate to field
+    [index]                 array index
+    [start:end]             array slice
+    [?field op value]       filter array
+    [?field~substring]      contains substring
+    [?field^prefix]         starts with
+    [?field$suffix]         ends with
+    | select(.field~val)    pipe to filter
+                    </pre>
+                </div>`;
+            statusBar.textContent = 'DSL help';
+        });
+
+        window.addEventListener('popstate', () => {
+            const params = new URLSearchParams(window.location.search);
+            if (params.has('q')) {
+                queryInput.value = params.get('q');
+                runQuery(parseInt(params.get('page') || '0'));
+            }
+        });
+
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('q')) {
+            queryInput.value = params.get('q');
+            runQuery(parseInt(params.get('page') || '0'));
+        }
+    </script>
+</body>
+</html>
