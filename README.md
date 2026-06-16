@@ -38,17 +38,17 @@ No serde, no deserialization — the reader is a projection over `&[u8]` via `by
 
 | Type | Layout | Reader |
 |------|--------|--------|
-| Pod primitives (`u32`, `f32`, …) | Dense, fixed offset | `&'a T` |
-| `String` | Raw bytes (no length prefix) | `&'a str` |
-| `#[mmap(inline(N))]` `String` | Null-padded, N bytes in fixed section | `&'a str` |
-| `Vec<T>` | `[count: u64, offsets: [u64; count], values...]` | `IndexedArrayReader<'a, T>` |
-| `#[pod]` `Vec<T>` | Dense `[T; count]` | `&'a [T]` |
-| `#[fixed]` `Vec<T>` | Fixed stride `[count, total_size, elements...]` | `FixedArrayReader<'a, T>` |
-| `#[mmap(byref)]` `Vec<T>` | ByRef ranges in postponed section | `ByRefArrayReader<'a, T>` |
-| `Option<T>` | `[present: u8, data...]` | `Option<T::Reader<'a>>` |
-| `#[mmap(byref)]` field | `ByRefRange` placeholder → postponed data | `&'a T` / `&'a str` |
-| `#[mmap(byref)] Option<T>` | `ByRefRange{0,0}` = None sentinel | `Option<&'a T>` |
-| `HashMap<K, V>` | Sorted keys, binary search. 4 variants | `HashMapReader<'a, K, V>` |
+| Pod primitives (`u32`, `f32`, …) | Dense, fixed offset | `&T` |
+| `String` | Raw bytes (no length prefix) | `&str` |
+| `#[mmap(inline(N))]` `String` | Null-padded, N bytes in fixed section | `&str` |
+| `Vec<T>` | `[count: u64, offsets: [u64; count], values...]` | `IndexedArrayReader<T>` |
+| `#[pod]` `Vec<T>` | Dense `[T; count]` | `&[T]` |
+| `#[fixed]` `Vec<T>` | Fixed stride `[count, total_size, elements...]` | `FixedArrayReader<T>` |
+| `#[mmap(byref)]` `Vec<T>` | ByRef ranges in postponed section | `ByRefArrayReader<T>` |
+| `Option<T>` | `[present: u8, data...]` | `Option<T::Reader>` |
+| `#[mmap(byref)]` field | `ByRefRange` placeholder → postponed data | `&T` / `&str` |
+| `#[mmap(byref)] Option<T>` | `ByRefRange{0,0}` = None sentinel | `Option<&T>` |
+| `HashMap<K, V>` | Sorted keys, binary search. 4 variants | `HashMapReader<K, V>` |
 
 ### HashMap auto-detection
 
