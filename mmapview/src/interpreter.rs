@@ -1128,4 +1128,81 @@ mod tests {
         // avg = 15.0, should format as "15"
         assert_eq!(s, "15");
     }
+
+    // -----------------------------------------------------------------------
+    // Option<byref> DSL tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_option_byref_some_via_dsl() {
+        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+
+        #[derive(MmapStruct, Debug)]
+        struct Doc {
+            id: u32,
+            #[mmap(byref)]
+            label: Option<String>,
+        }
+
+        let d = Doc { id: 42, label: Some("hello".into()) };
+        let buf = write_to_buf_raw(&d);
+        let ctx = DynContext::new(&buf);
+        let root = <Doc as GetSchema>::root_value(buf.len() as u64);
+
+        let result = query_from("/label", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 1);
+        let s = crate::format_result(&ctx, &result[0]);
+        assert_eq!(s, r#""hello""#);
+    }
+
+    #[test]
+    fn test_option_byref_none_via_dsl() {
+        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+
+        #[derive(MmapStruct, Debug)]
+        struct Doc {
+            id: u32,
+            #[mmap(byref)]
+            label: Option<String>,
+        }
+
+        let d = Doc { id: 99, label: None };
+        let buf = write_to_buf_raw(&d);
+        let ctx = DynContext::new(&buf);
+        let root = <Doc as GetSchema>::root_value(buf.len() as u64);
+
+        // Before the fix this returned Err("no such field `label`")
+        let result = query_from("/label", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 1);
+        let s = crate::format_result(&ctx, &result[0]);
+        assert_eq!(s, "null");
+    }
+
+    #[test]
+    fn test_option_byref_none_in_struct_context() {
+        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+
+        #[derive(MmapStruct, Debug)]
+        struct Doc {
+            id: u32,
+            #[mmap(byref)]
+            label: Option<String>,
+        }
+
+        // None case — format_value should render "null" for the field
+        let d = Doc { id: 99, label: None };
+        let buf = write_to_buf_raw(&d);
+        let ctx = DynContext::new(&buf);
+        let root = <Doc as GetSchema>::root_value(buf.len() as u64);
+        let s = crate::format_value(&ctx, &root);
+        assert_eq!(s, r#"{"id": 99, "label": null}"#);
+
+        // Some case — format_value should render the value
+        let d = Doc { id: 42, label: Some("hello".into()) };
+        let buf = write_to_buf_raw(&d);
+        let ctx = DynContext::new(&buf);
+        let root = <Doc as GetSchema>::root_value(buf.len() as u64);
+        let s = crate::format_value(&ctx, &root);
+        assert_eq!(s, r#"{"id": 42, "label": "hello"}"#);
+    }
 }

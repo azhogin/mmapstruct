@@ -385,7 +385,10 @@ impl<'a> DynContext<'a> {
             mmap_read_pod(&self.data[off as usize..off as usize + 8])
         };
         if br.begin == 0 && br.end == 0 {
-            return None;
+            // Sentinel `{0,0}` = None for optional byref fields.
+            // Return a zero-length Value with the original Option schema,
+            // so consumers can distinguish "field is None" from "field not found".
+            return Some(Value::new(dv.offset, dv.offset, desc.value_type));
         }
         let data_off = base + br.begin as u64;
         let data_limit = base + br.end as u64;
