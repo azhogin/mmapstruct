@@ -1,4 +1,4 @@
-use crate::traits::{MmapRead, MmapWrite, LayoutHash, fnv1a};
+use crate::traits::{fnv1a, LayoutHash, MmapRead, MmapWrite};
 use std::ops::Range;
 
 /// String storage: raw bytes (no length prefix — length from range bounds).
@@ -20,7 +20,10 @@ fn validate_utf8(slice: &[u8]) -> &str {
         Err(e) => {
             let valid_up_to = e.valid_up_to();
             if cfg!(debug_assertions) {
-                eprintln!("warning: mmapstruct: invalid UTF-8 at offset {}, truncating", valid_up_to);
+                eprintln!(
+                    "warning: mmapstruct: invalid UTF-8 at offset {}, truncating",
+                    valid_up_to
+                );
             }
             // SAFETY: valid_up_to is guaranteed to be a valid UTF-8 boundary
             unsafe { std::str::from_utf8_unchecked(&slice[..valid_up_to]) }

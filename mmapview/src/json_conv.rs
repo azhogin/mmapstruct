@@ -1,14 +1,14 @@
-use mmapstruct::{DynContext, Value, DynValueType, StructSchema, ArrayLayout};
 use crate::EvalResult;
+use mmapstruct::{ArrayLayout, DynContext, DynValueType, StructSchema, Value};
 
 /// Convert a runtime `Value` to a `serde_json::Value` for HTTP output.
 pub fn to_json<'a>(ctx: &DynContext<'a>, val: &Value) -> serde_json::Value {
     match val.schema {
-        DynValueType::U8  => serde_json::json!(ctx.read_u8(val)),
+        DynValueType::U8 => serde_json::json!(ctx.read_u8(val)),
         DynValueType::U16 => serde_json::json!(ctx.read_u16(val)),
         DynValueType::U32 => serde_json::json!(ctx.read_u32(val)),
         DynValueType::U64 => serde_json::json!(ctx.read_u64(val)),
-        DynValueType::I8  => serde_json::json!(ctx.read_i8(val)),
+        DynValueType::I8 => serde_json::json!(ctx.read_i8(val)),
         DynValueType::I16 => serde_json::json!(ctx.read_i16(val)),
         DynValueType::I32 => serde_json::json!(ctx.read_i32(val)),
         DynValueType::I64 => serde_json::json!(ctx.read_i64(val)),
@@ -57,6 +57,21 @@ pub fn to_json<'a>(ctx: &DynContext<'a>, val: &Value) -> serde_json::Value {
             }
             serde_json::Value::Array(items)
         }
+        DynValueType::Lazy(resolve) => to_json(ctx, &Value::new(val.offset, val.limit, resolve())),
+        DynValueType::Enum(_es) => {
+            if let Some((vs, _data_off)) = ctx.enum_variant(val) {
+                let mut map = serde_json::Map::new();
+                map.insert("$variant".into(), serde_json::json!(vs.name));
+                for fd in vs.fields {
+                    if let Some(fv) = ctx.field_get(val, fd.name) {
+                        map.insert(fd.name.to_string(), to_json(ctx, &fv));
+                    }
+                }
+                serde_json::Value::Object(map)
+            } else {
+                serde_json::Value::Null
+            }
+        }
     }
 }
 
@@ -73,11 +88,11 @@ pub fn result_to_json<'a>(ctx: &DynContext<'a>, result: &EvalResult) -> serde_js
 /// Convert a static `DynValueType` to a JSON-schema-like description.
 pub fn value_type_to_json(vt: &DynValueType) -> serde_json::Value {
     match vt {
-        DynValueType::U8  => serde_json::json!({"type": "u8"}),
+        DynValueType::U8 => serde_json::json!({"type": "u8"}),
         DynValueType::U16 => serde_json::json!({"type": "u16"}),
         DynValueType::U32 => serde_json::json!({"type": "u32"}),
         DynValueType::U64 => serde_json::json!({"type": "u64"}),
-        DynValueType::I8  => serde_json::json!({"type": "i8"}),
+        DynValueType::I8 => serde_json::json!({"type": "i8"}),
         DynValueType::I16 => serde_json::json!({"type": "i16"}),
         DynValueType::I32 => serde_json::json!({"type": "i32"}),
         DynValueType::I64 => serde_json::json!({"type": "i64"}),
@@ -96,9 +111,7 @@ pub fn value_type_to_json(vt: &DynValueType) -> serde_json::Value {
         DynValueType::PodStruct { size } => {
             serde_json::json!({"type": "pod_struct", "size": size})
         }
-        DynValueType::Struct(_) => {
-            struct_schema_to_json(vt)
-        }
+        DynValueType::Struct(_) => struct_schema_to_json(vt),
         DynValueType::Array(arr_schema) => {
             serde_json::json!({
                 "type": "array",
@@ -125,6 +138,16 @@ pub fn value_type_to_json(vt: &DynValueType) -> serde_json::Value {
                 "value_type": value_type_to_json(schema.value_type),
             })
         }
+        DynValueType::Lazy(resolve) => value_type_to_json(resolve()),
+        DynValueType::Enum(es) => {
+            let variants: Vec<serde_json::Value> =
+                es.variants.iter().map(|vs| fields_to_json(vs)).collect();
+            serde_json::json!({
+                "type": "enum",
+                "name": es.name,
+                "variants": variants,
+            })
+        }
     }
 }
 
@@ -141,15 +164,19 @@ fn struct_schema_to_json(vt: &DynValueType) -> serde_json::Value {
 fn fields_to_json(s: &StructSchema) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     map.insert("name".into(), serde_json::json!(s.name));
-    let fields: Vec<serde_json::Value> = s.fields.iter().map(|fd| {
-        serde_json::json!({
-            "name": fd.name,
-            "type": fd.value_type.name_hint(),
-            "inline_dyn_index": fd.inline_dyn_index,
-            "is_byref": fd.is_byref,
-            "offset_in_fixed": fd.offset_in_fixed,
+    let fields: Vec<serde_json::Value> = s
+        .fields
+        .iter()
+        .map(|fd| {
+            serde_json::json!({
+                "name": fd.name,
+                "type": fd.value_type.name_hint(),
+                "inline_dyn_index": fd.inline_dyn_index,
+                "is_byref": fd.is_byref,
+                "offset_in_fixed": fd.offset_in_fixed,
+            })
         })
-    }).collect();
+        .collect();
     map.insert("fields".into(), serde_json::Value::Array(fields));
     serde_json::Value::Object(map)
 }
@@ -190,6 +217,8 @@ impl NameHint for DynValueType {
             DynValueType::Option(_inner) => "option",
             DynValueType::ByRef(inner) => inner.name_hint(),
             DynValueType::HashMap(_) => "hashmap",
+            DynValueType::Enum(es) => es.name,
+            DynValueType::Lazy(resolve) => resolve().name_hint(),
         }
     }
 }
@@ -207,10 +236,13 @@ pub fn compute_stats<'a>(ctx: &DynContext<'a>, root: &Value) -> serde_json::Valu
             DynValueType::Option(inner) => {
                 desc.insert("type".into(), serde_json::json!(inner.name_hint()));
                 // Check presence: Option layout = [present: u8, data...]
-                let present = fv.as_ref().map(|v| {
-                    let off = v.offset as usize;
-                    ctx.data().get(off).copied().unwrap_or(0) != 0
-                }).unwrap_or(false);
+                let present = fv
+                    .as_ref()
+                    .map(|v| {
+                        let off = v.offset as usize;
+                        ctx.data().get(off).copied().unwrap_or(0) != 0
+                    })
+                    .unwrap_or(false);
                 desc.insert("present".into(), serde_json::json!(present));
             }
             DynValueType::Array(_) => {
@@ -218,6 +250,15 @@ pub fn compute_stats<'a>(ctx: &DynContext<'a>, root: &Value) -> serde_json::Valu
                 if let Some(ref val) = fv {
                     let count = ctx.array_len(val);
                     desc.insert("count".into(), serde_json::json!(count));
+                }
+            }
+            DynValueType::Enum(es) => {
+                desc.insert("type".into(), serde_json::json!("enum"));
+                desc.insert("name".into(), serde_json::json!(es.name));
+                if let Some(ref val) = fv {
+                    if let Some((vs, _)) = ctx.enum_variant(val) {
+                        desc.insert("variant".into(), serde_json::json!(vs.name));
+                    }
                 }
             }
             _ => {

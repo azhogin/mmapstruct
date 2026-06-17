@@ -1,7 +1,7 @@
-use mmapstruct::hash_map::podK_inlinedV::{HashMapReader, write_hash_map};
+use mmapstruct::hash_map::podK_inlinedV::{write_hash_map, HashMapReader};
 use mmapstruct::traits::FileRange;
-use mmapstruct::WriteContext;
 use mmapstruct::MmapStruct;
+use mmapstruct::WriteContext;
 
 #[derive(MmapStruct, Debug, PartialEq)]
 struct Item {
@@ -44,14 +44,29 @@ fn roundtrip_with_byref_string() {
     use std::collections::HashMap;
 
     let map = HashMap::from([
-        (1u32, Item { id: 10, label: "foo".into() }),
-        (2u32, Item { id: 20, label: "bar".into() }),
+        (
+            1u32,
+            Item {
+                id: 10,
+                label: "foo".into(),
+            },
+        ),
+        (
+            2u32,
+            Item {
+                id: 20,
+                label: "bar".into(),
+            },
+        ),
     ]);
 
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<u32, Item>::new(&buf, range);
 
     assert_eq!(reader.len(), 2);
@@ -72,15 +87,36 @@ fn roundtrip_with_dedup_string() {
     use std::collections::HashMap;
 
     let map = HashMap::from([
-        (1u32, ItemDedup { id: 10, label: "hello".into() }),
-        (2u32, ItemDedup { id: 20, label: "hello".into() }),
-        (3u32, ItemDedup { id: 30, label: "world".into() }),
+        (
+            1u32,
+            ItemDedup {
+                id: 10,
+                label: "hello".into(),
+            },
+        ),
+        (
+            2u32,
+            ItemDedup {
+                id: 20,
+                label: "hello".into(),
+            },
+        ),
+        (
+            3u32,
+            ItemDedup {
+                id: 30,
+                label: "world".into(),
+            },
+        ),
     ]);
 
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<u32, ItemDedup>::new(&buf, range);
 
     assert_eq!(reader.len(), 3);
@@ -111,7 +147,10 @@ fn roundtrip_only_dedup_string() {
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<u32, OnlyString>::new(&buf, range);
 
     assert_eq!(reader.len(), 3);
@@ -126,14 +165,31 @@ fn roundtrip_custom_struct() {
     use std::collections::HashMap;
 
     let map = HashMap::from([
-        (1u32, User { id: 100, score: 10, name: "alice".into() }),
-        (2u32, User { id: 200, score: 20, name: "bob".into() }),
+        (
+            1u32,
+            User {
+                id: 100,
+                score: 10,
+                name: "alice".into(),
+            },
+        ),
+        (
+            2u32,
+            User {
+                id: 200,
+                score: 20,
+                name: "bob".into(),
+            },
+        ),
     ]);
 
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<u32, User>::new(&buf, range);
 
     let v1 = reader.get(&1).unwrap();
@@ -152,14 +208,29 @@ fn roundtrip_multi_byref() {
     use std::collections::HashMap;
 
     let map = HashMap::from([
-        (1u32, MultiByref { first: "John".into(), last: "Doe".into() }),
-        (2u32, MultiByref { first: "John".into(), last: "Smith".into() }),
+        (
+            1u32,
+            MultiByref {
+                first: "John".into(),
+                last: "Doe".into(),
+            },
+        ),
+        (
+            2u32,
+            MultiByref {
+                first: "John".into(),
+                last: "Smith".into(),
+            },
+        ),
     ]);
 
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<u32, MultiByref>::new(&buf, range);
 
     let v1 = reader.get(&1).unwrap();

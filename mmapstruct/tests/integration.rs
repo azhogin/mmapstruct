@@ -1,8 +1,8 @@
-use mmapstruct::{MmapStruct, WriteContext, write_to_file, write_to_buf};
-use mmapstruct::file_reader::{MmapReader, BufReader};
-use mmapstruct::indexed_array::{IndexedArrayReader, write_indexed_array};
-use mmapstruct::pod_array::write_pod_array;
 use bytemuck::{Pod, Zeroable};
+use mmapstruct::file_reader::{BufReader, MmapReader};
+use mmapstruct::indexed_array::{write_indexed_array, IndexedArrayReader};
+use mmapstruct::pod_array::write_pod_array;
+use mmapstruct::{write_to_buf, write_to_file, MmapStruct, WriteContext};
 use tempfile::NamedTempFile;
 
 /// Example from the spec.
@@ -75,7 +75,11 @@ fn test_named_points_write_read() {
     let tmp = NamedTempFile::new().unwrap();
     let mut w = NamedPoints::default();
     w.point = Point { x: 100, y: 200 };
-    w.labels = vec!["first".to_string(), "second".to_string(), "third".to_string()];
+    w.labels = vec![
+        "first".to_string(),
+        "second".to_string(),
+        "third".to_string(),
+    ];
     write_to_file(&w, tmp.path(), false).unwrap();
 
     let r = BufReader::from_file(tmp.path()).unwrap();
@@ -144,7 +148,10 @@ fn test_spec_example() {
     let reader = r.read::<MyFileFmt>();
 
     assert_eq!(reader.vals, &[1u32, 2, 3, 4, 5]);
-    assert_eq!(reader.points, &[Point { x: 10, y: 20 }, Point { x: 30, y: 40 }]);
+    assert_eq!(
+        reader.points,
+        &[Point { x: 10, y: 20 }, Point { x: 30, y: 40 }]
+    );
 }
 
 #[test]
@@ -216,19 +223,28 @@ fn test_option_byref_raw_bytes() {
         end: u32::from_le_bytes(buf_some[8..12].try_into().unwrap()),
     };
     // ByRefRange for Some("Alice") should NOT be {0,0}
-    assert!(br_some.begin != 0 || br_some.end != 0, "Some case should have non-zero ByRefRange");
+    assert!(
+        br_some.begin != 0 || br_some.end != 0,
+        "Some case should have non-zero ByRefRange"
+    );
 
     // postponed data at br_some.begin..br_some.end should be raw "Alice\0" WITHOUT present byte
     let postponed_some = &buf_some[br_some.begin as usize..br_some.end as usize];
     // Should be [b'A', b'l', b'i', c', b'e'] — NO leading 1 (present byte)
-    assert_eq!(postponed_some, b"Alice", "Option<byref> Some should write inner value directly, no present byte");
+    assert_eq!(
+        postponed_some, b"Alice",
+        "Option<byref> Some should write inner value directly, no present byte"
+    );
 
     // None case: ByRefRange should be {0, 0}
     let br_none = mmapstruct::traits::ByRefRange {
         begin: u32::from_le_bytes(buf_none[4..8].try_into().unwrap()),
         end: u32::from_le_bytes(buf_none[8..12].try_into().unwrap()),
     };
-    assert_eq!(br_none.begin, 0, "None case should have ByRefRange.begin == 0");
+    assert_eq!(
+        br_none.begin, 0,
+        "None case should have ByRefRange.begin == 0"
+    );
     assert_eq!(br_none.end, 0, "None case should have ByRefRange.end == 0");
 }
 
@@ -412,7 +428,11 @@ fn test_byref_dedup() {
     // Without dedup: 32 + 5("hello")*2 + 5("world") = 47
     // With dedup:    32 + 5("hello") + 5("world") = 42
     // Plus 24-byte header
-    assert_eq!(total_size, 42 + 24, "dedup should collapse identical byref data");
+    assert_eq!(
+        total_size,
+        42 + 24,
+        "dedup should collapse identical byref data"
+    );
 
     let r = BufReader::new(buf);
     let reader = r.read::<DedupTest>();
@@ -454,10 +474,26 @@ fn test_vec_byref_dedup() {
 
     let w = RecFile {
         items: vec![
-            Rec { id: 0, name: long_desc.into(), city: "NYC".into() },
-            Rec { id: 1, name: "Bob".into(),     city: "NYC".into() },
-            Rec { id: 2, name: long_desc.into(), city: "LA".into() },
-            Rec { id: 3, name: "Charlie".into(), city: "LA".into() },
+            Rec {
+                id: 0,
+                name: long_desc.into(),
+                city: "NYC".into(),
+            },
+            Rec {
+                id: 1,
+                name: "Bob".into(),
+                city: "NYC".into(),
+            },
+            Rec {
+                id: 2,
+                name: long_desc.into(),
+                city: "LA".into(),
+            },
+            Rec {
+                id: 3,
+                name: "Charlie".into(),
+                city: "LA".into(),
+            },
         ],
     };
 
@@ -475,10 +511,38 @@ fn test_vec_byref_dedup() {
     let items: Vec<Rec> = reader.items.into_iter().map(|r| r.into()).collect();
 
     assert_eq!(items.len(), 4);
-    assert_eq!(items[0], Rec { id: 0, name: long_desc.into(), city: "NYC".into() });
-    assert_eq!(items[1], Rec { id: 1, name: "Bob".into(), city: "NYC".into() });
-    assert_eq!(items[2], Rec { id: 2, name: long_desc.into(), city: "LA".into() });
-    assert_eq!(items[3], Rec { id: 3, name: "Charlie".into(), city: "LA".into() });
+    assert_eq!(
+        items[0],
+        Rec {
+            id: 0,
+            name: long_desc.into(),
+            city: "NYC".into()
+        }
+    );
+    assert_eq!(
+        items[1],
+        Rec {
+            id: 1,
+            name: "Bob".into(),
+            city: "NYC".into()
+        }
+    );
+    assert_eq!(
+        items[2],
+        Rec {
+            id: 2,
+            name: long_desc.into(),
+            city: "LA".into()
+        }
+    );
+    assert_eq!(
+        items[3],
+        Rec {
+            id: 3,
+            name: "Charlie".into(),
+            city: "LA".into()
+        }
+    );
 }
 
 // === Scoped byref tests ===
@@ -502,8 +566,16 @@ struct ScopedRecFile {
 fn test_scoped_byref_roundtrip() {
     let w = ScopedRecFile {
         items: vec![
-            ScopedRec { id: 0, name: "Alice".into(), city: "NYC".into() },
-            ScopedRec { id: 1, name: "Bob".into(),   city: "NYC".into() },
+            ScopedRec {
+                id: 0,
+                name: "Alice".into(),
+                city: "NYC".into(),
+            },
+            ScopedRec {
+                id: 1,
+                name: "Bob".into(),
+                city: "NYC".into(),
+            },
         ],
     };
 
@@ -513,17 +585,43 @@ fn test_scoped_byref_roundtrip() {
     let items: Vec<ScopedRec> = reader.items.into_iter().map(|r| r.into()).collect();
 
     assert_eq!(items.len(), 2);
-    assert_eq!(items[0], ScopedRec { id: 0, name: "Alice".into(), city: "NYC".into() });
-    assert_eq!(items[1], ScopedRec { id: 1, name: "Bob".into(),   city: "NYC".into() });
+    assert_eq!(
+        items[0],
+        ScopedRec {
+            id: 0,
+            name: "Alice".into(),
+            city: "NYC".into()
+        }
+    );
+    assert_eq!(
+        items[1],
+        ScopedRec {
+            id: 1,
+            name: "Bob".into(),
+            city: "NYC".into()
+        }
+    );
 }
 
 #[test]
 fn test_scoped_three_elements() {
     let w = ScopedRecFile {
         items: vec![
-            ScopedRec { id: 0, name: "common".into(), city: "A".into() },
-            ScopedRec { id: 1, name: "common".into(), city: "B".into() },
-            ScopedRec { id: 2, name: "common".into(), city: "C".into() },
+            ScopedRec {
+                id: 0,
+                name: "common".into(),
+                city: "A".into(),
+            },
+            ScopedRec {
+                id: 1,
+                name: "common".into(),
+                city: "B".into(),
+            },
+            ScopedRec {
+                id: 2,
+                name: "common".into(),
+                city: "C".into(),
+            },
         ],
     };
 
@@ -533,9 +631,30 @@ fn test_scoped_three_elements() {
     let items: Vec<ScopedRec> = reader.items.into_iter().map(|r| r.into()).collect();
 
     assert_eq!(items.len(), 3);
-    assert_eq!(items[0], ScopedRec { id: 0, name: "common".into(), city: "A".into() });
-    assert_eq!(items[1], ScopedRec { id: 1, name: "common".into(), city: "B".into() });
-    assert_eq!(items[2], ScopedRec { id: 2, name: "common".into(), city: "C".into() });
+    assert_eq!(
+        items[0],
+        ScopedRec {
+            id: 0,
+            name: "common".into(),
+            city: "A".into()
+        }
+    );
+    assert_eq!(
+        items[1],
+        ScopedRec {
+            id: 1,
+            name: "common".into(),
+            city: "B".into()
+        }
+    );
+    assert_eq!(
+        items[2],
+        ScopedRec {
+            id: 2,
+            name: "common".into(),
+            city: "C".into()
+        }
+    );
 }
 
 #[test]
@@ -544,8 +663,16 @@ fn test_scoped_dedup_local_vs_global() {
 
     let w_scoped = ScopedRecFile {
         items: vec![
-            ScopedRec { id: 0, name: long.clone().into(), city: "X".into() },
-            ScopedRec { id: 1, name: long.clone().into(), city: "Y".into() },
+            ScopedRec {
+                id: 0,
+                name: long.clone().into(),
+                city: "X".into(),
+            },
+            ScopedRec {
+                id: 1,
+                name: long.clone().into(),
+                city: "Y".into(),
+            },
         ],
     };
     let buf_scoped = write_to_buf(&w_scoped, false);
@@ -553,8 +680,22 @@ fn test_scoped_dedup_local_vs_global() {
     let r = BufReader::new(buf_scoped.clone());
     let reader = r.read::<ScopedRecFile>();
     let items: Vec<ScopedRec> = reader.items.into_iter().map(|r| r.into()).collect();
-    assert_eq!(items[0], ScopedRec { id: 0, name: long.clone(), city: "X".into() });
-    assert_eq!(items[1], ScopedRec { id: 1, name: long.clone(), city: "Y".into() });
+    assert_eq!(
+        items[0],
+        ScopedRec {
+            id: 0,
+            name: long.clone(),
+            city: "X".into()
+        }
+    );
+    assert_eq!(
+        items[1],
+        ScopedRec {
+            id: 1,
+            name: long.clone(),
+            city: "Y".into()
+        }
+    );
 
     // Per-element overhead (fixed section + align pad):
     //   id(4) + byref_placeholder(8) + ByRefRange_placeholder(8) = 20 → align_to(8) = 24
@@ -574,9 +715,12 @@ fn test_scoped_dedup_local_vs_global() {
     //   + top-level fixed(0) + offset_table(8) = 8
     //   Total ≈ 182
     let expected_unscoped = 8 + 16 + 2 * 24 + 100 + 1 + 1;
-    assert!(buf_scoped.len() > expected_unscoped + 50,
+    assert!(
+        buf_scoped.len() > expected_unscoped + 50,
         "scoped should be significantly larger than globally-deduped: scoped={}, unscoped≈{}",
-        buf_scoped.len(), expected_unscoped);
+        buf_scoped.len(),
+        expected_unscoped
+    );
 }
 
 // Scoped struct with both byref and inline dyn fields
@@ -598,8 +742,16 @@ struct ScopedDynFile {
 fn test_scoped_with_inline_dyn() {
     let w = ScopedDynFile {
         items: vec![
-            ScopedWithDyn { id: 0, label: "x".into(), tags: vec!["a".into(), "b".into()] },
-            ScopedWithDyn { id: 1, label: "y".into(), tags: vec!["c".into()] },
+            ScopedWithDyn {
+                id: 0,
+                label: "x".into(),
+                tags: vec!["a".into(), "b".into()],
+            },
+            ScopedWithDyn {
+                id: 1,
+                label: "y".into(),
+                tags: vec!["c".into()],
+            },
         ],
     };
 
@@ -609,8 +761,22 @@ fn test_scoped_with_inline_dyn() {
     let items: Vec<ScopedWithDyn> = reader.items.into_iter().map(|r| r.into()).collect();
 
     assert_eq!(items.len(), 2);
-    assert_eq!(items[0], ScopedWithDyn { id: 0, label: "x".into(), tags: vec!["a".into(), "b".into()] });
-    assert_eq!(items[1], ScopedWithDyn { id: 1, label: "y".into(), tags: vec!["c".into()] });
+    assert_eq!(
+        items[0],
+        ScopedWithDyn {
+            id: 0,
+            label: "x".into(),
+            tags: vec!["a".into(), "b".into()]
+        }
+    );
+    assert_eq!(
+        items[1],
+        ScopedWithDyn {
+            id: 1,
+            label: "y".into(),
+            tags: vec!["c".into()]
+        }
+    );
 }
 
 // Scoped + index-based Vec (not fixed)
@@ -631,8 +797,14 @@ struct ScopedIndexedFile {
 fn test_scoped_indexed_vec() {
     let w = ScopedIndexedFile {
         items: vec![
-            ScopedIndexedRec { id: 1, name: "alpha".into() },
-            ScopedIndexedRec { id: 2, name: "beta".into() },
+            ScopedIndexedRec {
+                id: 1,
+                name: "alpha".into(),
+            },
+            ScopedIndexedRec {
+                id: 2,
+                name: "beta".into(),
+            },
         ],
     };
 
@@ -642,8 +814,20 @@ fn test_scoped_indexed_vec() {
     let items: Vec<ScopedIndexedRec> = reader.items.into_iter().map(|r| r.into()).collect();
 
     assert_eq!(items.len(), 2);
-    assert_eq!(items[0], ScopedIndexedRec { id: 1, name: "alpha".into() });
-    assert_eq!(items[1], ScopedIndexedRec { id: 2, name: "beta".into() });
+    assert_eq!(
+        items[0],
+        ScopedIndexedRec {
+            id: 1,
+            name: "alpha".into()
+        }
+    );
+    assert_eq!(
+        items[1],
+        ScopedIndexedRec {
+            id: 2,
+            name: "beta".into()
+        }
+    );
 }
 
 // === Enum tests ===
@@ -693,7 +877,10 @@ enum VarEnum {
 
 #[test]
 fn test_enum_mixed_roundtrip() {
-    let w = VarEnum::Beta { name: "hello".into(), val: 99 };
+    let w = VarEnum::Beta {
+        name: "hello".into(),
+        val: 99,
+    };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
     let reader = r.read::<VarEnum>();
@@ -736,7 +923,7 @@ fn test_enum_unit_roundtrip() {
     let r = BufReader::new(buf);
     let reader = r.read::<UnitEnum>();
     match reader {
-        UnitEnumReader::Nothing => {},
+        UnitEnumReader::Nothing => {}
         _ => panic!("expected Nothing"),
     }
     let w2: UnitEnum = r.read::<UnitEnum>().into();
@@ -760,13 +947,20 @@ fn test_enum_unit_something() {
 // Enum with byref fields
 #[derive(MmapStruct, Debug, PartialEq)]
 enum ByRefEnum {
-    Simple { tag: u32 },
-    WithRef { #[mmap(byref)] label: String },
+    Simple {
+        tag: u32,
+    },
+    WithRef {
+        #[mmap(byref)]
+        label: String,
+    },
 }
 
 #[test]
 fn test_enum_byref_roundtrip() {
-    let w = ByRefEnum::WithRef { label: "hello world".into() };
+    let w = ByRefEnum::WithRef {
+        label: "hello world".into(),
+    };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
     let reader = r.read::<ByRefEnum>();
@@ -814,7 +1008,10 @@ fn test_inline_string_write_read() {
 
 #[test]
 fn test_inline_string_short() {
-    let w = WithInlineString { id: 1, label: "ab".to_string() };
+    let w = WithInlineString {
+        id: 1,
+        label: "ab".to_string(),
+    };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
     let reader = r.read::<WithInlineString>();
@@ -825,7 +1022,10 @@ fn test_inline_string_short() {
 #[test]
 fn test_inline_string_max_size() {
     let long = "A".repeat(32);
-    let w = WithInlineString { id: 0, label: long.clone() };
+    let w = WithInlineString {
+        id: 0,
+        label: long.clone(),
+    };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
     let reader = r.read::<WithInlineString>();
@@ -876,8 +1076,15 @@ fn test_inline_string_with_dyn() {
 // Enum with inline string
 #[derive(MmapStruct, Debug, PartialEq)]
 enum InlineStringEnum {
-    Alpha { #[mmap(inline(8))] tag: String },
-    Beta { id: u32, #[mmap(inline(16))] name: String },
+    Alpha {
+        #[mmap(inline(8))]
+        tag: String,
+    },
+    Beta {
+        id: u32,
+        #[mmap(inline(16))]
+        name: String,
+    },
 }
 
 #[test]
@@ -896,7 +1103,10 @@ fn test_inline_string_enum_alpha() {
 
 #[test]
 fn test_inline_string_enum_beta() {
-    let w = InlineStringEnum::Beta { id: 7, name: "hello".into() };
+    let w = InlineStringEnum::Beta {
+        id: 7,
+        name: "hello".into(),
+    };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
     let reader = r.read::<InlineStringEnum>();
@@ -935,7 +1145,10 @@ fn test_safe_strings_invalid_utf8_truncation() {
     let range = 0..buf.len();
     let s = <String as mmapstruct::traits::MmapRead>::read(&buf, range);
     // With safe-strings, invalid bytes are truncated; valid_up_to for [0xFF, 0xFE, 'a', 'b'] is 0
-    assert!(s.is_empty() || s == "ab", "safe-strings should truncate invalid UTF-8");
+    assert!(
+        s.is_empty() || s == "ab",
+        "safe-strings should truncate invalid UTF-8"
+    );
 }
 
 #[cfg(feature = "strict-validation")]
@@ -953,7 +1166,10 @@ fn test_strict_validation_byref_range() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         br_invalid.range(0);
     }));
-    assert!(result.is_err(), "strict-validation should catch begin > end");
+    assert!(
+        result.is_err(),
+        "strict-validation should catch begin > end"
+    );
 }
 
 #[cfg(feature = "strict-validation")]
@@ -970,12 +1186,18 @@ fn test_strict_validation_write_bounds() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         ctx.write_u64_le_at(0, 100);
     }));
-    assert!(result.is_err(), "strict-validation should catch out-of-bounds write_u64_le_at");
+    assert!(
+        result.is_err(),
+        "strict-validation should catch out-of-bounds write_u64_le_at"
+    );
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         ctx.write_pod_at(&0u32, 100);
     }));
-    assert!(result.is_err(), "strict-validation should catch out-of-bounds write_pod_at");
+    assert!(
+        result.is_err(),
+        "strict-validation should catch out-of-bounds write_pod_at"
+    );
 }
 
 #[cfg(feature = "strict-validation")]
@@ -996,7 +1218,10 @@ fn test_strict_validation_indexed_array_bounds() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = reader.get(0);
     }));
-    assert!(result.is_err(), "strict-validation should catch out-of-bounds indexed array access");
+    assert!(
+        result.is_err(),
+        "strict-validation should catch out-of-bounds indexed array access"
+    );
 }
 
 #[cfg(feature = "strict-validation")]
@@ -1016,13 +1241,16 @@ fn test_strict_validation_fixed_array_bounds() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = reader.get(1);
     }));
-    assert!(result.is_err(), "strict-validation should catch out-of-bounds fixed array access");
+    assert!(
+        result.is_err(),
+        "strict-validation should catch out-of-bounds fixed array access"
+    );
 }
 
 #[cfg(feature = "dyn")]
 #[test]
 fn test_schema_and_dyn_context() {
-    use mmapstruct::{DynContext, GetSchema, write_to_buf_raw};
+    use mmapstruct::{write_to_buf_raw, DynContext, GetSchema};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct SchemaTest {
@@ -1042,7 +1270,7 @@ fn test_schema_and_dyn_context() {
     let buf = write_to_buf_raw(&s);
     let ctx = DynContext::new(&buf);
 
-    let schema = <SchemaTest as GetSchema>::get_schema();
+    let schema = <SchemaTest as GetSchema>::get_struct_schema();
     assert_eq!(schema.name, "SchemaTest");
     assert!(schema.header_size > 0);
     assert!(schema.fixed_section_size > 0);
@@ -1094,7 +1322,7 @@ fn test_schema_and_dyn_context() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_pod_array_custom_struct_size() {
-    use mmapstruct::{DynContext, GetSchema, write_to_buf_raw};
+    use mmapstruct::{write_to_buf_raw, DynContext, GetSchema};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct VecPod3d {
@@ -1103,14 +1331,22 @@ fn test_dyn_pod_array_custom_struct_size() {
     }
 
     let points = vec![
-        Point3d { x: 1.0, y: 2.0, z: 3.0 },
-        Point3d { x: 4.0, y: 5.0, z: 6.0 },
+        Point3d {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        },
+        Point3d {
+            x: 4.0,
+            y: 5.0,
+            z: 6.0,
+        },
     ];
     let s = VecPod3d { points };
     let buf = write_to_buf_raw(&s);
     let ctx = DynContext::new(&buf);
 
-    let schema = <VecPod3d as GetSchema>::get_schema();
+    let schema = <VecPod3d as GetSchema>::get_struct_schema();
     let root = <VecPod3d as GetSchema>::root_value(schema.header_size);
 
     let field = ctx.field_get(&root, "points").unwrap();
@@ -1137,7 +1373,7 @@ fn test_dyn_pod_array_custom_struct_size() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_hashmap_access() {
-    use mmapstruct::{DynContext, GetSchema, write_to_buf_raw};
+    use mmapstruct::{write_to_buf_raw, DynContext, GetSchema};
 
     #[derive(MmapStruct, Debug)]
     struct DynHashMapFile {
@@ -1152,7 +1388,7 @@ fn test_dyn_hashmap_access() {
     let buf = write_to_buf_raw(&w);
     let ctx = DynContext::new(&buf);
 
-    let schema = <DynHashMapFile as GetSchema>::get_schema();
+    let schema = <DynHashMapFile as GetSchema>::get_struct_schema();
     let root = <DynHashMapFile as GetSchema>::root_value(schema.header_size);
     let map_val = ctx.field_get(&root, "map").unwrap();
 
@@ -1175,7 +1411,11 @@ fn test_dyn_hashmap_access() {
 #[test]
 fn test_layout_hash_primitives_differ() {
     use mmapstruct::traits::LayoutHash;
-    assert_ne!(u32::HASH, u64::HASH, "different primitives need different hashes");
+    assert_ne!(
+        u32::HASH,
+        u64::HASH,
+        "different primitives need different hashes"
+    );
     assert_ne!(u32::HASH, i32::HASH);
     assert_ne!(f32::HASH, f64::HASH);
     assert_ne!(bool::HASH, u8::HASH);
@@ -1196,7 +1436,11 @@ fn test_layout_hash_containers() {
 fn test_layout_hash_pod_struct() {
     use mmapstruct::traits::LayoutHash;
     // Point = { x: u32, y: u32 } is a pod struct
-    assert_ne!(<Point as LayoutHash>::HASH, u32::HASH, "pod struct hash should differ from single field");
+    assert_ne!(
+        <Point as LayoutHash>::HASH,
+        u32::HASH,
+        "pod struct hash should differ from single field"
+    );
     // Point3d = { x: f32, y: f32, z: f32 } ≠ Point
     assert_ne!(<Point3d as LayoutHash>::HASH, <Point as LayoutHash>::HASH);
     // Hash is stable
@@ -1208,18 +1452,27 @@ fn test_layout_hash_mixed_struct() {
     use mmapstruct::traits::LayoutHash;
     // MyFile = { id: u32, name: String, vals: Vec<u32> }
     // WithOption = { id: u32, maybe_name: Option<String>, tags: Vec<String> }
-    assert_ne!(<MyFile as LayoutHash>::HASH, <WithOption as LayoutHash>::HASH);
+    assert_ne!(
+        <MyFile as LayoutHash>::HASH,
+        <WithOption as LayoutHash>::HASH
+    );
     // Hash is stable across invocations
     assert_eq!(<MyFile as LayoutHash>::HASH, <MyFile as LayoutHash>::HASH);
     // Hash differs when byref changes
-    assert_ne!(<WithOption as LayoutHash>::HASH, <WithOptionByRef as LayoutHash>::HASH);
+    assert_ne!(
+        <WithOption as LayoutHash>::HASH,
+        <WithOptionByRef as LayoutHash>::HASH
+    );
 }
 
 #[test]
 fn test_layout_hash_enum() {
     use mmapstruct::traits::LayoutHash;
     // SimpleEnum hashes deterministically
-    assert_eq!(<SimpleEnum as LayoutHash>::HASH, <SimpleEnum as LayoutHash>::HASH);
+    assert_eq!(
+        <SimpleEnum as LayoutHash>::HASH,
+        <SimpleEnum as LayoutHash>::HASH
+    );
     // Non-zero (hash actually computed)
     assert_ne!(<SimpleEnum as LayoutHash>::HASH, 0);
 }
@@ -1230,10 +1483,12 @@ fn test_layout_hash_enum() {
 
 #[test]
 fn test_crc_write_and_read() {
-    use mmapstruct::{MmapStruct, write_to_buf, BufReader, HEADER_SIZE};
     use bytemuck;
+    use mmapstruct::{write_to_buf, BufReader, MmapStruct, HEADER_SIZE};
 
-    #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+    #[derive(
+        MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+    )]
     #[repr(C)]
     struct Point {
         x: u32,
@@ -1251,9 +1506,11 @@ fn test_crc_write_and_read() {
 
 #[test]
 fn test_crc_without_crc_flag() {
-    use mmapstruct::{MmapStruct, write_to_buf, BufReader};
+    use mmapstruct::{write_to_buf, BufReader, MmapStruct};
 
-    #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+    #[derive(
+        MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+    )]
     #[repr(C)]
     struct Point {
         x: u32,
@@ -1271,10 +1528,12 @@ fn test_crc_without_crc_flag() {
 #[test]
 #[should_panic(expected = "CRC64 mismatch")]
 fn test_crc_corrupt_data_panics() {
-    use mmapstruct::{MmapStruct, write_to_buf, BufReader, HEADER_SIZE};
     use bytemuck;
+    use mmapstruct::{write_to_buf, BufReader, MmapStruct, HEADER_SIZE};
 
-    #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+    #[derive(
+        MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+    )]
     #[repr(C)]
     struct Point {
         x: u32,
@@ -1324,9 +1583,18 @@ struct ByrefVecFile {
 fn test_vec_byref_roundtrip() {
     let w = ByrefVecFile {
         items: vec![
-            ByrefItem { id: 1, name: "Alice".into() },
-            ByrefItem { id: 2, name: "Bob".into() },
-            ByrefItem { id: 3, name: "Alice".into() },
+            ByrefItem {
+                id: 1,
+                name: "Alice".into(),
+            },
+            ByrefItem {
+                id: 2,
+                name: "Bob".into(),
+            },
+            ByrefItem {
+                id: 3,
+                name: "Alice".into(),
+            },
         ],
     };
 
@@ -1336,9 +1604,27 @@ fn test_vec_byref_roundtrip() {
     let items: Vec<ByrefItem> = reader.items.into_iter().map(|r| r.into()).collect();
 
     assert_eq!(items.len(), 3);
-    assert_eq!(items[0], ByrefItem { id: 1, name: "Alice".into() });
-    assert_eq!(items[1], ByrefItem { id: 2, name: "Bob".into() });
-    assert_eq!(items[2], ByrefItem { id: 3, name: "Alice".into() });
+    assert_eq!(
+        items[0],
+        ByrefItem {
+            id: 1,
+            name: "Alice".into()
+        }
+    );
+    assert_eq!(
+        items[1],
+        ByrefItem {
+            id: 2,
+            name: "Bob".into()
+        }
+    );
+    assert_eq!(
+        items[2],
+        ByrefItem {
+            id: 3,
+            name: "Alice".into()
+        }
+    );
 }
 
 #[test]
@@ -1353,12 +1639,22 @@ fn test_vec_byref_empty() {
 
 #[test]
 fn test_vec_byref_dedup_postponed_size() {
-    let long = "A long string that should be deduplicated when written with byref dedup".to_string();
+    let long =
+        "A long string that should be deduplicated when written with byref dedup".to_string();
     let w = ByrefVecFile {
         items: vec![
-            ByrefItem { id: 1, name: long.clone() },
-            ByrefItem { id: 2, name: "short".into() },
-            ByrefItem { id: 3, name: long.clone() },
+            ByrefItem {
+                id: 1,
+                name: long.clone(),
+            },
+            ByrefItem {
+                id: 2,
+                name: "short".into(),
+            },
+            ByrefItem {
+                id: 3,
+                name: long.clone(),
+            },
         ],
     };
 
@@ -1368,7 +1664,13 @@ fn test_vec_byref_dedup_postponed_size() {
     let items: Vec<ByrefItem> = reader.items.into_iter().map(|r| r.into()).collect();
 
     assert_eq!(items.len(), 3);
-    assert_eq!(items[0], ByrefItem { id: 1, name: long.clone() });
+    assert_eq!(
+        items[0],
+        ByrefItem {
+            id: 1,
+            name: long.clone()
+        }
+    );
     assert_eq!(items[2], ByrefItem { id: 3, name: long });
 }
 
@@ -1420,7 +1722,11 @@ fn test_hashmap_string_string_roundtrip() {
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
     let reader = r.read::<HashMapFile>();
-    let result: HashMap<String, String> = reader.map.iter().map(|(k, v)| (k.into(), v.into())).collect();
+    let result: HashMap<String, String> = reader
+        .map
+        .iter()
+        .map(|(k, v)| (k.into(), v.into()))
+        .collect();
     assert_eq!(result.get("key1").map(|s| s.as_str()), Some("val1"));
     assert_eq!(result.get("key2").map(|s| s.as_str()), Some("val2"));
     assert_eq!(result.get("key3").map(|s| s.as_str()), Some("val3"));
@@ -1430,7 +1736,9 @@ fn test_hashmap_string_string_roundtrip() {
 #[test]
 fn test_hashmap_string_string_empty() {
     use std::collections::HashMap;
-    let w = HashMapFile { map: HashMap::new() };
+    let w = HashMapFile {
+        map: HashMap::new(),
+    };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
     let reader = r.read::<HashMapFile>();
@@ -1510,7 +1818,9 @@ fn test_hashmap_u32_u32_roundtrip() {
 #[test]
 fn test_hashmap_u32_u32_empty() {
     use std::collections::HashMap;
-    let w = HashMapPodPod { map: HashMap::new() };
+    let w = HashMapPodPod {
+        map: HashMap::new(),
+    };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
     let reader = r.read::<HashMapPodPod>();
@@ -1533,18 +1843,55 @@ fn test_hashmap_key_with_option() {
     }
 
     let mut map = HashMap::new();
-    map.insert(KeyWithOption { id: 1, tag: Some("a".into()) }, "first".into());
+    map.insert(
+        KeyWithOption {
+            id: 1,
+            tag: Some("a".into()),
+        },
+        "first".into(),
+    );
     map.insert(KeyWithOption { id: 2, tag: None }, "second".into());
-    map.insert(KeyWithOption { id: 3, tag: Some("b".into()) }, "third".into());
+    map.insert(
+        KeyWithOption {
+            id: 3,
+            tag: Some("b".into()),
+        },
+        "third".into(),
+    );
     let w = OptKeyFile { map };
     let buf = crate::write_to_buf(&w, false);
     let r = crate::BufReader::new(buf);
     let reader = r.read::<OptKeyFile>();
 
     assert_eq!(reader.map.len(), 3);
-    let result: HashMap<KeyWithOption, String> = reader.map.iter().map(|(k, v)| (k.into(), v.into())).collect();
-    assert_eq!(result.get(&KeyWithOption { id: 1, tag: Some("a".into()) }).map(|s| s.as_str()), Some("first"));
-    assert_eq!(result.get(&KeyWithOption { id: 2, tag: None }).map(|s| s.as_str()), Some("second"));
-    assert_eq!(result.get(&KeyWithOption { id: 3, tag: Some("b".into()) }).map(|s| s.as_str()), Some("third"));
+    let result: HashMap<KeyWithOption, String> = reader
+        .map
+        .iter()
+        .map(|(k, v)| (k.into(), v.into()))
+        .collect();
+    assert_eq!(
+        result
+            .get(&KeyWithOption {
+                id: 1,
+                tag: Some("a".into())
+            })
+            .map(|s| s.as_str()),
+        Some("first")
+    );
+    assert_eq!(
+        result
+            .get(&KeyWithOption { id: 2, tag: None })
+            .map(|s| s.as_str()),
+        Some("second")
+    );
+    assert_eq!(
+        result
+            .get(&KeyWithOption {
+                id: 3,
+                tag: Some("b".into())
+            })
+            .map(|s| s.as_str()),
+        Some("third")
+    );
     assert_eq!(result.get(&KeyWithOption { id: 99, tag: None }), None);
 }

@@ -1,4 +1,4 @@
-use crate::traits::{MmapRead, ReaderOrd, mmap_read_pod, FileRange};
+use crate::traits::{mmap_read_pod, FileRange, MmapRead, ReaderOrd};
 use std::collections::HashMap;
 
 #[inline]

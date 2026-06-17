@@ -26,7 +26,11 @@ pub struct Value {
 
 impl Value {
     pub const fn new(offset: u64, limit: u64, schema: &'static DynValueType) -> Self {
-        Self { offset, limit, schema }
+        Self {
+            offset,
+            limit,
+            schema,
+        }
     }
 }
 
@@ -55,7 +59,9 @@ pub enum DynValueType {
     /// String: `None` = dynamic (offset table entry), `Some(N)` = `#[mmap(inline(N))]`.
     Str(Option<u64>),
     /// A pod struct — plain bytes of known size.
-    PodStruct { size: u64 },
+    PodStruct {
+        size: u64,
+    },
     /// A struct with dynamic fields. The function pointer resolves the schema lazily
     /// (supports cross-crate references and recursive types).
     Struct(fn() -> &'static StructSchema),
@@ -67,7 +73,33 @@ pub enum DynValueType {
     ByRef(&'static DynValueType),
     /// A `HashMap<K, V>` (sorted keys, binary search).
     HashMap(&'static HashMapSchema),
+    /// An enum with named variants, each described by a StructSchema.
+    /// Discriminant is stored as `u32` at the value offset.
+    Enum(&'static EnumSchema),
+    /// Lazily resolved type. Used when the static type might be a struct
+    /// or an enum (e.g. Vec element type at derive time). The builder
+    /// resolves `Lazy` at schema-construction time, so it never appears
+    /// in values at runtime.
+    Lazy(fn() -> &'static DynValueType),
 }
+
+/// Canonical statics for primitive types. Using these instead of generating
+/// local `static` per field lets the schema builder deduplicate types
+/// by pointer identity, producing a more compact type table.
+pub static VT_U8: DynValueType = DynValueType::U8;
+pub static VT_U16: DynValueType = DynValueType::U16;
+pub static VT_U32: DynValueType = DynValueType::U32;
+pub static VT_U64: DynValueType = DynValueType::U64;
+pub static VT_I8: DynValueType = DynValueType::I8;
+pub static VT_I16: DynValueType = DynValueType::I16;
+pub static VT_I32: DynValueType = DynValueType::I32;
+pub static VT_I64: DynValueType = DynValueType::I64;
+pub static VT_F32: DynValueType = DynValueType::F32;
+pub static VT_F64: DynValueType = DynValueType::F64;
+pub static VT_BOOL: DynValueType = DynValueType::Bool;
+pub static VT_USIZE: DynValueType = DynValueType::Usize;
+pub static VT_ISIZE: DynValueType = DynValueType::Isize;
+pub static VT_STR_DYNAMIC: DynValueType = DynValueType::Str(None);
 
 // ---------------------------------------------------------------------------
 // HashMap schema
@@ -83,6 +115,20 @@ pub struct HashMapSchema {
     pub key_is_pod: bool,
     /// Whether values are stored as a dense pod array (no offset table).
     pub val_is_pod: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Enum schema
+// ---------------------------------------------------------------------------
+
+/// Describes the layout of an enum.
+pub struct EnumSchema {
+    /// Human-readable type name.
+    pub name: &'static str,
+    /// Variant schemas indexed by discriminant (0-based).
+    pub variants: &'static [&'static StructSchema],
+    /// Size of the discriminant (always 4 bytes, u32).
+    pub disc_size: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +365,10 @@ impl<'a> DynContext<'a> {
     /// Resolve the struct schema for a value whose schema is `DynValueType::Struct(...)`.
     pub fn get_struct_schema(&self, dv: &Value) -> &'static StructSchema {
         match dv.schema {
+            DynValueType::Lazy(resolve) => match resolve() {
+                DynValueType::Struct(resolve2) => resolve2(),
+                _ => panic!("DynContext::get_struct_schema: resolved lazy value is not a struct"),
+            },
             DynValueType::Struct(resolve) => resolve(),
             _ => panic!("DynContext::get_struct_schema: value is not a struct"),
         }
@@ -328,40 +378,100 @@ impl<'a> DynContext<'a> {
     // Struct field navigation
     // -----------------------------------------------------------------------
 
-    /// Navigate into a struct field by name.
+    /// Resolve the active variant of an enum value.
     ///
-    /// `dv` must have schema of type `Struct(...)`. Returns a `Value`
-    /// pointing to the field's data in the buffer.
+    /// Reads the `u32` discriminant at `dv.offset` and returns the variant's
+    /// `StructSchema` together with the byte offset where variant data starts
+    /// (past the discriminant + padding).
+    ///
+    /// Returns `None` if the value is not an enum, or the discriminant is out of range.
+    pub fn enum_variant(&self, dv: &Value) -> Option<(&'static StructSchema, u64)> {
+        let enum_schema = match dv.schema {
+            DynValueType::Lazy(resolve) => match resolve() {
+                DynValueType::Enum(es) => es,
+                _ => return None,
+            },
+            DynValueType::Enum(es) => es,
+            _ => return None,
+        };
+        let disc = u32::from_le_bytes(
+            self.data[dv.offset as usize..dv.offset as usize + 4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let variant_schema = *enum_schema.variants.get(disc)?;
+        // Data starts after 4-byte discriminant, aligned to variant's max alignment
+        let data_off = self.enum_variant_data_offset(dv, variant_schema);
+        Some((variant_schema, data_off))
+    }
+
+    /// Compute the data offset for the currently active enum variant.
+    /// Separated so it can be reused without re-reading the discriminant.
+    fn enum_variant_data_offset(&self, dv: &Value, variant_schema: &StructSchema) -> u64 {
+        let mut max_align = 4usize;
+        for f in variant_schema.fields {
+            let fa = dyn_value_align(f.value_type) as usize;
+            if fa > max_align {
+                max_align = fa;
+            }
+        }
+        let read_align = max_align.max(8);
+        align_up(dv.offset as usize + 4, read_align) as u64
+    }
+
+    /// Navigate into a struct or enum field by name.
+    ///
+    /// For structs, resolves fields directly.
+    /// For enums, resolves fields from the currently active variant.
+    /// Returns `None` if the value type is unknown or the field is not found.
     pub fn field_get(&self, dv: &Value, name: &str) -> Option<Value> {
-        let schema = match dv.schema {
-            DynValueType::Struct(resolve) => resolve(),
+        let (schema, base) = match dv.schema {
+            DynValueType::Lazy(resolve) => {
+                return self.field_get(&Value::new(dv.offset, dv.limit, resolve()), name);
+            }
+            DynValueType::Struct(resolve) => (resolve(), dv.offset),
+            DynValueType::Enum(es) => {
+                let disc = u32::from_le_bytes(
+                    self.data[dv.offset as usize..dv.offset as usize + 4]
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
+                let vs = *es.variants.get(disc)?;
+                let data_off = self.enum_variant_data_offset(dv, vs);
+                (vs, data_off)
+            }
             _ => return None,
         };
         let desc = schema.fields.iter().find(|f| f.name == name)?;
 
         if let Some(dyn_idx) = desc.inline_dyn_index {
-            self.field_get_inline_dyn(dv, schema, desc, dyn_idx)
+            self.field_get_inline_dyn_off(base, schema, desc, dyn_idx)
         } else if desc.is_byref {
-            self.field_get_byref(dv, desc)
+            self.field_get_byref_off(base, desc)
         } else {
             // Pod or inline string in fixed section
-            let fixed_off = dv.offset + desc.offset_in_fixed as u64;
+            let fixed_off = base + desc.offset_in_fixed as u64;
             let limit = match desc.value_type {
                 DynValueType::Str(Some(n)) => fixed_off + n,
                 DynValueType::PodStruct { size } => fixed_off + size,
-                _ => fixed_off + 8, // max alignment pad; actual end via schema
+                _ => fixed_off + 8,
             };
             Some(Value::new(fixed_off, limit, desc.value_type))
         }
     }
 
     /// Resolve an inline-dynamic field via the offset table.
-    fn field_get_inline_dyn(
-        &self, dv: &Value, schema: &StructSchema,
-        desc: &FieldDescriptor, dyn_idx: usize,
+    /// `base` is the byte offset of the struct/variant data start (e.g. `dv.offset` for
+    /// a struct, or `data_off` past the discriminant for an enum variant).
+    fn field_get_inline_dyn_off(
+        &self,
+        base: u64,
+        schema: &StructSchema,
+        desc: &FieldDescriptor,
+        dyn_idx: usize,
     ) -> Option<Value> {
-        let ot_offset = dv.offset + schema.fixed_section_size as u64;
-        let values_offset = dv.offset + schema.header_size as u64;
+        let ot_offset = base + schema.fixed_section_size as u64;
+        let values_offset = base + schema.header_size as u64;
 
         let ot_start = ot_offset as usize;
         let off_i: u64 = unsafe { mmap_read_pod::<u64>(&self.data[ot_start + dyn_idx * 8..][..8]) };
@@ -369,7 +479,9 @@ impl<'a> DynContext<'a> {
             unsafe { mmap_read_pod::<u64>(&self.data[ot_start + (dyn_idx + 1) * 8..][..8]) }
         } else {
             // Sentinel at index inline_dyn_count stores total inline dyn data size
-            unsafe { mmap_read_pod::<u64>(&self.data[ot_start + schema.inline_dyn_count * 8..][..8]) }
+            unsafe {
+                mmap_read_pod::<u64>(&self.data[ot_start + schema.inline_dyn_count * 8..][..8])
+            }
         };
 
         let data_off = values_offset + off_i;
@@ -378,17 +490,15 @@ impl<'a> DynContext<'a> {
     }
 
     /// Resolve a byref field: read ByRefRange, compute postponed offset.
-    fn field_get_byref(&self, dv: &Value, desc: &FieldDescriptor) -> Option<Value> {
-        let off = dv.offset + desc.offset_in_fixed as u64;
-        let base = dv.offset;
-        let br: crate::traits::ByRefRange = unsafe {
-            mmap_read_pod(&self.data[off as usize..off as usize + 8])
-        };
+    fn field_get_byref_off(&self, base: u64, desc: &FieldDescriptor) -> Option<Value> {
+        let off = base + desc.offset_in_fixed as u64;
+        let br: crate::traits::ByRefRange =
+            unsafe { mmap_read_pod(&self.data[off as usize..off as usize + 8]) };
         if br.begin == 0 && br.end == 0 {
             // Sentinel `{0,0}` = None for optional byref fields.
             // Return a zero-length Value with the original Option schema,
             // so consumers can distinguish "field is None" from "field not found".
-            return Some(Value::new(dv.offset, dv.offset, desc.value_type));
+            return Some(Value::new(base, base, desc.value_type));
         }
         let data_off = base + br.begin as u64;
         let data_limit = base + br.end as u64;
@@ -441,7 +551,8 @@ impl<'a> DynContext<'a> {
             ArrayLayout::Indexed => {
                 let count_off = (dv.offset + array_schema.count_offset) as usize;
                 let ot_off = count_off + 8;
-                let elem_rel_offset: u64 = unsafe { mmap_read_pod::<u64>(&self.data[ot_off + index * 8..][..8]) };
+                let elem_rel_offset: u64 =
+                    unsafe { mmap_read_pod::<u64>(&self.data[ot_off + index * 8..][..8]) };
                 let values_base = ot_off + count * 8;
                 let off = values_base as u64 + elem_rel_offset;
                 // End: either next offset or remaining values end
@@ -473,7 +584,8 @@ impl<'a> DynContext<'a> {
             DynValueType::HashMap(_) => (),
             _ => panic!("DynContext::hashmap_len: value is not a hashmap"),
         };
-        let count = unsafe { mmap_read_pod::<u64>(&self.data[dv.offset as usize..dv.offset as usize + 8]) };
+        let count =
+            unsafe { mmap_read_pod::<u64>(&self.data[dv.offset as usize..dv.offset as usize + 8]) };
         count as usize
     }
 
@@ -492,7 +604,8 @@ impl<'a> DynContext<'a> {
         let key_align = dyn_value_align(schema.key_type);
         let val_align = dyn_value_align(schema.value_type);
 
-        let (key_off, key_limit, val_off, val_limit) = match (schema.key_is_pod, schema.val_is_pod) {
+        let (key_off, key_limit, val_off, val_limit) = match (schema.key_is_pod, schema.val_is_pod)
+        {
             (true, true) => {
                 // podK_podV: [count: u64, [K; count], [V; count]]
                 let key_size = dyn_value_size(schema.key_type);
@@ -517,8 +630,11 @@ impl<'a> DynContext<'a> {
                 let vals_data_start = align_up(raw_vals_data_start, val_align);
                 let ko = (keys_start + index * key_size) as u64;
                 let ke = (keys_start + (index + 1) * key_size) as u64;
-                let vs_rel = unsafe { mmap_read_pod::<u32>(&self.data[val_ot_start + index * 4..]) } as u64;
-                let ve_rel = unsafe { mmap_read_pod::<u32>(&self.data[val_ot_start + (index + 1) * 4..]) } as u64;
+                let vs_rel =
+                    unsafe { mmap_read_pod::<u32>(&self.data[val_ot_start + index * 4..]) } as u64;
+                let ve_rel =
+                    unsafe { mmap_read_pod::<u32>(&self.data[val_ot_start + (index + 1) * 4..]) }
+                        as u64;
                 let vo = vals_data_start as u64 + vs_rel;
                 let ve = vals_data_start as u64 + ve_rel;
                 (ko, ke, vo, ve)
@@ -527,11 +643,15 @@ impl<'a> DynContext<'a> {
                 // inlinedK_podV: [count: u64, key_offsets, keys_data..., [V; count]]
                 let key_ot_start = base + 8;
                 let keys_data_start = align_up(key_ot_start + ot_byte_size, key_align);
-                let ks_rel = unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + index * 4..]) } as u64;
-                let ke_rel = unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + (index + 1) * 4..]) } as u64;
+                let ks_rel =
+                    unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + index * 4..]) } as u64;
+                let ke_rel =
+                    unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + (index + 1) * 4..]) }
+                        as u64;
                 let ko = keys_data_start as u64 + ks_rel;
                 let ke = keys_data_start as u64 + ke_rel;
-                let keys_total = unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + count * 4..]) } as u64;
+                let keys_total =
+                    unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + count * 4..]) } as u64;
                 let aligned_keys = align_up(keys_data_start + keys_total as usize, val_align);
                 let val_size = dyn_value_size(schema.value_type);
                 let vo = (aligned_keys + index * val_size) as u64;
@@ -543,13 +663,20 @@ impl<'a> DynContext<'a> {
                 let key_ot_start = base + 8;
                 let val_ot_start = key_ot_start + ot_byte_size;
                 let keys_data_start = align_up(val_ot_start + ot_byte_size, key_align);
-                let ks_rel = unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + index * 4..]) } as u64;
-                let ke_rel = unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + (index + 1) * 4..]) } as u64;
+                let ks_rel =
+                    unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + index * 4..]) } as u64;
+                let ke_rel =
+                    unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + (index + 1) * 4..]) }
+                        as u64;
                 let ko = keys_data_start as u64 + ks_rel;
                 let ke = keys_data_start as u64 + ke_rel;
-                let vs_rel = unsafe { mmap_read_pod::<u32>(&self.data[val_ot_start + index * 4..]) } as u64;
-                let ve_rel = unsafe { mmap_read_pod::<u32>(&self.data[val_ot_start + (index + 1) * 4..]) } as u64;
-                let keys_total = unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + count * 4..]) } as u64;
+                let vs_rel =
+                    unsafe { mmap_read_pod::<u32>(&self.data[val_ot_start + index * 4..]) } as u64;
+                let ve_rel =
+                    unsafe { mmap_read_pod::<u32>(&self.data[val_ot_start + (index + 1) * 4..]) }
+                        as u64;
+                let keys_total =
+                    unsafe { mmap_read_pod::<u32>(&self.data[key_ot_start + count * 4..]) } as u64;
                 let aligned_keys = align_up(keys_data_start + keys_total as usize, val_align);
                 let vals_data_start = aligned_keys;
                 let vo = vals_data_start as u64 + vs_rel;
@@ -574,16 +701,27 @@ pub fn dyn_value_align(vt: &DynValueType) -> usize {
         DynValueType::U8 | DynValueType::I8 | DynValueType::Bool => 1,
         DynValueType::U16 | DynValueType::I16 => 2,
         DynValueType::U32 | DynValueType::I32 | DynValueType::F32 => 4,
-        DynValueType::U64 | DynValueType::I64 | DynValueType::F64
-        | DynValueType::Usize | DynValueType::Isize => 8,
+        DynValueType::U64
+        | DynValueType::I64
+        | DynValueType::F64
+        | DynValueType::Usize
+        | DynValueType::Isize => 8,
         DynValueType::Str(_) => 1,
         DynValueType::PodStruct { size } => {
             let s = *size as usize;
-            if s == 0 { 1 } else { s.min(8).next_power_of_two() }
+            if s == 0 {
+                1
+            } else {
+                s.min(8).next_power_of_two()
+            }
         }
-        DynValueType::Struct(_) | DynValueType::Array(_)
-        | DynValueType::Option(_) | DynValueType::ByRef(_)
-        | DynValueType::HashMap(_) => 8,
+        DynValueType::Struct(_)
+        | DynValueType::Array(_)
+        | DynValueType::Option(_)
+        | DynValueType::ByRef(_)
+        | DynValueType::HashMap(_)
+        | DynValueType::Enum(_) => 8,
+        DynValueType::Lazy(resolve) => dyn_value_align(resolve()),
     }
 }
 
@@ -592,8 +730,11 @@ pub fn dyn_value_size(vt: &DynValueType) -> usize {
         DynValueType::U8 | DynValueType::I8 | DynValueType::Bool => 1,
         DynValueType::U16 | DynValueType::I16 => 2,
         DynValueType::U32 | DynValueType::I32 | DynValueType::F32 => 4,
-        DynValueType::U64 | DynValueType::I64 | DynValueType::F64
-        | DynValueType::Usize | DynValueType::Isize => 8,
+        DynValueType::U64
+        | DynValueType::I64
+        | DynValueType::F64
+        | DynValueType::Usize
+        | DynValueType::Isize => 8,
         DynValueType::PodStruct { size } => *size as usize,
         _ => 0, // non-pod: variable size
     }
@@ -606,10 +747,21 @@ pub(crate) const fn align_up(offset: usize, align: usize) -> usize {
 
 impl DynValueType {
     pub fn is_numeric(&self) -> bool {
-        matches!(self, DynValueType::U32 | DynValueType::U64 | DynValueType::I32
-            | DynValueType::I64 | DynValueType::F32 | DynValueType::F64
-            | DynValueType::U16 | DynValueType::I16 | DynValueType::U8
-            | DynValueType::I8 | DynValueType::Usize | DynValueType::Isize)
+        matches!(
+            self,
+            DynValueType::U32
+                | DynValueType::U64
+                | DynValueType::I32
+                | DynValueType::I64
+                | DynValueType::F32
+                | DynValueType::F64
+                | DynValueType::U16
+                | DynValueType::I16
+                | DynValueType::U8
+                | DynValueType::I8
+                | DynValueType::Usize
+                | DynValueType::Isize
+        )
     }
 
     pub fn is_string(&self) -> bool {
@@ -633,7 +785,7 @@ impl DynValueType {
 ///
 /// Generated by `#[derive(MmapStruct)]` behind `feature = "dyn"`.
 pub trait GetSchema {
-    fn get_schema() -> &'static StructSchema;
+    fn get_struct_schema() -> &'static StructSchema;
 
     /// The `DynValueType` that represents the root of this struct.
     fn root_value_type() -> &'static DynValueType;

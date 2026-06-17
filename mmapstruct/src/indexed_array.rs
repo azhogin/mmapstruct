@@ -1,4 +1,4 @@
-use crate::traits::{MmapRead, FileRange};
+use crate::traits::{FileRange, MmapRead};
 use std::marker::PhantomData;
 
 #[derive(Clone)]
@@ -15,26 +15,44 @@ pub struct IndexedArrayReader<'a, T> {
 
 impl<'a, T: MmapRead + 'a> IndexedArrayReader<'a, T> {
     pub fn new(data: &'a [u8], range: FileRange) -> Self {
-        let count = if range.len() < 8 { 0 } else {
+        let count = if range.len() < 8 {
+            0
+        } else {
             u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap()) as usize
         };
         #[cfg(feature = "strict-validation")]
         {
             let max_count = range.len() / 8;
-            assert!(count <= max_count,
+            assert!(
+                count <= max_count,
                 "IndexedArrayReader: count {} exceeds max possible {} for range len {}",
-                count, max_count, range.len());
+                count,
+                max_count,
+                range.len()
+            );
         }
         let offsets_offset = range.start + 8;
         let values_offset = offsets_offset + count * 8;
         let offset_bytes = &data[offsets_offset..offsets_offset + count * 8];
         let total_values_size = range.end - values_offset;
 
-        Self { data, range, count, offset_bytes, total_values_size, values_offset, _phantom: PhantomData }
+        Self {
+            data,
+            range,
+            count,
+            offset_bytes,
+            total_values_size,
+            values_offset,
+            _phantom: PhantomData,
+        }
     }
 
-    pub fn len(&self) -> usize { self.count }
-    pub fn is_empty(&self) -> bool { self.count == 0 }
+    pub fn len(&self) -> usize {
+        self.count
+    }
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
 
     fn offset(&self, i: usize) -> usize {
         if i < self.count {
@@ -46,17 +64,27 @@ impl<'a, T: MmapRead + 'a> IndexedArrayReader<'a, T> {
     }
 
     pub fn get(&self, index: usize) -> Option<T::Reader<'a>> {
-        if index >= self.count { return None; }
+        if index >= self.count {
+            return None;
+        }
         let start = self.values_offset + self.offset(index);
         let end = self.values_offset + self.offset(index + 1);
         #[cfg(feature = "strict-validation")]
         {
-            assert!(start <= end,
+            assert!(
+                start <= end,
                 "IndexedArrayReader::get({}): start {} > end {}",
-                index, start, end);
-            assert!(end <= self.data.len(),
+                index,
+                start,
+                end
+            );
+            assert!(
+                end <= self.data.len(),
                 "IndexedArrayReader::get({}): end {} > data len {}",
-                index, end, self.data.len());
+                index,
+                end,
+                self.data.len()
+            );
         }
         Some(T::read(self.data, start..end))
     }
@@ -76,13 +104,17 @@ impl<'a, T: MmapRead + 'a> IndexedArrayReader<'a, T> {
 impl<'a, T: MmapRead + 'a> IntoIterator for &IndexedArrayReader<'a, T> {
     type Item = T::Reader<'a>;
     type IntoIter = IndexedArrayIter<'a, T>;
-    fn into_iter(self) -> Self::IntoIter { self.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 impl<'a, T: MmapRead + 'a> IntoIterator for IndexedArrayReader<'a, T> {
     type Item = T::Reader<'a>;
     type IntoIter = IndexedArrayIter<'a, T>;
-    fn into_iter(self) -> Self::IntoIter { self.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 pub struct IndexedArrayIter<'a, T: MmapRead> {
@@ -133,7 +165,10 @@ where
 }
 
 /// Write an indexed array (count + offsets + values).
-pub fn write_indexed_array<'data, T: crate::traits::MmapWrite>(items: &'data [T], ctx: &mut crate::WriteContext<'data>) {
+pub fn write_indexed_array<'data, T: crate::traits::MmapWrite>(
+    items: &'data [T],
+    ctx: &mut crate::WriteContext<'data>,
+) {
     let count_pos = ctx.current_offset();
     ctx.write_u64_le(0);
     let offsets_pos = ctx.current_offset();
@@ -143,6 +178,7 @@ pub fn write_indexed_array<'data, T: crate::traits::MmapWrite>(items: &'data [T]
     for (i, elem) in items.iter().enumerate() {
         ctx.write_u64_le_at(current_offset, offsets_pos + i * 8);
         elem.write(ctx);
+        ctx.align_to(8);
         let values_start = offsets_pos + items.len() * 8;
         current_offset = (ctx.current_offset() - values_start) as u64;
     }

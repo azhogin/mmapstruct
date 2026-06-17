@@ -78,7 +78,9 @@ pub fn tokenize(input: &str) -> Result<Vec<Token<'_>>, String> {
                             }
                         }
                         let s = format!("0{}", &input[start..end]);
-                        let n: f64 = s.parse().map_err(|e| format!("bad float `{}`: {}", &input[start..end], e))?;
+                        let n: f64 = s
+                            .parse()
+                            .map_err(|e| format!("bad float `{}`: {}", &input[start..end], e))?;
                         tokens.push(Token::Float(n));
                     } else {
                         tokens.push(Token::Dot);
@@ -144,13 +146,19 @@ pub fn tokenize(input: &str) -> Result<Vec<Token<'_>>, String> {
                             end = j + 2;
                         }
                         Some((_, _)) => end += 1,
-                        None => return Err(format!("unterminated string literal at position {}", i)),
+                        None => {
+                            return Err(format!("unterminated string literal at position {}", i))
+                        }
                     }
                 }
                 tokens.push(Token::Str(&input[start..end]));
             }
             ch if ch.is_ascii_digit()
-                || (ch == '-' && chars.peek().is_some_and(|(_, c)| c.is_ascii_digit() || *c == '.')) => {
+                || (ch == '-'
+                    && chars
+                        .peek()
+                        .is_some_and(|(_, c)| c.is_ascii_digit() || *c == '.')) =>
+            {
                 let start = i;
                 let mut end = i + 1;
                 let mut is_float = false;
@@ -175,10 +183,14 @@ pub fn tokenize(input: &str) -> Result<Vec<Token<'_>>, String> {
                     }
                 }
                 if is_float {
-                    let n: f64 = input[start..end].parse().map_err(|e| format!("bad float `{}`: {}", &input[start..end], e))?;
+                    let n: f64 = input[start..end]
+                        .parse()
+                        .map_err(|e| format!("bad float `{}`: {}", &input[start..end], e))?;
                     tokens.push(Token::Float(n));
                 } else {
-                    let n: i64 = input[start..end].parse().map_err(|e| format!("bad integer `{}`: {}", &input[start..end], e))?;
+                    let n: i64 = input[start..end]
+                        .parse()
+                        .map_err(|e| format!("bad integer `{}`: {}", &input[start..end], e))?;
                     tokens.push(Token::Int(n));
                 }
             }
@@ -216,77 +228,92 @@ mod tests {
     #[test]
     fn test_filter() {
         let t = tokenize("/sections[?id>10]").unwrap();
-        assert_eq!(t, vec![
-            Token::Slash,
-            Token::Ident("sections"),
-            Token::LBracket,
-            Token::Question,
-            Token::Ident("id"),
-            Token::Gt,
-            Token::Int(10),
-            Token::RBracket,
-        ]);
+        assert_eq!(
+            t,
+            vec![
+                Token::Slash,
+                Token::Ident("sections"),
+                Token::LBracket,
+                Token::Question,
+                Token::Ident("id"),
+                Token::Gt,
+                Token::Int(10),
+                Token::RBracket,
+            ]
+        );
     }
 
     #[test]
     fn test_string_contains() {
         let t = tokenize("/sections[?name~sensor]").unwrap();
-        assert_eq!(t, vec![
-            Token::Slash,
-            Token::Ident("sections"),
-            Token::LBracket,
-            Token::Question,
-            Token::Ident("name"),
-            Token::Tilde,
-            Token::Ident("sensor"),
-            Token::RBracket,
-        ]);
+        assert_eq!(
+            t,
+            vec![
+                Token::Slash,
+                Token::Ident("sections"),
+                Token::LBracket,
+                Token::Question,
+                Token::Ident("name"),
+                Token::Tilde,
+                Token::Ident("sensor"),
+                Token::RBracket,
+            ]
+        );
     }
 
     #[test]
     fn test_pipe() {
         let t = tokenize("/sections | select(.name~sensor)").unwrap();
-        assert_eq!(t, vec![
-            Token::Slash,
-            Token::Ident("sections"),
-            Token::Pipe,
-            Token::Ident("select"),
-            Token::LParen,
-            Token::Dot,
-            Token::Ident("name"),
-            Token::Tilde,
-            Token::Ident("sensor"),
-            Token::RParen,
-        ]);
+        assert_eq!(
+            t,
+            vec![
+                Token::Slash,
+                Token::Ident("sections"),
+                Token::Pipe,
+                Token::Ident("select"),
+                Token::LParen,
+                Token::Dot,
+                Token::Ident("name"),
+                Token::Tilde,
+                Token::Ident("sensor"),
+                Token::RParen,
+            ]
+        );
     }
 
     #[test]
     fn test_float_literal() {
         let t = tokenize("/points[?x>2.5]").unwrap();
-        assert_eq!(t, vec![
-            Token::Slash,
-            Token::Ident("points"),
-            Token::LBracket,
-            Token::Question,
-            Token::Ident("x"),
-            Token::Gt,
-            Token::Float(2.5),
-            Token::RBracket,
-        ]);
+        assert_eq!(
+            t,
+            vec![
+                Token::Slash,
+                Token::Ident("points"),
+                Token::LBracket,
+                Token::Question,
+                Token::Ident("x"),
+                Token::Gt,
+                Token::Float(2.5),
+                Token::RBracket,
+            ]
+        );
     }
 
     #[test]
     fn test_float_edge() {
         // 0.5 and .5 — both should be floats
         let t = tokenize("/a[?b<0.5]").unwrap();
-        assert_eq!(t[..6], [
-            Token::Slash,
-            Token::Ident("a"),
-            Token::LBracket,
-            Token::Question,
-            Token::Ident("b"),
-            Token::Lt,
-        ]);
+        assert_eq!(
+            t[..6],
+            [
+                Token::Slash,
+                Token::Ident("a"),
+                Token::LBracket,
+                Token::Question,
+                Token::Ident("b"),
+                Token::Lt,
+            ]
+        );
         assert_eq!(t[6], Token::Float(0.5));
         assert_eq!(t[7], Token::RBracket);
     }
@@ -295,14 +322,17 @@ mod tests {
     fn test_leading_dot_float() {
         // .5 alone should be Float(0.5), not Dot + Int(5)
         let t = tokenize("/a[?b>.5]").unwrap();
-        assert_eq!(t[..6], [
-            Token::Slash,
-            Token::Ident("a"),
-            Token::LBracket,
-            Token::Question,
-            Token::Ident("b"),
-            Token::Gt,
-        ]);
+        assert_eq!(
+            t[..6],
+            [
+                Token::Slash,
+                Token::Ident("a"),
+                Token::LBracket,
+                Token::Question,
+                Token::Ident("b"),
+                Token::Gt,
+            ]
+        );
         assert_eq!(t[6], Token::Float(0.5));
         assert_eq!(t[7], Token::RBracket);
     }

@@ -1,8 +1,8 @@
+use super::common::{align_up, align_write, read_count, sort_pairs};
 use crate::traits::{FileRange, MmapPod};
+use core::mem::size_of;
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use super::common::{read_count, sort_pairs, align_up, align_write};
-use core::mem::size_of;
 
 /// Layout: `[count: u64, [K; count], [V; count]]`
 ///
@@ -31,12 +31,14 @@ impl<'a, K: MmapPod, V: MmapPod> HashMapReader<'a, K, V> {
     pub fn new(data: &'a [u8], range: FileRange) -> Self {
         let count = read_count(data, &range);
         #[cfg(feature = "strict-validation")]
-        let keys_size = count.checked_mul(core::mem::size_of::<K>())
+        let keys_size = count
+            .checked_mul(core::mem::size_of::<K>())
             .expect("podK_podV: overflow computing keys_size");
         #[cfg(not(feature = "strict-validation"))]
         let keys_size = count * core::mem::size_of::<K>();
         #[cfg(feature = "strict-validation")]
-        let vals_size = count.checked_mul(core::mem::size_of::<V>())
+        let vals_size = count
+            .checked_mul(core::mem::size_of::<V>())
             .expect("podK_podV: overflow computing vals_size");
         #[cfg(not(feature = "strict-validation"))]
         let vals_size = count * core::mem::size_of::<V>();
@@ -45,8 +47,13 @@ impl<'a, K: MmapPod, V: MmapPod> HashMapReader<'a, K, V> {
         #[cfg(feature = "strict-validation")]
         {
             let keys_end = keys_start + keys_size;
-            assert!(keys_end <= data.len(),
-                "podK_podV: keys range {}..{} exceeds data len {}", keys_start, keys_end, data.len());
+            assert!(
+                keys_end <= data.len(),
+                "podK_podV: keys range {}..{} exceeds data len {}",
+                keys_start,
+                keys_end,
+                data.len()
+            );
         }
         let keys_bytes = &data[keys_start..keys_start + keys_size];
         let keys: &[K] = crate::bytemuck::cast_slice(keys_bytes);
@@ -55,38 +62,60 @@ impl<'a, K: MmapPod, V: MmapPod> HashMapReader<'a, K, V> {
         #[cfg(feature = "strict-validation")]
         {
             let vals_end = vals_start + vals_size;
-            assert!(vals_end <= data.len(),
-                "podK_podV: vals range {}..{} exceeds data len {}", vals_start, vals_end, data.len());
+            assert!(
+                vals_end <= data.len(),
+                "podK_podV: vals range {}..{} exceeds data len {}",
+                vals_start,
+                vals_end,
+                data.len()
+            );
         }
         let vals_bytes = &data[vals_start..vals_start + vals_size];
         let vals: &[V] = crate::bytemuck::cast_slice(vals_bytes);
-        Self { count, keys, vals, _phantom: PhantomData }
+        Self {
+            count,
+            keys,
+            vals,
+            _phantom: PhantomData,
+        }
     }
 
-    pub fn len(&self) -> usize { self.count }
-    pub fn is_empty(&self) -> bool { self.count == 0 }
+    pub fn len(&self) -> usize {
+        self.count
+    }
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
 
     pub fn get(&self, key: &K) -> Option<&'a V>
-    where K: Ord,
+    where
+        K: Ord,
     {
         self.keys.binary_search(key).ok().map(|i| &self.vals[i])
     }
 
     pub fn contains_key(&self, key: &K) -> bool
-    where K: Ord,
+    where
+        K: Ord,
     {
         self.keys.binary_search(key).is_ok()
     }
 
-    pub fn keys(&self) -> &'a [K] { self.keys }
-    pub fn values(&self) -> &'a [V] { self.vals }
+    pub fn keys(&self) -> &'a [K] {
+        self.keys
+    }
+    pub fn values(&self) -> &'a [V] {
+        self.vals
+    }
 
     pub fn iter(&self) -> impl Iterator<Item = (&'a K, &'a V)> {
         self.keys.iter().zip(self.vals.iter())
     }
 }
 
-impl<'a, K: MmapPod + Ord + std::hash::Hash + Eq, V: MmapPod> From<HashMapReader<'a, K, V>> for std::collections::HashMap<K, V> {
+impl<'a, K: MmapPod + Ord + std::hash::Hash + Eq, V: MmapPod> From<HashMapReader<'a, K, V>>
+    for std::collections::HashMap<K, V>
+{
     fn from(r: HashMapReader<'a, K, V>) -> Self {
         r.iter().map(|(k, v)| (*k, *v)).collect()
     }
@@ -126,17 +155,16 @@ mod tests {
         let mut ctx = WriteContext::new();
         write_hash_map(map, &mut ctx);
         *buf = ctx.finish();
-        let range = FileRange { start: 0, end: buf.len() };
+        let range = FileRange {
+            start: 0,
+            end: buf.len(),
+        };
         HashMapReader::new(buf, range)
     }
 
     #[test]
     fn roundtrip_podK_podV() {
-        let map = HashMap::from([
-            (10u32, 100u64),
-            (20u32, 200u64),
-            (5u32, 50u64),
-        ]);
+        let map = HashMap::from([(10u32, 100u64), (20u32, 200u64), (5u32, 50u64)]);
 
         let mut buf = Vec::new();
         let reader = write_and_read(&map, &mut buf);
@@ -158,11 +186,7 @@ mod tests {
 
     #[test]
     fn roundtrip_u8_keys() {
-        let map = HashMap::from([
-            (10u8, 100u64),
-            (20u8, 200u64),
-            (5u8, 50u64),
-        ]);
+        let map = HashMap::from([(10u8, 100u64), (20u8, 200u64), (5u8, 50u64)]);
         let mut buf = Vec::new();
         let reader = write_and_read(&map, &mut buf);
         assert_eq!(reader.len(), 3);
@@ -174,11 +198,7 @@ mod tests {
 
     #[test]
     fn roundtrip_u64_keys_u8_vals() {
-        let map = HashMap::from([
-            (100u64, 1u8),
-            (200u64, 2u8),
-            (50u64, 3u8),
-        ]);
+        let map = HashMap::from([(100u64, 1u8), (200u64, 2u8), (50u64, 3u8)]);
         let mut buf = Vec::new();
         let reader = write_and_read(&map, &mut buf);
         assert_eq!(reader.len(), 3);
@@ -190,11 +210,7 @@ mod tests {
 
     #[test]
     fn keys_in_order() {
-        let map = HashMap::from([
-            (3u32, 30u64),
-            (1u32, 10u64),
-            (2u32, 20u64),
-        ]);
+        let map = HashMap::from([(3u32, 30u64), (1u32, 10u64), (2u32, 20u64)]);
         let mut buf = Vec::new();
         let reader = write_and_read(&map, &mut buf);
         let collected = reader.keys();

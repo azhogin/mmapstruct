@@ -1,4 +1,4 @@
-use crate::traits::{MmapRead, ByRefRange, FileRange, mmap_read_pod};
+use crate::traits::{mmap_read_pod, ByRefRange, FileRange, MmapRead};
 use crate::WriteContext;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -24,34 +24,70 @@ pub struct ByRefArrayReader<'a, T> {
 impl<'a, T: MmapRead + 'a> ByRefArrayReader<'a, T> {
     pub fn new(data: &'a [u8], range: FileRange, struct_base: usize) -> Self {
         if range.len() < 16 {
-            return Self { data, struct_base, count: 0, ranges: &[], _phantom: PhantomData };
+            return Self {
+                data,
+                struct_base,
+                count: 0,
+                ranges: &[],
+                _phantom: PhantomData,
+            };
         }
-        let count = u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap()) as usize;
+        let count =
+            u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap()) as usize;
         #[allow(unused_variables)]
-        let total_size = u64::from_le_bytes(data[range.start + 8..range.start + 16].try_into().unwrap()) as usize;
+        let total_size =
+            u64::from_le_bytes(data[range.start + 8..range.start + 16].try_into().unwrap())
+                as usize;
         #[cfg(feature = "strict-validation")]
         {
-            assert_eq!(total_size, count * 8,
-                "ByRefArrayReader: total_size {} != count {} * 8", total_size, count);
-            assert!(range.start + 16 + count * 8 <= data.len(),
-                "ByRefArrayReader: ranges end {} > data len {}", range.start + 16 + count * 8, data.len());
+            assert_eq!(
+                total_size,
+                count * 8,
+                "ByRefArrayReader: total_size {} != count {} * 8",
+                total_size,
+                count
+            );
+            assert!(
+                range.start + 16 + count * 8 <= data.len(),
+                "ByRefArrayReader: ranges end {} > data len {}",
+                range.start + 16 + count * 8,
+                data.len()
+            );
         }
         let ranges = &data[range.start + 16..range.start + 16 + count * 8];
-        Self { data, struct_base, count, ranges, _phantom: PhantomData }
+        Self {
+            data,
+            struct_base,
+            count,
+            ranges,
+            _phantom: PhantomData,
+        }
     }
 
-    pub fn len(&self) -> usize { self.count }
-    pub fn is_empty(&self) -> bool { self.count == 0 }
+    pub fn len(&self) -> usize {
+        self.count
+    }
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
 
     pub fn get(&self, index: usize) -> Option<T::Reader<'a>> {
-        if index >= self.count { return None; }
+        if index >= self.count {
+            return None;
+        }
         let pos = index * 8;
         let br: ByRefRange = unsafe { mmap_read_pod(&self.ranges[pos..pos + 8]) };
-        let range: Range<usize> = self.struct_base + br.begin as usize..self.struct_base + br.end as usize;
+        let range: Range<usize> =
+            self.struct_base + br.begin as usize..self.struct_base + br.end as usize;
         #[cfg(feature = "strict-validation")]
         {
-            assert!(range.end <= self.data.len(),
-                "ByRefArrayReader::get({}): end {} > data len {}", index, range.end, self.data.len());
+            assert!(
+                range.end <= self.data.len(),
+                "ByRefArrayReader::get({}): end {} > data len {}",
+                index,
+                range.end,
+                self.data.len()
+            );
         }
         Some(T::read(self.data, range))
     }
@@ -71,13 +107,17 @@ impl<'a, T: MmapRead + 'a> ByRefArrayReader<'a, T> {
 impl<'a, T: MmapRead + 'a> IntoIterator for &ByRefArrayReader<'a, T> {
     type Item = T::Reader<'a>;
     type IntoIter = ByRefArrayIter<'a, T>;
-    fn into_iter(self) -> Self::IntoIter { self.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 impl<'a, T: MmapRead + 'a> IntoIterator for ByRefArrayReader<'a, T> {
     type Item = T::Reader<'a>;
     type IntoIter = ByRefArrayIter<'a, T>;
-    fn into_iter(self) -> Self::IntoIter { self.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 impl<'a, T: MmapRead + 'a> From<ByRefArrayReader<'a, T>> for Vec<T>
@@ -102,9 +142,12 @@ impl<'a, T: MmapRead + 'a> Iterator for ByRefArrayIter<'a, T> {
     type Item = T::Reader<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.pos >= self.count { return None; }
+        if self.pos >= self.count {
+            return None;
+        }
         let br: ByRefRange = unsafe { mmap_read_pod(&self.ranges[self.pos * 8..self.pos * 8 + 8]) };
-        let range: Range<usize> = self.struct_base + br.begin as usize..self.struct_base + br.end as usize;
+        let range: Range<usize> =
+            self.struct_base + br.begin as usize..self.struct_base + br.end as usize;
         self.pos += 1;
         Some(T::read(self.data, range))
     }

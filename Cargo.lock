@@ -717,11 +717,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "mmapstruct-schema"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "mmapstruct",
+ "mmapstruct-derive",
+]
+
+[[package]]
+name = "mmapstruct-schemagen"
+version = "0.1.0"
+dependencies = [
+ "mmapstruct",
+ "mmapstruct-schema",
+]
+
+[[package]]
 name = "mmapview"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
  "mmapstruct",
+ "mmapstruct-schema",
+ "mmapstruct-schemagen",
  "serde",
  "serde_json",
 ]

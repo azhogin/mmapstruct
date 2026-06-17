@@ -17,13 +17,9 @@ pub enum Expr<'a> {
     /// Slice: `[0:10]`
     Slice(usize, usize),
     /// Select call: `select(.name~sensor)`, `select(.x>1&y<10)`
-    Select {
-        filter: FilterExpr<'a>,
-    },
+    Select { filter: FilterExpr<'a> },
     /// Aggregate: `count()`, `avg(.field)`, `min(.field)`, `max(.field)`
-    Aggregate {
-        func: AggregateFunc<'a>,
-    },
+    Aggregate { func: AggregateFunc<'a> },
 }
 
 /// Aggregation functions.
@@ -37,8 +33,15 @@ pub enum AggregateFunc<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FilterOp {
-    Eq, Ne, Gt, Ge, Lt, Le,
-    Contains, StartsWith, EndsWith,
+    Eq,
+    Ne,
+    Gt,
+    Ge,
+    Lt,
+    Le,
+    Contains,
+    StartsWith,
+    EndsWith,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -59,7 +62,11 @@ pub enum Segment<'a> {
 
 #[derive(Debug, Clone)]
 pub enum FilterExpr<'a> {
-    Simple { field: &'a str, op: FilterOp, value: FilterValue<'a> },
+    Simple {
+        field: &'a str,
+        op: FilterOp,
+        value: FilterValue<'a>,
+    },
     And(Box<FilterExpr<'a>>, Box<FilterExpr<'a>>),
     Or(Box<FilterExpr<'a>>, Box<FilterExpr<'a>>),
 }
@@ -121,7 +128,10 @@ fn parse_path<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(Expr<'a>, usize),
     }
 }
 
-fn parse_path_after_slash<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(Expr<'a>, usize), String> {
+fn parse_path_after_slash<'a>(
+    tokens: &[Token<'a>],
+    pos: usize,
+) -> Result<(Expr<'a>, usize), String> {
     if pos >= tokens.len() {
         // Bare `/` — return empty path (root value)
         return Ok((Expr::Path(vec![]), pos));
@@ -139,11 +149,18 @@ fn parse_path_after_slash<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(Expr<
             // Pipe after bare slash: `" / | count()"` — return empty root path
             Ok((Expr::Path(vec![]), pos))
         }
-        _ => Err(format!("expected field name or `[` after `/`, got {:?}", tokens[pos])),
+        _ => Err(format!(
+            "expected field name or `[` after `/`, got {:?}",
+            tokens[pos]
+        )),
     }
 }
 
-fn parse_trailing<'a>(tokens: &[Token<'a>], pos: usize, mut segs: Vec<Segment<'a>>) -> Result<(Expr<'a>, usize), String> {
+fn parse_trailing<'a>(
+    tokens: &[Token<'a>],
+    pos: usize,
+    mut segs: Vec<Segment<'a>>,
+) -> Result<(Expr<'a>, usize), String> {
     if pos >= tokens.len() {
         return Ok((Expr::Path(segs), pos));
     }
@@ -170,7 +187,10 @@ fn parse_trailing<'a>(tokens: &[Token<'a>], pos: usize, mut segs: Vec<Segment<'a
     }
 }
 
-fn parse_trailing_field<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(Segment<'a>, usize), String> {
+fn parse_trailing_field<'a>(
+    tokens: &[Token<'a>],
+    pos: usize,
+) -> Result<(Segment<'a>, usize), String> {
     match tokens.get(pos) {
         Some(Token::Ident(name)) => {
             let name = *name;
@@ -193,7 +213,10 @@ fn parse_bracket<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(Expr<'a>, usiz
     Ok((path, pos))
 }
 
-fn parse_bracket_segment<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(Segment<'a>, usize), String> {
+fn parse_bracket_segment<'a>(
+    tokens: &[Token<'a>],
+    pos: usize,
+) -> Result<(Segment<'a>, usize), String> {
     expect_token(tokens, pos, &Token::LBracket)?;
     let pos = pos + 1;
 
@@ -262,14 +285,20 @@ fn parse_and_expr<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(FilterExpr<'a
 }
 
 /// Parse a single `ident op value` condition.
-fn parse_simple_filter<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(FilterExpr<'a>, usize), String> {
+fn parse_simple_filter<'a>(
+    tokens: &[Token<'a>],
+    pos: usize,
+) -> Result<(FilterExpr<'a>, usize), String> {
     let (field, pos) = expect_ident(tokens, pos)?;
     let (op, pos) = expect_filter_op(tokens, pos)?;
     let (value, pos) = expect_filter_value(tokens, pos)?;
     Ok((FilterExpr::simple(field, op, value), pos))
 }
 
-fn parse_select_or_filter<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(Expr<'a>, usize), String> {
+fn parse_select_or_filter<'a>(
+    tokens: &[Token<'a>],
+    pos: usize,
+) -> Result<(Expr<'a>, usize), String> {
     match &tokens[pos] {
         Token::Question => {
             let (filter, pos) = parse_filter(tokens, pos + 1)?;
@@ -293,7 +322,10 @@ fn parse_select<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(Expr<'a>, usize
 }
 
 /// Parse the inside of `select(...)` — starts with `.field op value`, may continue with `&` or `|`.
-fn parse_select_body<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(FilterExpr<'a>, usize), String> {
+fn parse_select_body<'a>(
+    tokens: &[Token<'a>],
+    pos: usize,
+) -> Result<(FilterExpr<'a>, usize), String> {
     let pos = expect_token(tokens, pos, &Token::Dot)?;
     let (field, pos) = expect_ident(tokens, pos)?;
     let (op, pos) = expect_filter_op(tokens, pos)?;
@@ -332,7 +364,12 @@ fn parse_aggregate<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(Expr<'a>, us
     match name {
         "count" => {
             let pos = expect_token(tokens, pos, &Token::RParen)?;
-            Ok((Expr::Aggregate { func: AggregateFunc::Count }, pos))
+            Ok((
+                Expr::Aggregate {
+                    func: AggregateFunc::Count,
+                },
+                pos,
+            ))
         }
         "avg" | "min" | "max" => {
             let pos = expect_token(tokens, pos, &Token::Dot)?;
@@ -374,7 +411,10 @@ fn expect_filter_op<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(FilterOp, u
     }
 }
 
-fn expect_filter_value<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(FilterValue<'a>, usize), String> {
+fn expect_filter_value<'a>(
+    tokens: &[Token<'a>],
+    pos: usize,
+) -> Result<(FilterValue<'a>, usize), String> {
     match tokens.get(pos) {
         Some(Token::Int(n)) => Ok((FilterValue::Int(*n), pos + 1)),
         Some(Token::Float(n)) => Ok((FilterValue::Float(*n), pos + 1)),
@@ -385,7 +425,11 @@ fn expect_filter_value<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(FilterVa
     }
 }
 
-fn expect_token<'a>(tokens: &[Token<'a>], pos: usize, expected: &Token<'a>) -> Result<usize, String> {
+fn expect_token<'a>(
+    tokens: &[Token<'a>],
+    pos: usize,
+    expected: &Token<'a>,
+) -> Result<usize, String> {
     match tokens.get(pos) {
         Some(tok) if tok == expected => Ok(pos + 1),
         Some(tok) => Err(format!("expected {:?}, got {:?}", expected, tok)),
@@ -413,7 +457,14 @@ mod tests {
             Expr::Path(ref segs) => {
                 assert_eq!(segs.len(), 2);
                 assert!(matches!(segs[0], Segment::Field("sections")));
-                assert!(matches!(segs[1], Segment::Filter(FilterExpr::Simple { field: "id", op: FilterOp::Gt, value: FilterValue::Int(10) })));
+                assert!(matches!(
+                    segs[1],
+                    Segment::Filter(FilterExpr::Simple {
+                        field: "id",
+                        op: FilterOp::Gt,
+                        value: FilterValue::Int(10)
+                    })
+                ));
             }
             _ => panic!("expected Path"),
         }
@@ -423,7 +474,16 @@ mod tests {
     fn test_parse_select_standalone() {
         let t = tokenize("select(.name~sensor)").unwrap();
         let e = parse(&t).unwrap();
-        assert!(matches!(&e, Expr::Select { filter: FilterExpr::Simple { field: "name", op: FilterOp::Contains, value: FilterValue::Str("sensor") } }));
+        assert!(matches!(
+            &e,
+            Expr::Select {
+                filter: FilterExpr::Simple {
+                    field: "name",
+                    op: FilterOp::Contains,
+                    value: FilterValue::Str("sensor")
+                }
+            }
+        ));
     }
 
     #[test]
@@ -439,7 +499,16 @@ mod tests {
     fn test_parse_select_eq() {
         let t = tokenize("select(.name=target)").unwrap();
         let e = parse(&t).unwrap();
-        assert!(matches!(&e, Expr::Select { filter: FilterExpr::Simple { field: "name", op: FilterOp::Eq, value: FilterValue::Str("target") } }));
+        assert!(matches!(
+            &e,
+            Expr::Select {
+                filter: FilterExpr::Simple {
+                    field: "name",
+                    op: FilterOp::Eq,
+                    value: FilterValue::Str("target")
+                }
+            }
+        ));
     }
 
     #[test]
@@ -457,7 +526,9 @@ mod tests {
             Expr::Path(ref segs) => {
                 assert_eq!(segs.len(), 2);
                 assert!(matches!(segs[0], Segment::Field("a")));
-                assert!(matches!(segs[1], Segment::Filter(FilterExpr::Simple { field: "x", op: FilterOp::Gt, value: FilterValue::Float(v) }) if (v - (-1.5)).abs() < f64::EPSILON));
+                assert!(
+                    matches!(segs[1], Segment::Filter(FilterExpr::Simple { field: "x", op: FilterOp::Gt, value: FilterValue::Float(v) }) if (v - (-1.5)).abs() < f64::EPSILON)
+                );
             }
             _ => panic!("expected Path"),
         }
@@ -469,7 +540,9 @@ mod tests {
         let e = parse(&t).unwrap();
         match e {
             Expr::Path(ref segs) => {
-                assert!(matches!(segs[1], Segment::Filter(FilterExpr::Simple { field: "x", op: FilterOp::Gt, value: FilterValue::Float(v) }) if (v - 0.5).abs() < f64::EPSILON));
+                assert!(
+                    matches!(segs[1], Segment::Filter(FilterExpr::Simple { field: "x", op: FilterOp::Gt, value: FilterValue::Float(v) }) if (v - 0.5).abs() < f64::EPSILON)
+                );
             }
             _ => panic!("expected Path"),
         }
@@ -534,28 +607,48 @@ mod tests {
     fn test_parse_count() {
         let t = tokenize("count()").unwrap();
         let e = parse(&t).unwrap();
-        assert!(matches!(&e, Expr::Aggregate { func: AggregateFunc::Count }));
+        assert!(matches!(
+            &e,
+            Expr::Aggregate {
+                func: AggregateFunc::Count
+            }
+        ));
     }
 
     #[test]
     fn test_parse_avg() {
         let t = tokenize("avg(.price)").unwrap();
         let e = parse(&t).unwrap();
-        assert!(matches!(&e, Expr::Aggregate { func: AggregateFunc::Avg { field: "price" } }));
+        assert!(matches!(
+            &e,
+            Expr::Aggregate {
+                func: AggregateFunc::Avg { field: "price" }
+            }
+        ));
     }
 
     #[test]
     fn test_parse_min() {
         let t = tokenize("min(.x)").unwrap();
         let e = parse(&t).unwrap();
-        assert!(matches!(&e, Expr::Aggregate { func: AggregateFunc::Min { field: "x" } }));
+        assert!(matches!(
+            &e,
+            Expr::Aggregate {
+                func: AggregateFunc::Min { field: "x" }
+            }
+        ));
     }
 
     #[test]
     fn test_parse_max() {
         let t = tokenize("max(.y)").unwrap();
         let e = parse(&t).unwrap();
-        assert!(matches!(&e, Expr::Aggregate { func: AggregateFunc::Max { field: "y" } }));
+        assert!(matches!(
+            &e,
+            Expr::Aggregate {
+                func: AggregateFunc::Max { field: "y" }
+            }
+        ));
     }
 
     #[test]
@@ -565,7 +658,12 @@ mod tests {
         assert!(matches!(&e, Expr::Pipe(_, _)));
         if let Expr::Pipe(left, right) = &e {
             assert!(matches!(left.as_ref(), Expr::Path(_)));
-            assert!(matches!(right.as_ref(), Expr::Aggregate { func: AggregateFunc::Count }));
+            assert!(matches!(
+                right.as_ref(),
+                Expr::Aggregate {
+                    func: AggregateFunc::Count
+                }
+            ));
         }
     }
 
@@ -575,7 +673,12 @@ mod tests {
         let e = parse(&t).unwrap();
         assert!(matches!(&e, Expr::Pipe(_, _)));
         if let Expr::Pipe(_left, right) = &e {
-            assert!(matches!(right.as_ref(), Expr::Aggregate { func: AggregateFunc::Avg { field: "price" } }));
+            assert!(matches!(
+                right.as_ref(),
+                Expr::Aggregate {
+                    func: AggregateFunc::Avg { field: "price" }
+                }
+            ));
         }
     }
 }

@@ -1,10 +1,10 @@
 mod server;
 
-use std::sync::Arc;
+use mmapstruct::{GetSchema, MmapReader};
+pub use server::{build_router, AppState};
 use std::net::SocketAddr;
 use std::path::Path;
-use mmapstruct::{GetSchema, MmapReader};
-pub use server::{AppState, build_router};
+use std::sync::Arc;
 
 /// Serve the mmapview web UI for a type-erased binary file.
 ///

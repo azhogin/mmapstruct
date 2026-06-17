@@ -1,8 +1,13 @@
-use std::sync::Arc;
-use axum::{Router, routing::get, extract::{Query, State}, response::{Html, IntoResponse, Json}};
+use axum::{
+    extract::{Query, State},
+    response::{Html, IntoResponse, Json},
+    routing::get,
+    Router,
+};
+use mmapstruct::{DynContext, DynValueType, Value};
+use mmapview::json_conv::{compute_stats, result_to_json, value_type_to_json};
 use serde::Deserialize;
-use mmapstruct::{DynContext, Value, DynValueType};
-use mmapview::json_conv::{result_to_json, value_type_to_json, compute_stats};
+use std::sync::Arc;
 
 /// Shared application state.
 pub struct AppState {
@@ -38,7 +43,10 @@ async fn index_handler() -> Html<&'static str> {
 }
 
 async fn js_handler() -> impl IntoResponse {
-    ([(axum::http::header::CONTENT_TYPE, "application/javascript")], Html(VIEWER_JS))
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+        Html(VIEWER_JS),
+    )
 }
 
 async fn css_handler() -> impl IntoResponse {
@@ -63,7 +71,11 @@ async fn query_handler(
     };
 
     let total = results.len();
-    let total_pages = if limit > 0 { (total + limit - 1) / limit } else { 1 };
+    let total_pages = if limit > 0 {
+        (total + limit - 1) / limit
+    } else {
+        1
+    };
 
     let slice: Vec<mmapview::EvalResult> = if total == 0 {
         vec![]
@@ -91,15 +103,11 @@ async fn query_handler(
     }))
 }
 
-async fn schema_handler(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+async fn schema_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(value_type_to_json(state.root_schema))
 }
 
-async fn stats_handler(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+async fn stats_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     use serde_json::json;
 
     let ctx = DynContext::new(&state.data);

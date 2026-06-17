@@ -1,5 +1,5 @@
+use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct};
 use std::sync::Arc;
-use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw};
 
 #[derive(MmapStruct, Debug)]
 struct TestFile {
@@ -44,7 +44,8 @@ async fn test_query_root_fields() {
 
     // Navigate to /id to verify struct reading works end-to-end
     let resp = reqwest::get(format!("{}/api/query?q=/id", base))
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let json: serde_json::Value = resp.json().await.unwrap();
 
@@ -54,13 +55,15 @@ async fn test_query_root_fields() {
 
     // Navigate to /name to verify string reading
     let resp = reqwest::get(format!("{}/api/query?q=/name", base))
-        .await.unwrap();
+        .await
+        .unwrap();
     let json: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(json["data"], serde_json::json!(["hello"]));
 
     // Navigate to /tags to verify vec of pod reading
     let resp = reqwest::get(format!("{}/api/query?q=/tags", base))
-        .await.unwrap();
+        .await
+        .unwrap();
     let json: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(json["data"], serde_json::json!([[1, 2, 3]]));
 }
@@ -71,7 +74,8 @@ async fn test_query_by_field() {
     let (_server, base) = spawn_server(data).await;
 
     let resp = reqwest::get(format!("{}/api/query?q=/id", base))
-        .await.unwrap();
+        .await
+        .unwrap();
     let json: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(json["data"], serde_json::json!([42]));
 }
@@ -82,7 +86,8 @@ async fn test_query_tags() {
     let (_server, base) = spawn_server(data).await;
 
     let resp = reqwest::get(format!("{}/api/query?q=/tags", base))
-        .await.unwrap();
+        .await
+        .unwrap();
     let json: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(json["data"], serde_json::json!([[1, 2, 3]]));
 }
@@ -94,7 +99,8 @@ async fn test_query_pagination() {
 
     // /tags returns [[1,2,3]] — one result, so pagination shows total=1
     let resp = reqwest::get(format!("{}/api/query?q=/tags&page=0&limit=1", base))
-        .await.unwrap();
+        .await
+        .unwrap();
     let json: serde_json::Value = resp.json().await.unwrap();
 
     let data_arr = json["data"].as_array().unwrap();
@@ -110,8 +116,7 @@ async fn test_schema_endpoint() {
     let data = make_test_file();
     let (_server, base) = spawn_server(data).await;
 
-    let resp = reqwest::get(format!("{}/api/schema", base))
-        .await.unwrap();
+    let resp = reqwest::get(format!("{}/api/schema", base)).await.unwrap();
     assert_eq!(resp.status(), 200);
     let json: serde_json::Value = resp.json().await.unwrap();
 
@@ -127,8 +132,7 @@ async fn test_stats_endpoint() {
     let data = make_test_file();
     let (_server, base) = spawn_server(data).await;
 
-    let resp = reqwest::get(format!("{}/api/stats", base))
-        .await.unwrap();
+    let resp = reqwest::get(format!("{}/api/stats", base)).await.unwrap();
     assert_eq!(resp.status(), 200);
     let json: serde_json::Value = resp.json().await.unwrap();
 
@@ -147,7 +151,8 @@ async fn test_query_error_handling() {
 
     // Malformed query
     let resp = reqwest::get(format!("{}/api/query?q=///", base))
-        .await.unwrap();
+        .await
+        .unwrap();
     let json: serde_json::Value = resp.json().await.unwrap();
     assert!(json["error"].as_str().is_some());
 }

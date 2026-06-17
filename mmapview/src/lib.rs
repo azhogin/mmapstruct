@@ -1,24 +1,30 @@
-use mmapstruct::{DynContext, Value, DynValueType};
+use mmapstruct::{DynContext, DynValueType, Value};
 
-mod tokenizer;
-mod parser;
 mod interpreter;
 #[cfg(feature = "json")]
 pub mod json_conv;
+mod parser;
+mod tokenizer;
+pub mod query_context;
 
-pub use tokenizer::tokenize;
-pub use parser::parse;
 pub use interpreter::interpret;
+pub use parser::parse;
+pub use tokenizer::tokenize;
 
-pub use tokenizer::Token;
 pub use parser::Expr;
+pub use tokenizer::Token;
 
 /// Result of evaluating a query expression — either a buffer-backed value
 /// or a computed value from an aggregation function.
+///
+/// The type parameter `V` defaults to `Value` for backward compatibility
+/// with the compile-time `DynContext`. Use `EvalResult<SchemaValue>` when
+/// working with [`query_context::QueryContext`] implementations that use
+/// schema-based navigation.
 #[derive(Clone, Copy)]
-pub enum EvalResult {
+pub enum EvalResult<V = Value> {
     /// Value backed by data in the buffer.
-    Buf(Value),
+    Buf(V),
     /// Unsigned integer (e.g. `count()`).
     U64(u64),
     /// Signed integer (e.g. `min(.field)` on signed types).
@@ -87,7 +93,9 @@ fn write_val<'a>(ctx: &DynContext<'a>, val: &Value, out: &mut String) {
             let schema = ctx.get_struct_schema(val);
             out.push('{');
             for (i, field) in schema.fields.iter().enumerate() {
-                if i > 0 { out.push_str(", "); }
+                if i > 0 {
+                    out.push_str(", ");
+                }
                 out.push('"');
                 out.push_str(field.name);
                 out.push_str("\": ");
@@ -103,7 +111,9 @@ fn write_val<'a>(ctx: &DynContext<'a>, val: &Value, out: &mut String) {
             out.push('[');
             let len = ctx.array_len(val);
             for i in 0..len {
-                if i > 0 { out.push_str(", "); }
+                if i > 0 {
+                    out.push_str(", ");
+                }
                 if let Some(elem) = ctx.array_get(val, i) {
                     write_val(ctx, &elem, out);
                 } else {
@@ -120,11 +130,40 @@ fn write_val<'a>(ctx: &DynContext<'a>, val: &Value, out: &mut String) {
             let inner_val = Value::new(val.offset, val.limit, inner);
             write_val(ctx, &inner_val, out);
         }
+        DynValueType::Enum(_es) => {
+            if let Some((vs, _data_off)) = ctx.enum_variant(val) {
+                out.push_str(vs.name);
+                if !vs.fields.is_empty() {
+                    out.push_str(" { ");
+                    for (i, field) in vs.fields.iter().enumerate() {
+                        if i > 0 {
+                            out.push_str(", ");
+                        }
+                        out.push('"');
+                        out.push_str(field.name);
+                        out.push_str("\": ");
+                        if let Some(fv) = ctx.field_get(val, field.name) {
+                            write_val(ctx, &fv, out);
+                        } else {
+                            out.push_str("null");
+                        }
+                    }
+                    out.push_str(" }");
+                }
+            } else {
+                out.push_str("<invalid enum>");
+            }
+        }
+        DynValueType::Lazy(resolve) => {
+            write_val(ctx, &Value::new(val.offset, val.limit, resolve()), out);
+        }
         DynValueType::HashMap(_) => {
             out.push('[');
             let len = ctx.hashmap_len(val);
             for i in 0..len {
-                if i > 0 { out.push_str(", "); }
+                if i > 0 {
+                    out.push_str(", ");
+                }
                 if let Some((k, v)) = ctx.hashmap_get_index(val, i) {
                     out.push('[');
                     write_val(ctx, &k, out);
@@ -138,7 +177,8 @@ fn write_val<'a>(ctx: &DynContext<'a>, val: &Value, out: &mut String) {
     }
 }
 
-/// Parse and evaluate a query string against a root `Value`.
+/// Parse and evaluate a query string against a root value using a
+/// compile-time `DynContext`.
 ///
 /// The caller provides a `DynContext` (wrapping the underlying byte buffer)
 /// and a root `Value` (typically the top-level struct or array).
@@ -152,7 +192,32 @@ fn write_val<'a>(ctx: &DynContext<'a>, val: &Value, out: &mut String) {
 /// let root = <Rec as GetSchema>::root_value(data.len() as u64);
 /// let result = mmapview::query_from("/x", &ctx, &root).unwrap();
 /// ```
-pub fn query_from<'a>(q: &str, ctx: &DynContext<'a>, root: &Value) -> Result<Vec<EvalResult>, String> {
+pub fn query_from<'a>(
+    q: &str,
+    ctx: &DynContext<'a>,
+    root: &Value,
+) -> Result<Vec<EvalResult>, String> {
+    query_from_generic(q, ctx, root)
+}
+
+/// Parse and evaluate a query string against a root value using any
+/// [`QueryContext`] implementation (e.g. `DynContext` or
+/// [`SchemaDynContext`](mmapstruct_schema::context::SchemaDynContext)).
+///
+/// ```
+/// # use mmapstruct::{MmapStruct, MmapRead, DynContext, GetSchema};
+/// # use mmapstruct::schema::Value;
+/// # #[derive(MmapStruct)] #[mmap(scope)] struct Rec { x: u32, y: String }
+/// # let data = mmapstruct::write_to_buf_raw(&Rec { x: 42, y: "hello".into() });
+/// let ctx = DynContext::new(&data);
+/// let root = <Rec as GetSchema>::root_value(data.len() as u64);
+/// let result = mmapview::query_from_generic("/x", &ctx, &root).unwrap();
+/// ```
+pub fn query_from_generic<'a, C: query_context::QueryContext<'a>>(
+    q: &str,
+    ctx: &C,
+    root: &C::Val,
+) -> Result<Vec<EvalResult<C::Val>>, String> {
     let tokens = tokenize(q)?;
     let expr = parse(&tokens)?;
     interpret(&expr, ctx, root)
@@ -161,7 +226,7 @@ pub fn query_from<'a>(q: &str, ctx: &DynContext<'a>, root: &Value) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mmapstruct::{MmapStruct, GetSchema};
+    use mmapstruct::{GetSchema, MmapStruct};
 
     #[derive(MmapStruct, Debug)]
     #[mmap(scope)]
@@ -172,7 +237,10 @@ mod tests {
 
     #[test]
     fn test_format_value_struct_ref() {
-        let r = Rec { id: 42, name: "hello".into() };
+        let r = Rec {
+            id: 42,
+            name: "hello".into(),
+        };
         let buf = mmapstruct::write_to_buf_raw(&r);
         let ctx = DynContext::new(&buf);
         let root = <Rec as GetSchema>::root_value(buf.len() as u64);
@@ -188,8 +256,14 @@ mod tests {
         }
         let w = RecFile {
             items: vec![
-                Rec { id: 1, name: "a".into() },
-                Rec { id: 2, name: "b".into() },
+                Rec {
+                    id: 1,
+                    name: "a".into(),
+                },
+                Rec {
+                    id: 2,
+                    name: "b".into(),
+                },
             ],
         };
         let buf = mmapstruct::write_to_buf_raw(&w);
@@ -197,7 +271,10 @@ mod tests {
         let root = <RecFile as GetSchema>::root_value(buf.len() as u64);
         let items_val = ctx.field_get(&root, "items").unwrap();
         let s = format_value(&ctx, &items_val);
-        assert_eq!(s, "[{\"id\": 1, \"name\": \"a\"}, {\"id\": 2, \"name\": \"b\"}]");
+        assert_eq!(
+            s,
+            "[{\"id\": 1, \"name\": \"a\"}, {\"id\": 2, \"name\": \"b\"}]"
+        );
     }
 
     #[test]
@@ -207,9 +284,18 @@ mod tests {
             items: Vec<Rec>,
         }
         let records = vec![
-            Rec { id: 1, name: "sensor_a".into() },
-            Rec { id: 5, name: "actuator_b".into() },
-            Rec { id: 10, name: "sensor_c".into() },
+            Rec {
+                id: 1,
+                name: "sensor_a".into(),
+            },
+            Rec {
+                id: 5,
+                name: "actuator_b".into(),
+            },
+            Rec {
+                id: 10,
+                name: "sensor_c".into(),
+            },
         ];
         let w = RecFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
@@ -219,12 +305,17 @@ mod tests {
         let mut out = String::new();
         out.push('[');
         for (i, v) in result.iter().enumerate() {
-            if i > 0 { out.push_str(", "); }
+            if i > 0 {
+                out.push_str(", ");
+            }
             if let EvalResult::Buf(val) = v {
                 write_val(&ctx, val, &mut out);
             }
         }
         out.push(']');
-        assert_eq!(out, "[{\"id\": 5, \"name\": \"actuator_b\"}, {\"id\": 10, \"name\": \"sensor_c\"}]");
+        assert_eq!(
+            out,
+            "[{\"id\": 5, \"name\": \"actuator_b\"}, {\"id\": 10, \"name\": \"sensor_c\"}]"
+        );
     }
 }

@@ -1,39 +1,45 @@
-use crate::parser::{Expr, FilterOp, FilterValue, FilterExpr, AggregateFunc};
+use crate::parser::{AggregateFunc, Expr, FilterExpr, FilterOp, FilterValue};
+use crate::query_context::QueryContext;
 use crate::EvalResult;
-use mmapstruct::{DynContext, Value, DynValueType};
 
-/// Parse and evaluate a query expression against a root Value.
-pub fn interpret<'a>(
+/// Parse and evaluate a query expression against a root value.
+///
+/// Generic over any [`QueryContext`] implementation.
+pub fn interpret<'a, C: QueryContext<'a>>(
     expr: &Expr<'_>,
-    ctx: &DynContext<'a>,
-    root: &Value,
-) -> Result<Vec<EvalResult>, String> {
+    ctx: &C,
+    root: &C::Val,
+) -> Result<Vec<EvalResult<C::Val>>, String> {
     eval_expr(expr, ctx, root)
 }
 
-fn unwrap_buf(v: &EvalResult) -> Result<&Value, String> {
+fn unwrap_buf<V>(v: &EvalResult<V>) -> Result<&V, String> {
     match v {
         EvalResult::Buf(v) => Ok(v),
         _ => Err("path navigation requires a buffer-backed value".into()),
     }
 }
 
-fn eval_expr<'a>(
+fn eval_expr<'a, C: QueryContext<'a>>(
     expr: &Expr<'_>,
-    ctx: &DynContext<'a>,
-    current: &Value,
-) -> Result<Vec<EvalResult>, String> {
+    ctx: &C,
+    current: &C::Val,
+) -> Result<Vec<EvalResult<C::Val>>, String> {
     match expr {
         Expr::Path(segs) => {
-            let mut vals: Vec<EvalResult> = vec![EvalResult::Buf(*current)];
+            let mut vals: Vec<EvalResult<C::Val>> = vec![EvalResult::Buf(*current)];
             for seg in segs {
                 match seg {
                     crate::parser::Segment::Field(name) => {
-                        vals = vals.into_iter().map(|v| {
-                            let inner = unwrap_buf(&v)?;
-                            ctx.field_get(inner, name).ok_or_else(|| format!("no such field `{}`", name))
-                                .map(EvalResult::Buf)
-                        }).collect::<Result<Vec<_>, _>>()?;
+                        vals = vals
+                            .into_iter()
+                            .map(|v| {
+                                let inner = unwrap_buf(&v)?;
+                                ctx.field_get(inner, name)
+                                    .ok_or_else(|| format!("no such field `{}`", name))
+                                    .map(EvalResult::Buf)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
                     }
                     crate::parser::Segment::Filter(filter) => {
                         let mut filtered = Vec::new();
@@ -45,10 +51,13 @@ fn eval_expr<'a>(
                         vals = filtered;
                     }
                     crate::parser::Segment::Index(idx) => {
-                        vals = vals.into_iter().map(|v| {
-                            let inner = unwrap_buf(&v)?;
-                            index_array(ctx, inner, *idx).map(EvalResult::Buf)
-                        }).collect::<Result<Vec<_>, _>>()?;
+                        vals = vals
+                            .into_iter()
+                            .map(|v| {
+                                let inner = unwrap_buf(&v)?;
+                                index_array(ctx, inner, *idx).map(EvalResult::Buf)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
                     }
                     crate::parser::Segment::All => {}
                     crate::parser::Segment::Slice(s, e) => {
@@ -65,13 +74,9 @@ fn eval_expr<'a>(
             }
             Ok(vals)
         }
-        Expr::Filter(filter) => {
-            filter_array(ctx, &[*current], filter)
-                .map(|v| v.into_iter().map(EvalResult::Buf).collect())
-        }
-        Expr::Index(idx) => {
-            index_array(ctx, current, *idx).map(|v| vec![EvalResult::Buf(v)])
-        }
+        Expr::Filter(filter) => filter_array(ctx, &[*current], filter)
+            .map(|v| v.into_iter().map(EvalResult::Buf).collect()),
+        Expr::Index(idx) => index_array(ctx, current, *idx).map(|v| vec![EvalResult::Buf(v)]),
         Expr::All => Ok(vec![EvalResult::Buf(*current)]),
         Expr::Slice(s, e) => {
             slice_array(ctx, current, *s, *e)
@@ -80,7 +85,8 @@ fn eval_expr<'a>(
         Expr::Projection(fields) => {
             let mut result = Vec::new();
             for f in fields {
-                let v = ctx.field_get(current, f)
+                let v = ctx
+                    .field_get(current, f)
                     .ok_or_else(|| format!("no such field `{}`", f))?;
                 result.push(EvalResult::Buf(v));
             }
@@ -97,7 +103,7 @@ fn eval_expr<'a>(
             Ok(all)
         }
         Expr::Select { filter } => {
-            if current.schema.is_array() {
+            if ctx.is_array_type(current) {
                 let filtered = filter_array(ctx, &[*current], filter).unwrap_or_default();
                 Ok(filtered.into_iter().map(EvalResult::Buf).collect())
             } else {
@@ -108,18 +114,16 @@ fn eval_expr<'a>(
                 }
             }
         }
-        Expr::Aggregate { func } => {
-            aggregate(ctx, current, func)
-        }
+        Expr::Aggregate { func } => aggregate(ctx, current, func),
     }
 }
 
-fn filter_array<'a>(
-    ctx: &DynContext<'a>,
-    vals: &[Value],
+fn filter_array<'a, C: QueryContext<'a>>(
+    ctx: &C,
+    vals: &[C::Val],
     filter: &crate::parser::FilterExpr<'_>,
-) -> Result<Vec<Value>, String> {
-    let mut filtered: Vec<Value> = Vec::new();
+) -> Result<Vec<C::Val>, String> {
+    let mut filtered: Vec<C::Val> = Vec::new();
     for dv in vals {
         let len = ctx.array_len(dv);
         for i in 0..len {
@@ -133,19 +137,17 @@ fn filter_array<'a>(
     Ok(filtered)
 }
 
-fn aggregate<'a>(
-    ctx: &DynContext<'a>,
-    val: &Value,
+fn aggregate<'a, C: QueryContext<'a>>(
+    ctx: &C,
+    val: &C::Val,
     func: &AggregateFunc<'_>,
-) -> Result<Vec<EvalResult>, String> {
-    if !val.schema.is_array() {
+) -> Result<Vec<EvalResult<C::Val>>, String> {
+    if !ctx.is_array_type(val) {
         return Err("aggregation requires an array value".into());
     }
     let len = ctx.array_len(val);
     match func {
-        AggregateFunc::Count => {
-            Ok(vec![EvalResult::U64(len as u64)])
-        }
+        AggregateFunc::Count => Ok(vec![EvalResult::U64(len as u64)]),
         AggregateFunc::Avg { field } => {
             let (sum, count) = sum_field(ctx, val, field)?;
             if count == 0 {
@@ -186,9 +188,9 @@ fn aggregate<'a>(
     }
 }
 
-fn sum_field<'a>(
-    ctx: &DynContext<'a>,
-    val: &Value,
+fn sum_field<'a, C: QueryContext<'a>>(
+    ctx: &C,
+    val: &C::Val,
     field: &str,
 ) -> Result<(f64, usize), String> {
     let len = ctx.array_len(val);
@@ -207,20 +209,21 @@ fn sum_field<'a>(
     Ok((sum, count))
 }
 
-fn index_array<'a>(
-    ctx: &DynContext<'a>,
-    val: &Value,
+fn index_array<'a, C: QueryContext<'a>>(
+    ctx: &C,
+    val: &C::Val,
     idx: usize,
-) -> Result<Value, String> {
-    ctx.array_get(val, idx).ok_or_else(|| format!("index {} out of bounds", idx))
+) -> Result<C::Val, String> {
+    ctx.array_get(val, idx)
+        .ok_or_else(|| format!("index {} out of bounds", idx))
 }
 
-fn slice_array<'a>(
-    ctx: &DynContext<'a>,
-    val: &Value,
+fn slice_array<'a, C: QueryContext<'a>>(
+    ctx: &C,
+    val: &C::Val,
     start: usize,
     end: usize,
-) -> Result<Vec<Value>, String> {
+) -> Result<Vec<C::Val>, String> {
     let len = ctx.array_len(val);
     let s = start.min(len);
     let e = end.min(len);
@@ -233,25 +236,24 @@ fn slice_array<'a>(
     Ok(sliced)
 }
 
-fn eval_filter(
-    ctx: &DynContext<'_>,
-    element: &Value,
+fn eval_filter<'a, C: QueryContext<'a>>(
+    ctx: &C,
+    element: &C::Val,
     filter: &FilterExpr<'_>,
 ) -> bool {
     match filter {
-        FilterExpr::Simple { field, op, value } => {
-            ctx.field_get(element, field)
-                .map(|fv| compare_values(ctx, &fv, op, value))
-                .unwrap_or(false)
-        }
+        FilterExpr::Simple { field, op, value } => ctx
+            .field_get(element, field)
+            .map(|fv| compare_values(ctx, &fv, op, value))
+            .unwrap_or(false),
         FilterExpr::And(a, b) => eval_filter(ctx, element, a) && eval_filter(ctx, element, b),
         FilterExpr::Or(a, b) => eval_filter(ctx, element, a) || eval_filter(ctx, element, b),
     }
 }
 
-fn compare_values(
-    ctx: &DynContext<'_>,
-    fv: &Value,
+fn compare_values<'a, C: QueryContext<'a>>(
+    ctx: &C,
+    fv: &C::Val,
     op: &FilterOp,
     expected: &FilterValue<'_>,
 ) -> bool {
@@ -259,11 +261,12 @@ fn compare_values(
         (FilterOp::Eq, FilterValue::Int(b)) => {
             ctx.read_as_i64(fv).map(|a| a == *b).unwrap_or(false)
         }
-        (FilterOp::Eq, FilterValue::Float(b)) => {
-            ctx.read_as_f64(fv).map(|a| (a - *b).abs() < f64::EPSILON).unwrap_or(false)
-        }
+        (FilterOp::Eq, FilterValue::Float(b)) => ctx
+            .read_as_f64(fv)
+            .map(|a| (a - *b).abs() < f64::EPSILON)
+            .unwrap_or(false),
         (FilterOp::Eq, FilterValue::Str(b)) => {
-            if matches!(fv.schema, DynValueType::Str(_)) {
+            if ctx.is_str_type(fv) {
                 ctx.read_str(fv) == *b
             } else {
                 false
@@ -271,50 +274,58 @@ fn compare_values(
         }
         (FilterOp::Ne, _) => !compare_values(ctx, fv, &FilterOp::Eq, expected),
 
-        (FilterOp::Gt, FilterValue::Int(b)) => {
-            ctx.read_as_i64(fv).map(|a| a > *b).unwrap_or(false)
-        }
+        (FilterOp::Gt, FilterValue::Int(b)) => ctx.read_as_i64(fv).map(|a| a > *b).unwrap_or(false),
         (FilterOp::Gt, FilterValue::Float(b)) => {
             ctx.read_as_f64(fv).map(|a| a > *b).unwrap_or(false)
         }
 
         (FilterOp::Ge, _) => {
-            compare_values(ctx, fv, &FilterOp::Eq, expected) || compare_values(ctx, fv, &FilterOp::Gt, expected)
+            compare_values(ctx, fv, &FilterOp::Eq, expected)
+                || compare_values(ctx, fv, &FilterOp::Gt, expected)
         }
 
         (FilterOp::Lt, _) => !compare_values(ctx, fv, &FilterOp::Ge, expected),
 
         (FilterOp::Le, _) => !compare_values(ctx, fv, &FilterOp::Gt, expected),
 
-        (FilterOp::Contains, FilterValue::Str(b)) => {
-            ctx.read_str_opt(fv).map(|s| s.contains(*b)).unwrap_or(false)
-        }
-        (FilterOp::Contains, FilterValue::Int(b)) => {
-            ctx.read_str_opt(fv).map(|s| s.contains(&b.to_string())).unwrap_or(false)
-        }
-        (FilterOp::Contains, FilterValue::Float(b)) => {
-            ctx.read_str_opt(fv).map(|s| s.contains(&b.to_string())).unwrap_or(false)
-        }
+        (FilterOp::Contains, FilterValue::Str(b)) => ctx
+            .read_str_opt(fv)
+            .map(|s| s.contains(*b))
+            .unwrap_or(false),
+        (FilterOp::Contains, FilterValue::Int(b)) => ctx
+            .read_str_opt(fv)
+            .map(|s| s.contains(&b.to_string()))
+            .unwrap_or(false),
+        (FilterOp::Contains, FilterValue::Float(b)) => ctx
+            .read_str_opt(fv)
+            .map(|s| s.contains(&b.to_string()))
+            .unwrap_or(false),
 
-        (FilterOp::StartsWith, FilterValue::Str(b)) => {
-            ctx.read_str_opt(fv).map(|s| s.starts_with(*b)).unwrap_or(false)
-        }
-        (FilterOp::StartsWith, FilterValue::Int(b)) => {
-            ctx.read_str_opt(fv).map(|s| s.starts_with(&b.to_string())).unwrap_or(false)
-        }
-        (FilterOp::StartsWith, FilterValue::Float(b)) => {
-            ctx.read_str_opt(fv).map(|s| s.starts_with(&b.to_string())).unwrap_or(false)
-        }
+        (FilterOp::StartsWith, FilterValue::Str(b)) => ctx
+            .read_str_opt(fv)
+            .map(|s| s.starts_with(*b))
+            .unwrap_or(false),
+        (FilterOp::StartsWith, FilterValue::Int(b)) => ctx
+            .read_str_opt(fv)
+            .map(|s| s.starts_with(&b.to_string()))
+            .unwrap_or(false),
+        (FilterOp::StartsWith, FilterValue::Float(b)) => ctx
+            .read_str_opt(fv)
+            .map(|s| s.starts_with(&b.to_string()))
+            .unwrap_or(false),
 
-        (FilterOp::EndsWith, FilterValue::Str(b)) => {
-            ctx.read_str_opt(fv).map(|s| s.ends_with(*b)).unwrap_or(false)
-        }
-        (FilterOp::EndsWith, FilterValue::Int(b)) => {
-            ctx.read_str_opt(fv).map(|s| s.ends_with(&b.to_string())).unwrap_or(false)
-        }
-        (FilterOp::EndsWith, FilterValue::Float(b)) => {
-            ctx.read_str_opt(fv).map(|s| s.ends_with(&b.to_string())).unwrap_or(false)
-        }
+        (FilterOp::EndsWith, FilterValue::Str(b)) => ctx
+            .read_str_opt(fv)
+            .map(|s| s.ends_with(*b))
+            .unwrap_or(false),
+        (FilterOp::EndsWith, FilterValue::Int(b)) => ctx
+            .read_str_opt(fv)
+            .map(|s| s.ends_with(&b.to_string()))
+            .unwrap_or(false),
+        (FilterOp::EndsWith, FilterValue::Float(b)) => ctx
+            .read_str_opt(fv)
+            .map(|s| s.ends_with(&b.to_string()))
+            .unwrap_or(false),
 
         _ => false,
     }
@@ -324,7 +335,7 @@ fn compare_values(
 mod tests {
     use super::*;
     use crate::query_from;
-    use mmapstruct::{MmapStruct, GetSchema};
+    use mmapstruct::{DynContext, GetSchema, MmapStruct};
 
     #[derive(MmapStruct, Debug)]
     #[mmap(scope)]
@@ -335,7 +346,10 @@ mod tests {
 
     #[test]
     fn test_field_access() {
-        let r = Record { id: 42, name: "hello".into() };
+        let r = Record {
+            id: 42,
+            name: "hello".into(),
+        };
         let buf = mmapstruct::write_to_buf_raw(&r);
         let ctx = DynContext::new(&buf);
         let root = <Record as GetSchema>::root_value(buf.len() as u64);
@@ -349,22 +363,29 @@ mod tests {
 
     #[test]
     fn test_root_slash() {
-        let r = Record { id: 42, name: "hello".into() };
+        let r = Record {
+            id: 42,
+            name: "hello".into(),
+        };
         let buf = mmapstruct::write_to_buf_raw(&r);
         let ctx = DynContext::new(&buf);
         let root = <Record as GetSchema>::root_value(buf.len() as u64);
         let result = query_from("/", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1);
-        let EvalResult::Buf(ref v) = result[0] else { panic!("expected Buf") };
+        let EvalResult::Buf(ref v) = result[0] else {
+            panic!("expected Buf")
+        };
         let id = ctx.field_get(v, "id").unwrap();
         assert_eq!(ctx.read_u32(&id), 42);
     }
 
     #[test]
     fn test_negative_float_filter() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
-        #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+        #[derive(
+            MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+        )]
         #[repr(C)]
         struct Point3d {
             x: f32,
@@ -379,9 +400,21 @@ mod tests {
         }
 
         let points = vec![
-            Point3d { x: -1.0, y: 2.0, z: 3.0 },
-            Point3d { x: 0.5, y: 5.0, z: 6.0 },
-            Point3d { x: -2.5, y: 7.0, z: 8.0 },
+            Point3d {
+                x: -1.0,
+                y: 2.0,
+                z: 3.0,
+            },
+            Point3d {
+                x: 0.5,
+                y: 5.0,
+                z: 6.0,
+            },
+            Point3d {
+                x: -2.5,
+                y: 7.0,
+                z: 8.0,
+            },
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
@@ -403,9 +436,11 @@ mod tests {
 
     #[test]
     fn test_leading_dot_float_filter() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
-        #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+        #[derive(
+            MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+        )]
         #[repr(C)]
         struct Point3d {
             x: f32,
@@ -420,8 +455,16 @@ mod tests {
         }
 
         let points = vec![
-            Point3d { x: 0.5, y: 2.0, z: 3.0 },
-            Point3d { x: 1.5, y: 5.0, z: 6.0 },
+            Point3d {
+                x: 0.5,
+                y: 2.0,
+                z: 3.0,
+            },
+            Point3d {
+                x: 1.5,
+                y: 2.0,
+                z: 3.0,
+            },
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
@@ -431,7 +474,9 @@ mod tests {
         // Filter: x > .75 (leading-dot float)
         let result = query_from("/points[?x>.75]", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1);
-        let EvalResult::Buf(ref v) = result[0] else { panic!("expected Buf") };
+        let EvalResult::Buf(ref v) = result[0] else {
+            panic!("expected Buf")
+        };
         let x = ctx.field_get(v, "x").unwrap();
         assert_eq!(ctx.read_f32(&x), 1.5);
     }
@@ -439,12 +484,23 @@ mod tests {
     #[test]
     fn test_filter_gt() {
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, name: "a".into() },
-            Record { id: 5, name: "b".into() },
-            Record { id: 10, name: "c".into() },
+            Record {
+                id: 1,
+                name: "a".into(),
+            },
+            Record {
+                id: 5,
+                name: "b".into(),
+            },
+            Record {
+                id: 10,
+                name: "c".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
@@ -457,12 +513,23 @@ mod tests {
     #[test]
     fn test_filter_contains() {
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, name: "sensor_a".into() },
-            Record { id: 2, name: "actuator_b".into() },
-            Record { id: 3, name: "sensor_c".into() },
+            Record {
+                id: 1,
+                name: "sensor_a".into(),
+            },
+            Record {
+                id: 2,
+                name: "actuator_b".into(),
+            },
+            Record {
+                id: 3,
+                name: "sensor_c".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
@@ -475,12 +542,23 @@ mod tests {
     #[test]
     fn test_filter_gt_via_outer_struct() {
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, name: "a".into() },
-            Record { id: 5, name: "b".into() },
-            Record { id: 10, name: "c".into() },
+            Record {
+                id: 1,
+                name: "a".into(),
+            },
+            Record {
+                id: 5,
+                name: "b".into(),
+            },
+            Record {
+                id: 10,
+                name: "c".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
@@ -493,12 +571,23 @@ mod tests {
     #[test]
     fn test_filter_contains_via_outer_struct() {
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, name: "sensor_a".into() },
-            Record { id: 2, name: "actuator_b".into() },
-            Record { id: 3, name: "sensor_c".into() },
+            Record {
+                id: 1,
+                name: "sensor_a".into(),
+            },
+            Record {
+                id: 2,
+                name: "actuator_b".into(),
+            },
+            Record {
+                id: 3,
+                name: "sensor_c".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
@@ -511,12 +600,23 @@ mod tests {
     #[test]
     fn test_filter_eq_via_outer_struct() {
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 10, name: "target".into() },
-            Record { id: 20, name: "other".into() },
-            Record { id: 30, name: "target".into() },
+            Record {
+                id: 10,
+                name: "target".into(),
+            },
+            Record {
+                id: 20,
+                name: "other".into(),
+            },
+            Record {
+                id: 30,
+                name: "target".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
@@ -528,10 +628,12 @@ mod tests {
 
     #[test]
     fn test_filter_pod_array() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
         use bytemuck;
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
-        #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+        #[derive(
+            MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+        )]
         #[repr(C)]
         struct Point3d {
             x: f32,
@@ -546,9 +648,21 @@ mod tests {
         }
 
         let points = vec![
-            Point3d { x: 1.0, y: 2.0, z: 3.0 },
-            Point3d { x: 4.0, y: 5.0, z: 6.0 },
-            Point3d { x: 1.5, y: 7.0, z: 8.0 },
+            Point3d {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+            },
+            Point3d {
+                x: 4.0,
+                y: 5.0,
+                z: 6.0,
+            },
+            Point3d {
+                x: 1.5,
+                y: 7.0,
+                z: 8.0,
+            },
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
@@ -558,7 +672,9 @@ mod tests {
         // Filter: x > 3 (float literal comparison)
         let result = query_from("/points[?x>3.0]", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1);
-        let EvalResult::Buf(ref v) = result[0] else { panic!("expected Buf") };
+        let EvalResult::Buf(ref v) = result[0] else {
+            panic!("expected Buf")
+        };
         let x = ctx.field_get(v, "x").unwrap();
         assert_eq!(ctx.read_f32(&x), 4.0);
 
@@ -575,25 +691,42 @@ mod tests {
 
     #[test]
     fn test_field_access_pod_array_elements() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
         use bytemuck;
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
-        #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+        #[derive(
+            MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+        )]
         #[repr(C)]
-        struct Point3d { x: f32, y: f32, z: f32 }
+        struct Point3d {
+            x: f32,
+            y: f32,
+            z: f32,
+        }
 
         #[derive(MmapStruct, Debug, PartialEq)]
-        struct VecPod3d { #[pod] points: Vec<Point3d> }
+        struct VecPod3d {
+            #[pod]
+            points: Vec<Point3d>,
+        }
 
         let points = vec![
-            Point3d { x: 1.0, y: 2.0, z: 3.0 },
-            Point3d { x: 4.0, y: 5.0, z: 6.0 },
+            Point3d {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+            },
+            Point3d {
+                x: 4.0,
+                y: 5.0,
+                z: 6.0,
+            },
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
         let ctx = DynContext::new(&buf);
 
-        let schema = <VecPod3d as GetSchema>::get_schema();
+        let schema = <VecPod3d as GetSchema>::get_struct_schema();
         let root = <VecPod3d as GetSchema>::root_value(schema.header_size);
 
         let field = ctx.field_get(&root, "points").unwrap();
@@ -618,19 +751,33 @@ mod tests {
 
     #[test]
     fn test_select_filter_pipe() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, name: String }
+        struct Record {
+            id: u32,
+            name: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, name: "sensor_a".into() },
-            Record { id: 5, name: "actuator_b".into() },
-            Record { id: 10, name: "sensor_c".into() },
+            Record {
+                id: 1,
+                name: "sensor_a".into(),
+            },
+            Record {
+                id: 5,
+                name: "actuator_b".into(),
+            },
+            Record {
+                id: 10,
+                name: "sensor_c".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
@@ -648,23 +795,33 @@ mod tests {
         // Filter with id=1
         let result = query_from("/items | select(.id=1)", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1);
-        let EvalResult::Buf(ref v) = result[0] else { panic!("expected Buf") };
+        let EvalResult::Buf(ref v) = result[0] else {
+            panic!("expected Buf")
+        };
         let id = ctx.field_get(v, "id").unwrap();
         assert_eq!(ctx.read_u32(&id), 1);
     }
 
     #[test]
     fn test_select_no_match() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, name: String }
+        struct Record {
+            id: u32,
+            name: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
-        let records = vec![Record { id: 1, name: "a".into() }];
+        let records = vec![Record {
+            id: 1,
+            name: "a".into(),
+        }];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
         let ctx = DynContext::new(&buf);
@@ -680,19 +837,33 @@ mod tests {
 
     #[test]
     fn test_and_filter() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, name: String }
+        struct Record {
+            id: u32,
+            name: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, name: "sensor".into() },
-            Record { id: 5, name: "actuator".into() },
-            Record { id: 10, name: "sensor".into() },
+            Record {
+                id: 1,
+                name: "sensor".into(),
+            },
+            Record {
+                id: 5,
+                name: "actuator".into(),
+            },
+            Record {
+                id: 10,
+                name: "sensor".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
@@ -702,26 +873,42 @@ mod tests {
         // AND: id>3 AND name~sensor
         let result = query_from("/items[?id>3&name~sensor]", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1); // only id=10 has both
-        let EvalResult::Buf(ref v) = result[0] else { panic!("expected Buf") };
+        let EvalResult::Buf(ref v) = result[0] else {
+            panic!("expected Buf")
+        };
         let id = ctx.field_get(v, "id").unwrap();
         assert_eq!(ctx.read_u32(&id), 10);
     }
 
     #[test]
     fn test_or_filter() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, name: String }
+        struct Record {
+            id: u32,
+            name: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, name: "sensor".into() },
-            Record { id: 5, name: "actuator".into() },
-            Record { id: 10, name: "target".into() },
+            Record {
+                id: 1,
+                name: "sensor".into(),
+            },
+            Record {
+                id: 5,
+                name: "actuator".into(),
+            },
+            Record {
+                id: 10,
+                name: "target".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
@@ -735,20 +922,37 @@ mod tests {
 
     #[test]
     fn test_and_or_combined() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, name: String }
+        struct Record {
+            id: u32,
+            name: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, name: "sensor_a".into() },
-            Record { id: 5, name: "actuator".into() },
-            Record { id: 10, name: "sensor_b".into() },
-            Record { id: 20, name: "other".into() },
+            Record {
+                id: 1,
+                name: "sensor_a".into(),
+            },
+            Record {
+                id: 5,
+                name: "actuator".into(),
+            },
+            Record {
+                id: 10,
+                name: "sensor_b".into(),
+            },
+            Record {
+                id: 20,
+                name: "other".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
@@ -762,20 +966,41 @@ mod tests {
 
     #[test]
     fn test_and_filter_pod_array() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
         use bytemuck;
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
-        #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+        #[derive(
+            MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+        )]
         #[repr(C)]
-        struct Point3d { x: f32, y: f32, z: f32 }
+        struct Point3d {
+            x: f32,
+            y: f32,
+            z: f32,
+        }
 
         #[derive(MmapStruct, Debug, PartialEq)]
-        struct VecPod3d { #[pod] points: Vec<Point3d> }
+        struct VecPod3d {
+            #[pod]
+            points: Vec<Point3d>,
+        }
 
         let points = vec![
-            Point3d { x: 1.0, y: 2.0, z: 3.0 },
-            Point3d { x: 4.0, y: 5.0, z: 6.0 },
-            Point3d { x: 2.0, y: 7.0, z: 8.0 },
+            Point3d {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+            },
+            Point3d {
+                x: 4.0,
+                y: 5.0,
+                z: 6.0,
+            },
+            Point3d {
+                x: 2.0,
+                y: 7.0,
+                z: 8.0,
+            },
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
@@ -789,20 +1014,41 @@ mod tests {
 
     #[test]
     fn test_or_filter_pod_array() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
         use bytemuck;
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
-        #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+        #[derive(
+            MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+        )]
         #[repr(C)]
-        struct Point3d { x: f32, y: f32, z: f32 }
+        struct Point3d {
+            x: f32,
+            y: f32,
+            z: f32,
+        }
 
         #[derive(MmapStruct, Debug, PartialEq)]
-        struct VecPod3d { #[pod] points: Vec<Point3d> }
+        struct VecPod3d {
+            #[pod]
+            points: Vec<Point3d>,
+        }
 
         let points = vec![
-            Point3d { x: 1.0, y: 2.0, z: 3.0 },
-            Point3d { x: 4.0, y: 5.0, z: 6.0 },
-            Point3d { x: 0.5, y: 7.0, z: 8.0 },
+            Point3d {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+            },
+            Point3d {
+                x: 4.0,
+                y: 5.0,
+                z: 6.0,
+            },
+            Point3d {
+                x: 0.5,
+                y: 7.0,
+                z: 8.0,
+            },
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
@@ -816,19 +1062,33 @@ mod tests {
 
     #[test]
     fn test_select_and_filter() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, name: String }
+        struct Record {
+            id: u32,
+            name: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, name: "sensor".into() },
-            Record { id: 5, name: "actuator".into() },
-            Record { id: 10, name: "sensor".into() },
+            Record {
+                id: 1,
+                name: "sensor".into(),
+            },
+            Record {
+                id: 5,
+                name: "actuator".into(),
+            },
+            Record {
+                id: 10,
+                name: "sensor".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
@@ -838,7 +1098,9 @@ mod tests {
         // select with AND
         let result = query_from("/items | select(.id>3&.name~sensor)", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1);
-        let EvalResult::Buf(ref v) = result[0] else { panic!("expected Buf") };
+        let EvalResult::Buf(ref v) = result[0] else {
+            panic!("expected Buf")
+        };
         let id = ctx.field_get(v, "id").unwrap();
         assert_eq!(ctx.read_u32(&id), 10);
     }
@@ -849,19 +1111,33 @@ mod tests {
 
     #[test]
     fn test_count() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, _tag: String }
+        struct Record {
+            id: u32,
+            _tag: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, _tag: "a".into() },
-            Record { id: 5, _tag: "b".into() },
-            Record { id: 10, _tag: "c".into() },
+            Record {
+                id: 1,
+                _tag: "a".into(),
+            },
+            Record {
+                id: 5,
+                _tag: "b".into(),
+            },
+            Record {
+                id: 10,
+                _tag: "c".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
@@ -875,19 +1151,37 @@ mod tests {
 
     #[test]
     fn test_avg() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, price: f32, _tag: String }
+        struct Record {
+            id: u32,
+            price: f32,
+            _tag: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, price: 10.0, _tag: "a".into() },
-            Record { id: 2, price: 20.0, _tag: "b".into() },
-            Record { id: 3, price: 30.0, _tag: "c".into() },
+            Record {
+                id: 1,
+                price: 10.0,
+                _tag: "a".into(),
+            },
+            Record {
+                id: 2,
+                price: 20.0,
+                _tag: "b".into(),
+            },
+            Record {
+                id: 3,
+                price: 30.0,
+                _tag: "c".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
@@ -896,25 +1190,45 @@ mod tests {
 
         let result = query_from("/items | avg(.price)", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1);
-        let EvalResult::F64(avg) = result[0] else { panic!("expected F64") };
+        let EvalResult::F64(avg) = result[0] else {
+            panic!("expected F64")
+        };
         assert!((avg - 20.0).abs() < 0.001);
     }
 
     #[test]
     fn test_min() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, price: f32, _tag: String }
+        struct Record {
+            id: u32,
+            price: f32,
+            _tag: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, price: 30.0, _tag: "a".into() },
-            Record { id: 2, price: 10.0, _tag: "b".into() },
-            Record { id: 3, price: 20.0, _tag: "c".into() },
+            Record {
+                id: 1,
+                price: 30.0,
+                _tag: "a".into(),
+            },
+            Record {
+                id: 2,
+                price: 10.0,
+                _tag: "b".into(),
+            },
+            Record {
+                id: 3,
+                price: 20.0,
+                _tag: "c".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
@@ -923,25 +1237,45 @@ mod tests {
 
         let result = query_from("/items | min(.price)", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1);
-        let EvalResult::F64(min) = result[0] else { panic!("expected F64") };
+        let EvalResult::F64(min) = result[0] else {
+            panic!("expected F64")
+        };
         assert!((min - 10.0).abs() < 0.001);
     }
 
     #[test]
     fn test_max() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, price: f32, _tag: String }
+        struct Record {
+            id: u32,
+            price: f32,
+            _tag: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, price: 30.0, _tag: "a".into() },
-            Record { id: 2, price: 10.0, _tag: "b".into() },
-            Record { id: 3, price: 20.0, _tag: "c".into() },
+            Record {
+                id: 1,
+                price: 30.0,
+                _tag: "a".into(),
+            },
+            Record {
+                id: 2,
+                price: 10.0,
+                _tag: "b".into(),
+            },
+            Record {
+                id: 3,
+                price: 20.0,
+                _tag: "c".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
@@ -950,25 +1284,44 @@ mod tests {
 
         let result = query_from("/items | max(.price)", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1);
-        let EvalResult::F64(max) = result[0] else { panic!("expected F64") };
+        let EvalResult::F64(max) = result[0] else {
+            panic!("expected F64")
+        };
         assert!((max - 30.0).abs() < 0.001);
     }
 
     #[test]
     fn test_count_pod_array() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
         use bytemuck;
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
-        #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+        #[derive(
+            MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+        )]
         #[repr(C)]
-        struct Point3d { x: f32, y: f32, z: f32 }
+        struct Point3d {
+            x: f32,
+            y: f32,
+            z: f32,
+        }
 
         #[derive(MmapStruct, Debug, PartialEq)]
-        struct VecPod3d { #[pod] points: Vec<Point3d> }
+        struct VecPod3d {
+            #[pod]
+            points: Vec<Point3d>,
+        }
 
         let points = vec![
-            Point3d { x: 1.0, y: 2.0, z: 3.0 },
-            Point3d { x: 4.0, y: 5.0, z: 6.0 },
+            Point3d {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+            },
+            Point3d {
+                x: 4.0,
+                y: 5.0,
+                z: 6.0,
+            },
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
@@ -981,20 +1334,41 @@ mod tests {
 
     #[test]
     fn test_avg_pod_array() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
         use bytemuck;
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
-        #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+        #[derive(
+            MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+        )]
         #[repr(C)]
-        struct Point3d { x: f32, y: f32, z: f32 }
+        struct Point3d {
+            x: f32,
+            y: f32,
+            z: f32,
+        }
 
         #[derive(MmapStruct, Debug, PartialEq)]
-        struct VecPod3d { #[pod] points: Vec<Point3d> }
+        struct VecPod3d {
+            #[pod]
+            points: Vec<Point3d>,
+        }
 
         let points = vec![
-            Point3d { x: 1.0, y: 2.0, z: 3.0 },
-            Point3d { x: 4.0, y: 5.0, z: 6.0 },
-            Point3d { x: 7.0, y: 8.0, z: 9.0 },
+            Point3d {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+            },
+            Point3d {
+                x: 4.0,
+                y: 5.0,
+                z: 6.0,
+            },
+            Point3d {
+                x: 7.0,
+                y: 8.0,
+                z: 9.0,
+            },
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
@@ -1002,26 +1376,49 @@ mod tests {
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/points | avg(.x)", &ctx, &root).unwrap();
-        let EvalResult::F64(avg_x) = result[0] else { panic!("expected F64") };
+        let EvalResult::F64(avg_x) = result[0] else {
+            panic!("expected F64")
+        };
         assert!((avg_x - 4.0).abs() < 0.001);
     }
 
     #[test]
     fn test_min_pod_array() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
         use bytemuck;
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
-        #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+        #[derive(
+            MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+        )]
         #[repr(C)]
-        struct Point3d { x: f32, y: f32, z: f32 }
+        struct Point3d {
+            x: f32,
+            y: f32,
+            z: f32,
+        }
 
         #[derive(MmapStruct, Debug, PartialEq)]
-        struct VecPod3d { #[pod] points: Vec<Point3d> }
+        struct VecPod3d {
+            #[pod]
+            points: Vec<Point3d>,
+        }
 
         let points = vec![
-            Point3d { x: 10.0, y: 2.0, z: 3.0 },
-            Point3d { x: 4.0, y: 5.0, z: 6.0 },
-            Point3d { x: 7.0, y: 8.0, z: 9.0 },
+            Point3d {
+                x: 10.0,
+                y: 2.0,
+                z: 3.0,
+            },
+            Point3d {
+                x: 4.0,
+                y: 5.0,
+                z: 6.0,
+            },
+            Point3d {
+                x: 7.0,
+                y: 8.0,
+                z: 9.0,
+            },
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
@@ -1029,26 +1426,49 @@ mod tests {
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/points | min(.x)", &ctx, &root).unwrap();
-        let EvalResult::F64(min_x) = result[0] else { panic!("expected F64") };
+        let EvalResult::F64(min_x) = result[0] else {
+            panic!("expected F64")
+        };
         assert!((min_x - 4.0).abs() < 0.001);
     }
 
     #[test]
     fn test_max_pod_array() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
         use bytemuck;
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
-        #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+        #[derive(
+            MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
+        )]
         #[repr(C)]
-        struct Point3d { x: f32, y: f32, z: f32 }
+        struct Point3d {
+            x: f32,
+            y: f32,
+            z: f32,
+        }
 
         #[derive(MmapStruct, Debug, PartialEq)]
-        struct VecPod3d { #[pod] points: Vec<Point3d> }
+        struct VecPod3d {
+            #[pod]
+            points: Vec<Point3d>,
+        }
 
         let points = vec![
-            Point3d { x: 10.0, y: 2.0, z: 3.0 },
-            Point3d { x: 4.0, y: 5.0, z: 6.0 },
-            Point3d { x: 7.0, y: 8.0, z: 9.0 },
+            Point3d {
+                x: 10.0,
+                y: 2.0,
+                z: 3.0,
+            },
+            Point3d {
+                x: 4.0,
+                y: 5.0,
+                z: 6.0,
+            },
+            Point3d {
+                x: 7.0,
+                y: 8.0,
+                z: 9.0,
+            },
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
@@ -1056,24 +1476,31 @@ mod tests {
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/points | max(.x)", &ctx, &root).unwrap();
-        let EvalResult::F64(max_x) = result[0] else { panic!("expected F64") };
+        let EvalResult::F64(max_x) = result[0] else {
+            panic!("expected F64")
+        };
         assert!((max_x - 10.0).abs() < 0.001);
     }
 
     #[test]
     fn test_aggregate_non_array_fails() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, _tag: String }
+        struct Record {
+            id: u32,
+            _tag: String,
+        }
 
-        let r = Record { id: 42, _tag: "x".into() };
+        let r = Record {
+            id: 42,
+            _tag: "x".into(),
+        };
         let buf = write_to_buf_raw(&r);
         let ctx = DynContext::new(&buf);
         let root = <Record as GetSchema>::root_value(buf.len() as u64);
 
-        // count() on a non-array should fail
         let result = query_from("/ | count()", &ctx, &root);
         match result {
             Err(msg) => assert!(msg.contains("requires an array")),
@@ -1083,16 +1510,30 @@ mod tests {
 
     #[test]
     fn test_format_aggregate_count() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, _tag: String }
+        struct Record {
+            id: u32,
+            _tag: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
-        let records = vec![Record { id: 1, _tag: "a".into() }, Record { id: 5, _tag: "b".into() }];
+        let records = vec![
+            Record {
+                id: 1,
+                _tag: "a".into(),
+            },
+            Record {
+                id: 5,
+                _tag: "b".into(),
+            },
+        ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
         let ctx = DynContext::new(&buf);
@@ -1105,18 +1546,32 @@ mod tests {
 
     #[test]
     fn test_format_aggregate_avg() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
-        struct Record { id: u32, price: f32, _tag: String }
+        struct Record {
+            id: u32,
+            price: f32,
+            _tag: String,
+        }
 
         #[derive(MmapStruct, Debug)]
-        struct RecordFile { items: Vec<Record> }
+        struct RecordFile {
+            items: Vec<Record>,
+        }
 
         let records = vec![
-            Record { id: 1, price: 10.0, _tag: "a".into() },
-            Record { id: 2, price: 20.0, _tag: "b".into() },
+            Record {
+                id: 1,
+                price: 10.0,
+                _tag: "a".into(),
+            },
+            Record {
+                id: 2,
+                price: 20.0,
+                _tag: "b".into(),
+            },
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
@@ -1125,7 +1580,6 @@ mod tests {
 
         let result = query_from("/items | avg(.price)", &ctx, &root).unwrap();
         let s = crate::format_result(&ctx, &result[0]);
-        // avg = 15.0, should format as "15"
         assert_eq!(s, "15");
     }
 
@@ -1135,7 +1589,7 @@ mod tests {
 
     #[test]
     fn test_option_byref_some_via_dsl() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         struct Doc {
@@ -1144,7 +1598,10 @@ mod tests {
             label: Option<String>,
         }
 
-        let d = Doc { id: 42, label: Some("hello".into()) };
+        let d = Doc {
+            id: 42,
+            label: Some("hello".into()),
+        };
         let buf = write_to_buf_raw(&d);
         let ctx = DynContext::new(&buf);
         let root = <Doc as GetSchema>::root_value(buf.len() as u64);
@@ -1157,7 +1614,7 @@ mod tests {
 
     #[test]
     fn test_option_byref_none_via_dsl() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         struct Doc {
@@ -1166,12 +1623,14 @@ mod tests {
             label: Option<String>,
         }
 
-        let d = Doc { id: 99, label: None };
+        let d = Doc {
+            id: 99,
+            label: None,
+        };
         let buf = write_to_buf_raw(&d);
         let ctx = DynContext::new(&buf);
         let root = <Doc as GetSchema>::root_value(buf.len() as u64);
 
-        // Before the fix this returned Err("no such field `label`")
         let result = query_from("/label", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1);
         let s = crate::format_result(&ctx, &result[0]);
@@ -1180,7 +1639,7 @@ mod tests {
 
     #[test]
     fn test_option_byref_none_in_struct_context() {
-        use mmapstruct::{MmapStruct, GetSchema, write_to_buf_raw, DynContext};
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         struct Doc {
@@ -1189,20 +1648,75 @@ mod tests {
             label: Option<String>,
         }
 
-        // None case — format_value should render "null" for the field
-        let d = Doc { id: 99, label: None };
+        let d = Doc {
+            id: 99,
+            label: None,
+        };
         let buf = write_to_buf_raw(&d);
         let ctx = DynContext::new(&buf);
         let root = <Doc as GetSchema>::root_value(buf.len() as u64);
         let s = crate::format_value(&ctx, &root);
         assert_eq!(s, r#"{"id": 99, "label": null}"#);
 
-        // Some case — format_value should render the value
-        let d = Doc { id: 42, label: Some("hello".into()) };
+        let d = Doc {
+            id: 42,
+            label: Some("hello".into()),
+        };
         let buf = write_to_buf_raw(&d);
         let ctx = DynContext::new(&buf);
         let root = <Doc as GetSchema>::root_value(buf.len() as u64);
         let s = crate::format_value(&ctx, &root);
         assert_eq!(s, r#"{"id": 42, "label": "hello"}"#);
+    }
+
+    #[test]
+    fn test_enum_schema_variant_a() {
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+
+        #[derive(MmapStruct, Debug, PartialEq)]
+        enum MyEnum {
+            Alpha { id: u32 },
+            Beta { name: String, val: u64 },
+        }
+
+        let w = MyEnum::Alpha { id: 42 };
+        let buf = write_to_buf_raw(&w);
+        let ctx = DynContext::new(&buf);
+        let root = <MyEnum as GetSchema>::root_value(buf.len() as u64);
+        let s = crate::format_value(&ctx, &root);
+        assert_eq!(s, r#"MyEnum::Alpha { "id": 42 }"#);
+
+        let w = MyEnum::Beta {
+            name: "hello".into(),
+            val: 99,
+        };
+        let buf = write_to_buf_raw(&w);
+        let ctx = DynContext::new(&buf);
+        let root = <MyEnum as GetSchema>::root_value(buf.len() as u64);
+        let s = crate::format_value(&ctx, &root);
+        assert_eq!(s, r#"MyEnum::Beta { "name": "hello", "val": 99 }"#);
+    }
+
+    #[test]
+    fn test_enum_schema_variant_navigate() {
+        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+
+        #[derive(MmapStruct, Debug, PartialEq)]
+        enum MyEnum {
+            Alpha { id: u32 },
+            Beta { name: String, val: u64 },
+        }
+
+        let w = MyEnum::Alpha { id: 7 };
+        let buf = write_to_buf_raw(&w);
+        let ctx = DynContext::new(&buf);
+        let root = <MyEnum as GetSchema>::root_value(buf.len() as u64);
+
+        let (var_schema, _data_off) = ctx.enum_variant(&root).unwrap();
+        assert_eq!(var_schema.name, "MyEnum::Alpha");
+        assert_eq!(var_schema.fields.len(), 1);
+
+        let id_val = ctx.field_get(&root, "id").unwrap();
+        assert_eq!(ctx.read_u32(&id_val), 7);
     }
 }

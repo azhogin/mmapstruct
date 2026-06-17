@@ -1,8 +1,11 @@
-use crate::traits::{MmapPod, MmapRead, MmapWrite, FileRange, ReaderOrd, ReaderOwned};
+use super::common::{
+    align_up, align_write, binary_search_reader, iter_offset_ranges, read_count, read_offset,
+    reserve_offset_table, sort_pairs, write_offset_table,
+};
+use crate::traits::{FileRange, MmapPod, MmapRead, MmapWrite, ReaderOrd, ReaderOwned};
+use core::mem::size_of;
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use super::common::{read_count, sort_pairs, align_up, read_offset, align_write, reserve_offset_table, write_offset_table, binary_search_reader, iter_offset_ranges};
-use core::mem::size_of;
 
 /// Layout: `[count: u64, key_offsets: [u32; count + 1], keys_data..., [V; count]]`
 pub struct HashMapReader<'a, K, V> {
@@ -34,8 +37,13 @@ impl<'a, K: MmapRead + 'a, V: MmapPod> HashMapReader<'a, K, V> {
             let keys_end = keys_area_start + total_keys;
             let vals_start = align_up(keys_end, val_align);
             let vals_end = vals_start + count * core::mem::size_of::<V>();
-            assert!(vals_end <= data.len(),
-                "inlinedK_podV: total range {}..{} exceeds data len {}", keys_area_start, vals_end, data.len());
+            assert!(
+                vals_end <= data.len(),
+                "inlinedK_podV: total range {}..{} exceeds data len {}",
+                keys_area_start,
+                vals_end,
+                data.len()
+            );
         }
 
         let val_align = core::mem::align_of::<V>();
@@ -44,17 +52,34 @@ impl<'a, K: MmapRead + 'a, V: MmapPod> HashMapReader<'a, K, V> {
         let vals_bytes = &data[vals_start..vals_start + count * core::mem::size_of::<V>()];
         let vals: &[V] = crate::bytemuck::cast_slice(vals_bytes);
 
-        Self { data, count, key_offsets_start, keys_area_start, vals, _phantom: PhantomData }
+        Self {
+            data,
+            count,
+            key_offsets_start,
+            keys_area_start,
+            vals,
+            _phantom: PhantomData,
+        }
     }
 
-    pub fn len(&self) -> usize { self.count }
-    pub fn is_empty(&self) -> bool { self.count == 0 }
+    pub fn len(&self) -> usize {
+        self.count
+    }
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
 
     pub fn get(&self, key: &K) -> Option<&'a V>
     where
         K: ReaderOrd,
     {
-        let idx = binary_search_reader(self.data, self.key_offsets_start, self.keys_area_start, key, self.count)?;
+        let idx = binary_search_reader(
+            self.data,
+            self.key_offsets_start,
+            self.keys_area_start,
+            key,
+            self.count,
+        )?;
         Some(&self.vals[idx])
     }
 
@@ -66,22 +91,34 @@ impl<'a, K: MmapRead + 'a, V: MmapPod> HashMapReader<'a, K, V> {
     }
 
     pub fn keys(&'a self) -> impl Iterator<Item = K::Reader<'a>> {
-        iter_offset_ranges(self.data, self.key_offsets_start, self.keys_area_start, self.count)
-            .map(move |(start, end)| K::read(self.data, start..end))
+        iter_offset_ranges(
+            self.data,
+            self.key_offsets_start,
+            self.keys_area_start,
+            self.count,
+        )
+        .map(move |(start, end)| K::read(self.data, start..end))
     }
 
-    pub fn values(&self) -> &'a [V] { self.vals }
+    pub fn values(&self) -> &'a [V] {
+        self.vals
+    }
 
     pub fn iter(&'a self) -> impl Iterator<Item = (K::Reader<'a>, &'a V)> {
         self.keys().zip(self.vals.iter())
     }
 }
 
-impl<'a, K: MmapRead + ReaderOwned + Ord + std::hash::Hash + Eq + 'a, V: MmapPod + std::hash::Hash + Eq>
-    From<HashMapReader<'a, K, V>> for std::collections::HashMap<K, V>
+impl<
+        'a,
+        K: MmapRead + ReaderOwned + Ord + std::hash::Hash + Eq + 'a,
+        V: MmapPod + std::hash::Hash + Eq,
+    > From<HashMapReader<'a, K, V>> for std::collections::HashMap<K, V>
 {
     fn from(r: HashMapReader<'a, K, V>) -> Self {
-        r.iter().map(|(k, v)| (ReaderOwned::into_owned(k), *v)).collect()
+        r.iter()
+            .map(|(k, v)| (ReaderOwned::into_owned(k), *v))
+            .collect()
     }
 }
 
@@ -123,15 +160,21 @@ mod tests {
     use super::*;
     use crate::WriteContext;
 
-    fn write_and_read<'a, K: MmapRead + MmapWrite + Ord + ReaderOrd + 'static, V: MmapPod + 'static>(
+    fn write_and_read<
+        'a,
+        K: MmapRead + MmapWrite + Ord + ReaderOrd + 'static,
+        V: MmapPod + 'static,
+    >(
         map: &HashMap<K, V>,
         buf: &'a mut Vec<u8>,
-    ) -> HashMapReader<'a, K, V>
-    {
+    ) -> HashMapReader<'a, K, V> {
         let mut ctx = WriteContext::new();
         write_hash_map(map, &mut ctx);
         *buf = ctx.finish();
-        let range = FileRange { start: 0, end: buf.len() };
+        let range = FileRange {
+            start: 0,
+            end: buf.len(),
+        };
         HashMapReader::new(buf, range)
     }
 

@@ -6,17 +6,17 @@
 //! Selection between variants is done at derive time via
 //! `#[mmap(key = pod, value = inlined)]` on the field, or auto-detected.
 
+pub mod common;
 #[allow(non_snake_case)]
-pub mod podK_podV;
-#[allow(non_snake_case)]
-pub mod podK_inlinedV;
+pub mod inlinedK_inlinedV;
 #[allow(non_snake_case)]
 pub mod inlinedK_podV;
 #[allow(non_snake_case)]
-pub mod inlinedK_inlinedV;
-pub mod common;
+pub mod podK_inlinedV;
+#[allow(non_snake_case)]
+pub mod podK_podV;
 
-pub use podK_podV::HashMapReader as HashMapReaderPodKPodV;
-pub use podK_inlinedV::HashMapReader as HashMapReaderPodKInlinedV;
-pub use inlinedK_podV::HashMapReader as HashMapReaderInlinedKPodV;
 pub use inlinedK_inlinedV::HashMapReader as HashMapReaderInlinedKInlinedV;
+pub use inlinedK_podV::HashMapReader as HashMapReaderInlinedKPodV;
+pub use podK_inlinedV::HashMapReader as HashMapReaderPodKInlinedV;
+pub use podK_podV::HashMapReader as HashMapReaderPodKPodV;

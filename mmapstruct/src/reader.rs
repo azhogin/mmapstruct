@@ -19,10 +19,10 @@ fn resolve_byref_range(base: usize, begin: usize, end: usize) -> Range<usize> {
 
 #[cfg(feature = "strict-validation")]
 fn resolve_byref_range(base: usize, begin: usize, end: usize) -> Range<usize> {
-    let begin = base.checked_add(begin)
+    let begin = base
+        .checked_add(begin)
         .expect("read_by_ref: begin overflow");
-    let end = base.checked_add(end)
-        .expect("read_by_ref: end overflow");
+    let end = base.checked_add(end).expect("read_by_ref: end overflow");
     assert!(begin <= end, "read_by_ref: begin {} > end {}", begin, end);
     begin..end
 }

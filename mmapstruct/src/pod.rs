@@ -1,5 +1,5 @@
-use std::ops::Range;
 use crate::traits::{MmapPod, MmapRead, MmapWrite};
+use std::ops::Range;
 
 impl MmapPod for u8 {}
 impl MmapPod for u16 {}

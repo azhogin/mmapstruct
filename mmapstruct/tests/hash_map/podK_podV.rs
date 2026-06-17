@@ -1,20 +1,19 @@
-use mmapstruct::hash_map::podK_podV::{HashMapReader, write_hash_map};
+use mmapstruct::hash_map::podK_podV::{write_hash_map, HashMapReader};
 use mmapstruct::traits::FileRange;
 use mmapstruct::WriteContext;
 use std::collections::HashMap;
 
 #[test]
 fn roundtrip_pod_keys_vals() {
-    let map = HashMap::from([
-        (10u32, 100u64),
-        (20u32, 200u64),
-        (5u32, 50u64),
-    ]);
+    let map = HashMap::from([(10u32, 100u64), (20u32, 200u64), (5u32, 50u64)]);
 
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<u32, u64>::new(&buf, range);
 
     assert_eq!(reader.len(), 3);
@@ -30,7 +29,10 @@ fn empty_map() {
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<u32, u64>::new(&buf, range);
 
     assert!(reader.is_empty());

@@ -1,7 +1,10 @@
-use crate::traits::{MmapRead, MmapWrite, FileRange, ReaderOrd, ReaderOwned};
+use super::common::{
+    align_up, align_write, binary_search_reader, iter_offset_ranges, read_count, read_offset,
+    reserve_offset_table, sort_pairs, write_offset_table,
+};
+use crate::traits::{FileRange, MmapRead, MmapWrite, ReaderOrd, ReaderOwned};
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use super::common::{read_count, read_offset, sort_pairs, align_up, align_write, reserve_offset_table, write_offset_table, binary_search_reader, iter_offset_ranges};
 
 /// Layout:
 /// `[count: u64, key_offsets: [u32; count + 1], val_offsets: [u32; count + 1],
@@ -45,24 +48,35 @@ impl<'a, K: MmapRead + 'a, V: MmapRead + 'a> HashMapReader<'a, K, V> {
             } else {
                 0
             };
-            assert!(vals_area_start + total_vals <= data.len(),
-                "inlinedK_inlinedV: total range exceeds data len");
+            assert!(
+                vals_area_start + total_vals <= data.len(),
+                "inlinedK_inlinedV: total range exceeds data len"
+            );
         }
 
         Self {
-            data, count,
-            key_offsets_start, keys_area_start,
-            val_offsets_start, vals_area_start,
+            data,
+            count,
+            key_offsets_start,
+            keys_area_start,
+            val_offsets_start,
+            vals_area_start,
             _phantom: PhantomData,
         }
     }
 
-    pub fn len(&self) -> usize { self.count }
-    pub fn is_empty(&self) -> bool { self.count == 0 }
+    pub fn len(&self) -> usize {
+        self.count
+    }
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
 
     fn read_stored_val(&self, index: usize) -> V::Reader<'a> {
-        let start = self.vals_area_start + read_offset(self.data, self.val_offsets_start, index) as usize;
-        let end = self.vals_area_start + read_offset(self.data, self.val_offsets_start, index + 1) as usize;
+        let start =
+            self.vals_area_start + read_offset(self.data, self.val_offsets_start, index) as usize;
+        let end = self.vals_area_start
+            + read_offset(self.data, self.val_offsets_start, index + 1) as usize;
         V::read(self.data, start..end)
     }
 
@@ -70,7 +84,13 @@ impl<'a, K: MmapRead + 'a, V: MmapRead + 'a> HashMapReader<'a, K, V> {
     where
         K: ReaderOrd,
     {
-        let idx = binary_search_reader(self.data, self.key_offsets_start, self.keys_area_start, key, self.count)?;
+        let idx = binary_search_reader(
+            self.data,
+            self.key_offsets_start,
+            self.keys_area_start,
+            key,
+            self.count,
+        )?;
         Some(self.read_stored_val(idx))
     }
 
@@ -82,29 +102,54 @@ impl<'a, K: MmapRead + 'a, V: MmapRead + 'a> HashMapReader<'a, K, V> {
     }
 
     pub fn keys(&'a self) -> impl Iterator<Item = K::Reader<'a>> {
-        iter_offset_ranges(self.data, self.key_offsets_start, self.keys_area_start, self.count)
-            .map(move |(start, end)| K::read(self.data, start..end))
+        iter_offset_ranges(
+            self.data,
+            self.key_offsets_start,
+            self.keys_area_start,
+            self.count,
+        )
+        .map(move |(start, end)| K::read(self.data, start..end))
     }
 
     pub fn values(&'a self) -> impl Iterator<Item = V::Reader<'a>> {
-        iter_offset_ranges(self.data, self.val_offsets_start, self.vals_area_start, self.count)
-            .map(move |(start, end)| V::read(self.data, start..end))
+        iter_offset_ranges(
+            self.data,
+            self.val_offsets_start,
+            self.vals_area_start,
+            self.count,
+        )
+        .map(move |(start, end)| V::read(self.data, start..end))
     }
 
     pub fn iter(&'a self) -> impl Iterator<Item = (K::Reader<'a>, V::Reader<'a>)> {
-        let keys = iter_offset_ranges(self.data, self.key_offsets_start, self.keys_area_start, self.count)
-            .map(move |(start, end)| K::read(self.data, start..end));
-        let vals = iter_offset_ranges(self.data, self.val_offsets_start, self.vals_area_start, self.count)
-            .map(move |(start, end)| V::read(self.data, start..end));
+        let keys = iter_offset_ranges(
+            self.data,
+            self.key_offsets_start,
+            self.keys_area_start,
+            self.count,
+        )
+        .map(move |(start, end)| K::read(self.data, start..end));
+        let vals = iter_offset_ranges(
+            self.data,
+            self.val_offsets_start,
+            self.vals_area_start,
+            self.count,
+        )
+        .map(move |(start, end)| V::read(self.data, start..end));
         keys.zip(vals)
     }
 }
 
-impl<'a, K: MmapRead + ReaderOwned + Ord + std::hash::Hash + Eq + 'a, V: MmapRead + ReaderOwned + std::hash::Hash + Eq + 'a>
-    From<HashMapReader<'a, K, V>> for std::collections::HashMap<K, V>
+impl<
+        'a,
+        K: MmapRead + ReaderOwned + Ord + std::hash::Hash + Eq + 'a,
+        V: MmapRead + ReaderOwned + std::hash::Hash + Eq + 'a,
+    > From<HashMapReader<'a, K, V>> for std::collections::HashMap<K, V>
 {
     fn from(r: HashMapReader<'a, K, V>) -> Self {
-        r.iter().map(|(k, v)| (ReaderOwned::into_owned(k), ReaderOwned::into_owned(v))).collect()
+        r.iter()
+            .map(|(k, v)| (ReaderOwned::into_owned(k), ReaderOwned::into_owned(v)))
+            .collect()
     }
 }
 
@@ -156,7 +201,10 @@ mod tests {
     use super::*;
     use crate::WriteContext;
 
-    fn write_and_read<'a, K, V>(map: &HashMap<K, V>, buf: &'a mut Vec<u8>) -> HashMapReader<'a, K, V>
+    fn write_and_read<'a, K, V>(
+        map: &HashMap<K, V>,
+        buf: &'a mut Vec<u8>,
+    ) -> HashMapReader<'a, K, V>
     where
         K: MmapRead + MmapWrite + Ord + ReaderOrd + 'static,
         V: MmapRead + MmapWrite + 'static,
@@ -164,7 +212,10 @@ mod tests {
         let mut ctx = WriteContext::new();
         write_hash_map(map, &mut ctx);
         *buf = ctx.finish();
-        let range = FileRange { start: 0, end: buf.len() };
+        let range = FileRange {
+            start: 0,
+            end: buf.len(),
+        };
         HashMapReader::new(buf, range)
     }
 
@@ -209,11 +260,17 @@ mod tests {
         let vals: Vec<String> = reader.values().map(|s| s.to_string()).collect();
         assert_eq!(vals, vec!["1", "2", "3"]);
 
-        let pairs: Vec<(String, String)> = reader.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        assert_eq!(pairs, vec![
-            ("a".to_string(), "1".to_string()),
-            ("b".to_string(), "2".to_string()),
-            ("c".to_string(), "3".to_string()),
-        ]);
+        let pairs: Vec<(String, String)> = reader
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("a".to_string(), "1".to_string()),
+                ("b".to_string(), "2".to_string()),
+                ("c".to_string(), "3".to_string()),
+            ]
+        );
     }
 }

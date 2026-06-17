@@ -1,6 +1,6 @@
-use std::ops::Range;
-use bytemuck::{Pod, Zeroable};
 use crate::WriteContext;
+use bytemuck::{Pod, Zeroable};
+use std::ops::Range;
 
 pub const HEADER_SIZE: usize = 24;
 pub const MMAP_MAGIC: u32 = u32::from_le_bytes(*b"MMAP");
@@ -166,8 +166,12 @@ pub const ENC_HASHMAP: u64 = fnv1a(b"HASHMAP");
 pub unsafe fn mmap_read_pod<T: Pod>(data: &[u8]) -> T {
     #[cfg(feature = "strict-validation")]
     {
-        assert!(data.len() >= std::mem::size_of::<T>(),
-            "mmap_read_pod: buffer too short: len {} < size {}", data.len(), std::mem::size_of::<T>());
+        assert!(
+            data.len() >= std::mem::size_of::<T>(),
+            "mmap_read_pod: buffer too short: len {} < size {}",
+            data.len(),
+            std::mem::size_of::<T>()
+        );
     }
     core::ptr::read_unaligned(data.as_ptr() as *const T)
 }
@@ -194,10 +198,8 @@ fn resolve_byref_range(base: usize, begin: usize, end: usize) -> Range<usize> {
 
 #[cfg(feature = "strict-validation")]
 fn resolve_byref_range(base: usize, begin: usize, end: usize) -> Range<usize> {
-    let begin = base.checked_add(begin)
-        .expect("ByRefRange: begin overflow");
-    let end = base.checked_add(end)
-        .expect("ByRefRange: end overflow");
+    let begin = base.checked_add(begin).expect("ByRefRange: begin overflow");
+    let end = base.checked_add(end).expect("ByRefRange: end overflow");
     assert!(begin <= end, "ByRefRange: begin {} > end {}", begin, end);
     begin..end
 }
@@ -279,7 +281,10 @@ impl ReaderOrd for String {
 }
 
 impl<T: ReaderOrd> ReaderOrd for Option<T> {
-    fn cmp_reader(reader: &Option<<T as MmapRead>::Reader<'_>>, key: &Option<T>) -> std::cmp::Ordering {
+    fn cmp_reader(
+        reader: &Option<<T as MmapRead>::Reader<'_>>,
+        key: &Option<T>,
+    ) -> std::cmp::Ordering {
         match (reader, key) {
             (Some(r), Some(k)) => T::cmp_reader(r, k),
             (None, None) => std::cmp::Ordering::Equal,

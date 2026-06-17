@@ -1,6 +1,6 @@
-use std::sync::Arc;
-use mmapstruct::{MmapStruct, write_to_buf_raw};
+use mmapstruct::{write_to_buf_raw, MmapStruct};
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[derive(MmapStruct)]
 struct TestFile {

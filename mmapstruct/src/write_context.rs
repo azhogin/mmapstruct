@@ -1,4 +1,4 @@
-use crate::traits::{MmapWrite, ByRefRange};
+use crate::traits::{ByRefRange, MmapWrite};
 use bytemuck::Pod;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -94,7 +94,12 @@ impl<'data> WriteContext<'data> {
 
     /// Write a string as a fixed-size inline field, null-padded to `size`.
     pub fn write_inline_string(&mut self, s: &str, size: usize) {
-        assert!(s.len() <= size, "inline string too long: {} > {}", s.len(), size);
+        assert!(
+            s.len() <= size,
+            "inline string too long: {} > {}",
+            s.len(),
+            size
+        );
         self.buf.extend_from_slice(s.as_bytes());
         let pad = size - s.len();
         if pad > 0 {
@@ -197,7 +202,10 @@ impl<'data> WriteContext<'data> {
             let bytes = pd.serialize_to_vec();
             let mut hasher = DefaultHasher::new();
             bytes.hash(&mut hasher);
-            entries.push(Entry { bytes, hash: hasher.finish() });
+            entries.push(Entry {
+                bytes,
+                hash: hasher.finish(),
+            });
         }
 
         // Group by hash
@@ -237,10 +245,22 @@ impl<'data> WriteContext<'data> {
 
 #[cfg(not(feature = "strict-validation"))]
 fn check_write_bounds(offset: usize, size: usize, buf_len: usize) {
-    debug_assert!(offset + size <= buf_len, "write bounds: offset {} + size {} > buf len {}", offset, size, buf_len);
+    debug_assert!(
+        offset + size <= buf_len,
+        "write bounds: offset {} + size {} > buf len {}",
+        offset,
+        size,
+        buf_len
+    );
 }
 
 #[cfg(feature = "strict-validation")]
 fn check_write_bounds(offset: usize, size: usize, buf_len: usize) {
-    assert!(offset + size <= buf_len, "write bounds: offset {} + size {} > buf len {}", offset, size, buf_len);
+    assert!(
+        offset + size <= buf_len,
+        "write bounds: offset {} + size {} > buf len {}",
+        offset,
+        size,
+        buf_len
+    );
 }

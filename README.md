@@ -49,6 +49,7 @@ No serde, no deserialization — the reader is a projection over `&[u8]` via `by
 | `#[mmap(byref)]` field | `ByRefRange` placeholder → postponed data | `&T` / `&str` |
 | `#[mmap(byref)] Option<T>` | `ByRefRange{0,0}` = None sentinel | `Option<&T>` |
 | `HashMap<K, V>` | Sorted keys, binary search. 4 variants | `HashMapReader<K, V>` |
+| Enum (unit + named fields) | `[disc: u32, variant_data...]` | `MyEnumReader<'a>` |
 
 ### HashMap auto-detection
 
@@ -136,5 +137,5 @@ magic: u32 = "MMAP" | hdr_ver: u16 = 1 | flags: u16 | layout_hash: u64 | crc64: 
 mmapstruct:    89 tests
 mmapview:      65 tests (tokenizer + parser + interpreter + format_value)
 mmapview-http:  8 tests (7 integration + 1 doctest)
-Total:        162 tests
+Total:        168 tests (3 new: enum schema access)
 ```

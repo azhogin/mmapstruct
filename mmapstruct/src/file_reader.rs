@@ -1,16 +1,23 @@
+use crate::traits::{
+    compute_crc64, mmap_read_pod, FileHeader, LayoutHash, MmapRead, HEADER_FLAG_HASH_PRESENT,
+    HEADER_SIZE, HEADER_VER_1, MMAP_MAGIC,
+};
+use memmap2::Mmap;
 use std::fs::File;
 use std::io;
-use std::path::Path;
 use std::ops::Range;
-use memmap2::Mmap;
-use crate::traits::{MmapRead, LayoutHash, FileHeader, HEADER_SIZE, HEADER_VER_1, HEADER_FLAG_HASH_PRESENT, MMAP_MAGIC, mmap_read_pod, compute_crc64};
+use std::path::Path;
 
 /// Check for a mmapstruct header and skip it.
 /// Returns the payload slice (everything after the header).
 /// If a layout_hash is present in a v1 header, writes it to `out_hash` (caller may verify).
 /// If a CRC is present in a v1 header, writes it to `out_crc` (caller may verify).
 /// v0 (old 8-byte) headers are detected via hdr_ver == 0 and skipped without hash/CRC check.
-fn strip_header_raw<'a>(data: &'a [u8], out_hash: &mut Option<u64>, out_crc: &mut Option<u64>) -> &'a [u8] {
+fn strip_header_raw<'a>(
+    data: &'a [u8],
+    out_hash: &mut Option<u64>,
+    out_crc: &mut Option<u64>,
+) -> &'a [u8] {
     if data.len() >= HEADER_SIZE {
         let header: FileHeader = unsafe { mmap_read_pod(&data[..HEADER_SIZE]) };
         if header.magic == MMAP_MAGIC {
@@ -77,9 +84,11 @@ impl MmapReader {
         if let Some(crc_value) = crc {
             if crc_value != 0 {
                 let actual = compute_crc64(data);
-                assert_eq!(actual, crc_value,
+                assert_eq!(
+                    actual, crc_value,
                     "CRC64 mismatch: file may be corrupt. Expected 0x{:016x}, got 0x{:016x}",
-                    crc_value, actual);
+                    crc_value, actual
+                );
             }
         }
         let range: Range<usize> = 0..data.len();
@@ -122,9 +131,11 @@ impl BufReader {
         if let Some(crc_value) = crc {
             if crc_value != 0 {
                 let actual = compute_crc64(data);
-                assert_eq!(actual, crc_value,
+                assert_eq!(
+                    actual, crc_value,
                     "CRC64 mismatch: file may be corrupt. Expected 0x{:016x}, got 0x{:016x}",
-                    crc_value, actual);
+                    crc_value, actual
+                );
             }
         }
         let range: Range<usize> = 0..data.len();

@@ -29,33 +29,43 @@
 //! - **Production**: default features (zero overhead)
 //! - **Trusted input with safety margin**: `--features safe-strings`
 
-pub mod traits;
+pub mod byref_array;
+pub mod file_reader;
+pub mod fixed_array;
+pub mod hash_map;
+pub mod indexed_array;
+pub mod option;
 pub mod pod;
 pub mod pod_array;
-pub mod indexed_array;
-pub mod fixed_array;
-pub mod byref_array;
-pub mod hash_map;
-pub mod string;
 pub mod reader;
-pub mod option;
-pub mod file_reader;
+pub mod string;
+pub mod traits;
 pub mod write_context;
 
 #[cfg(feature = "dyn")]
 pub mod schema;
 
-pub use mmapstruct_derive::MmapStruct;
 pub use bytemuck;
-pub use traits::{ByRefRange, FileRange, MmapPod, MmapRead, MmapWrite, ReaderOrd, LayoutHash, FileHeader, HEADER_SIZE, MMAP_MAGIC, mmap_read_pod, compute_crc64, CRC64_TABLE, combine_hashes, fnv1a};
+pub use file_reader::{BufReader, MmapReader};
+pub use mmapstruct_derive::MmapStruct;
 #[cfg(feature = "dyn")]
-pub use schema::{Value, DynValueType, DynContext, StructSchema, FieldDescriptor, ArraySchema, ArrayLayout, GetSchema};
-pub use file_reader::{MmapReader, BufReader};
+pub use schema::{
+    ArrayLayout, ArraySchema, DynContext, DynValueType, FieldDescriptor, GetSchema, StructSchema,
+    Value,
+};
+pub use traits::{
+    combine_hashes, compute_crc64, fnv1a, mmap_read_pod, ByRefRange, FileHeader, FileRange,
+    LayoutHash, MmapPod, MmapRead, MmapWrite, ReaderOrd, CRC64_TABLE, HEADER_SIZE, MMAP_MAGIC,
+};
 pub use write_context::WriteContext;
 
 use std::path::Path;
 
-pub fn write_to_file<T: traits::MmapWrite + LayoutHash>(value: &T, path: impl AsRef<Path>, write_crc: bool) -> std::io::Result<()> {
+pub fn write_to_file<T: traits::MmapWrite + LayoutHash>(
+    value: &T,
+    path: impl AsRef<Path>,
+    write_crc: bool,
+) -> std::io::Result<()> {
     let buf = write_to_buf(value, write_crc);
     std::fs::write(path, &buf)
 }

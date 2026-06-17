@@ -1,7 +1,7 @@
-use mmapstruct::hash_map::inlinedK_inlinedV::{HashMapReader, write_hash_map};
+use mmapstruct::hash_map::inlinedK_inlinedV::{write_hash_map, HashMapReader};
 use mmapstruct::traits::FileRange;
-use mmapstruct::WriteContext;
 use mmapstruct::MmapStruct;
+use mmapstruct::WriteContext;
 use std::collections::HashMap;
 
 #[derive(MmapStruct, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -29,7 +29,10 @@ fn roundtrip_string_string() {
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<String, String>::new(&buf, range);
 
     assert_eq!(reader.len(), 3);
@@ -45,7 +48,10 @@ fn empty_map() {
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<String, String>::new(&buf, range);
 
     assert!(reader.is_empty());
@@ -55,35 +61,101 @@ fn empty_map() {
 #[test]
 fn roundtrip_struct_key_string_val() {
     let map = HashMap::from([
-        (Key { id: 2, name: "beta".into() }, "B".to_string()),
-        (Key { id: 1, name: "alpha".into() }, "A".to_string()),
-        (Key { id: 3, name: "gamma".into() }, "C".to_string()),
+        (
+            Key {
+                id: 2,
+                name: "beta".into(),
+            },
+            "B".to_string(),
+        ),
+        (
+            Key {
+                id: 1,
+                name: "alpha".into(),
+            },
+            "A".to_string(),
+        ),
+        (
+            Key {
+                id: 3,
+                name: "gamma".into(),
+            },
+            "C".to_string(),
+        ),
     ]);
 
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<Key, String>::new(&buf, range);
 
     assert_eq!(reader.len(), 3);
-    assert_eq!(reader.get(&Key { id: 1, name: "alpha".into() }).unwrap(), "A");
-    assert_eq!(reader.get(&Key { id: 2, name: "beta".into() }).unwrap(), "B");
-    assert_eq!(reader.get(&Key { id: 3, name: "gamma".into() }).unwrap(), "C");
+    assert_eq!(
+        reader
+            .get(&Key {
+                id: 1,
+                name: "alpha".into()
+            })
+            .unwrap(),
+        "A"
+    );
+    assert_eq!(
+        reader
+            .get(&Key {
+                id: 2,
+                name: "beta".into()
+            })
+            .unwrap(),
+        "B"
+    );
+    assert_eq!(
+        reader
+            .get(&Key {
+                id: 3,
+                name: "gamma".into()
+            })
+            .unwrap(),
+        "C"
+    );
 }
 
 #[test]
 fn roundtrip_string_key_struct_val() {
     let map = HashMap::from([
-        ("beta".to_string(), Val { score: 20, tag: "B-tag".into() }),
-        ("alpha".to_string(), Val { score: 10, tag: "A-tag".into() }),
-        ("gamma".to_string(), Val { score: 30, tag: "C-tag".into() }),
+        (
+            "beta".to_string(),
+            Val {
+                score: 20,
+                tag: "B-tag".into(),
+            },
+        ),
+        (
+            "alpha".to_string(),
+            Val {
+                score: 10,
+                tag: "A-tag".into(),
+            },
+        ),
+        (
+            "gamma".to_string(),
+            Val {
+                score: 30,
+                tag: "C-tag".into(),
+            },
+        ),
     ]);
 
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<String, Val>::new(&buf, range);
 
     let v1 = reader.get(&"alpha".to_string()).unwrap();
@@ -106,7 +178,10 @@ fn iterate_keys_values() {
     let mut ctx = WriteContext::new();
     write_hash_map(&map, &mut ctx);
     let buf = ctx.finish();
-    let range = FileRange { start: 0, end: buf.len() };
+    let range = FileRange {
+        start: 0,
+        end: buf.len(),
+    };
     let reader = HashMapReader::<String, String>::new(&buf, range);
 
     let keys: Vec<String> = reader.keys().map(|s| s.to_string()).collect();
@@ -115,10 +190,16 @@ fn iterate_keys_values() {
     let vals: Vec<String> = reader.values().map(|s| s.to_string()).collect();
     assert_eq!(vals, vec!["1", "2", "3"]);
 
-    let pairs: Vec<(String, String)> = reader.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    assert_eq!(pairs, vec![
-        ("a".to_string(), "1".to_string()),
-        ("b".to_string(), "2".to_string()),
-        ("c".to_string(), "3".to_string()),
-    ]);
+    let pairs: Vec<(String, String)> = reader
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    assert_eq!(
+        pairs,
+        vec![
+            ("a".to_string(), "1".to_string()),
+            ("b".to_string(), "2".to_string()),
+            ("c".to_string(), "3".to_string()),
+        ]
+    );
 }
