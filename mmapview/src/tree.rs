@@ -19,16 +19,31 @@ impl Default for TreeOptions {
     }
 }
 
+/// Result of loading a data file: embedded schema bytes and the payload range.
+pub struct SchemaLoadResult {
+    pub schema_bytes: Vec<u8>,
+    pub payload_range: std::ops::Range<usize>,
+}
+
 /// Load embedded schema from a data buffer, falling back to registry.
-pub fn load_schema_for_data(data: &[u8]) -> Result<Vec<u8>, String> {
+pub fn load_schema_for_data(data: &[u8]) -> Result<SchemaLoadResult, String> {
     let reader = BufReader::new(data.to_vec());
     if let Some(embedded) = reader.embedded_schema() {
-        return Ok(embedded.to_vec());
+        let (payload, _, _, _) = mmapstruct::file_reader::parse_header(data);
+        let payload_start = payload.as_ptr() as usize - data.as_ptr() as usize;
+        return Ok(SchemaLoadResult {
+            schema_bytes: embedded.to_vec(),
+            payload_range: payload_start..payload_start + payload.len(),
+        });
     }
-    let (_payload, _schema, hash, _crc) = mmapstruct::file_reader::parse_header(data);
+    let (payload, _schema, hash, _crc) = mmapstruct::file_reader::parse_header(data);
     if let Some(h) = hash {
         if let Some(s) = crate::registry::load_schema(h) {
-            return Ok(s);
+            let payload_start = payload.as_ptr() as usize - data.as_ptr() as usize;
+            return Ok(SchemaLoadResult {
+                schema_bytes: s,
+                payload_range: payload_start..payload_start + payload.len(),
+            });
         }
     }
     Err(
@@ -41,16 +56,21 @@ pub fn load_schema_for_data(data: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Render the entire file as a tree string.
 pub fn format_file(data: &[u8], opts: &TreeOptions) -> Result<String, String> {
-    let schema_bytes = load_schema_for_data(data)?;
-    let ctx = mmapstruct_schema::context::SchemaDynContext::new(data, &schema_bytes);
+    let loaded = load_schema_for_data(data)?;
+    let ctx =
+        mmapstruct_schema::context::SchemaDynContext::new(data, &loaded.schema_bytes);
     let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
+        &loaded.schema_bytes,
+        0..loaded.schema_bytes.len(),
     );
     let root_type = *schema_reader.root_type;
 
     use mmapstruct_schema::context::SchemaValue;
-    let root = SchemaValue::new(0, data.len() as u64, root_type);
+    let root = SchemaValue::new(
+        loaded.payload_range.start as u64,
+        loaded.payload_range.end as u64,
+        root_type,
+    );
 
     let type_info = ctx.type_reader(root_type);
     let root_name = match type_info {

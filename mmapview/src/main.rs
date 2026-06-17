@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::process;
 
 use mmapstruct::traits::MmapRead;
@@ -9,10 +10,16 @@ use mmapview::{query_from_generic, EvalResult};
 fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  mmapview <data-file> <schema-file> <query>            DSL query mode");
-    eprintln!("  mmapview <data-file> --tree [options]                 Tree view mode");
+    eprintln!("  mmapview [options] <data-file>                        Tree view mode");
     eprintln!("  mmapview --self-schema-path <output-path>             Extract self-schema");
     eprintln!();
+    eprintln!("Tree mode (auto-detected on non-TTY stdout, or with --tree):");
+    eprintln!("  mmapview data.mms                    auto-detect");
+    eprintln!("  mmapview --tree data.mms             explicit");
+    eprintln!("  mmapview --depth=5 data.mms          with options");
+    eprintln!();
     eprintln!("Tree options:");
+    eprintln!("  --tree           Force tree mode");
     eprintln!("  --depth=N        Max nesting depth (default: 4)");
     eprintln!("  --max-array=N    Max array elements (default: 20)");
     eprintln!("  --max-string=N   Max string length (default: 80)");
@@ -42,13 +49,34 @@ fn main() {
     // Handle --self-schema-path subcommand
     if args.len() >= 3 && args[1] == "--self-schema-path" {
         let path = &args[2];
-        match fs::write(path, mmapstruct_schemagen::SELF_SCHEMA_MMS) {
+        let payload = mmapstruct_schemagen::SELF_SCHEMA_MMS;
+        // Build a v2 file: raw Schema bytes as payload with self-schema embedded
+        use mmapstruct::traits::{
+            FileHeader, LayoutHash, HEADER_FLAG_HASH_PRESENT,
+            HEADER_FLAG_HAS_SCHEMA, HEADER_SIZE, MMAP_MAGIC,
+        };
+        let hash = <mmapstruct_schema::Schema as LayoutHash>::HASH;
+        let header = FileHeader {
+            magic: MMAP_MAGIC,
+            hdr_ver: 2,
+            flags: HEADER_FLAG_HASH_PRESENT | HEADER_FLAG_HAS_SCHEMA,
+            layout_hash: hash,
+            crc64: 0,
+        };
+        let padded_schema = (payload.len() + 7) & !7;
+        let ext_header_size = HEADER_SIZE + 4 + padded_schema;
+        let mut result = Vec::with_capacity(ext_header_size + payload.len());
+        result.extend_from_slice(bytemuck::bytes_of(&header));
+        result.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        result.extend_from_slice(payload);
+        let pad = padded_schema - payload.len();
+        if pad > 0 {
+            result.extend(std::iter::repeat(0u8).take(pad));
+        }
+        result.extend_from_slice(payload);
+        match fs::write(path, &result) {
             Ok(_) => {
-                println!(
-                    "Wrote self-schema ({} bytes) to {}",
-                    mmapstruct_schemagen::SELF_SCHEMA_MMS.len(),
-                    path
-                );
+                println!("Wrote self-schema ({} bytes) to {}", result.len(), path);
                 process::exit(0);
             }
             Err(e) => {
@@ -58,23 +86,36 @@ fn main() {
         }
     }
 
-    // Tree mode detection: --tree flag, or auto-detect if stdout is not a terminal
-    let is_tree = args.iter().any(|a| a == "--tree")
-        || (!std::io::IsTerminal::is_terminal(&std::io::stdout()) && args.len() <= 4);
+    // Determine mode: tree vs query
+    // Tree mode if --tree flag is present, or auto-detect on non-TTY stdout
+    let explicit_tree = args.iter().any(|a| a == "--tree");
+    let auto_tree = !std::io::IsTerminal::is_terminal(&std::io::stdout());
 
-    if is_tree {
-        let data_path = &args[1];
-        let data = match fs::read(data_path) {
+    if explicit_tree || auto_tree {
+        // Find the data file: last argument that is not a flag
+        let data_path = args.iter().rev()
+            .find(|a| !a.starts_with("--"))
+            .map(|s| s.as_str());
+
+        let data_path = match data_path {
+            Some(p) if Path::new(p).exists() => p.to_string(),
+            _ => {
+                eprintln!("Error: data file not found in arguments.");
+                eprintln!("Usage: mmapview [options] <data-file>");
+                process::exit(1);
+            }
+        };
+
+        let data = match fs::read(&data_path) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("Error reading data file '{}': {}", data_path, e);
+                eprintln!("Error reading file '{}': {}", data_path, e);
                 process::exit(1);
             }
         };
 
         let mut opts = mmapview::tree::TreeOptions::default();
-        // Parse optional arguments
-        for arg in &args[2..] {
+        for arg in &args {
             if arg.starts_with("--depth=") {
                 opts.depth = arg["--depth=".len()..].parse().unwrap_or(4);
             } else if arg.starts_with("--max-array=") {
@@ -98,7 +139,7 @@ fn main() {
         return;
     }
 
-    // Query mode (existing behavior)
+    // Query mode: exactly 3 positional args
     if args.len() < 4 {
         print_usage();
         process::exit(1);
@@ -123,6 +164,11 @@ fn main() {
             process::exit(1);
         }
     };
+
+    // Strip any mmapstruct header — schema file may be raw or v2
+    let (schema_payload, _embedded, _hash, _crc) =
+        mmapstruct::file_reader::parse_header(&schema_bytes);
+    let schema_bytes = schema_payload.to_vec();
 
     let schema_reader = <Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
