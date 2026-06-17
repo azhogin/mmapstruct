@@ -87,6 +87,43 @@ pub fn write_to_buf<T: traits::MmapWrite + LayoutHash>(value: &T, write_crc: boo
     result
 }
 
+/// Serialize `value` with an extended v2 header containing embedded schema.
+/// The schema is written after the base header (before the payload) and
+/// can be retrieved via `MmapReader::embedded_schema()` or `BufReader::embedded_schema()`.
+/// If `write_crc` is true, computes and writes CRC-64-ECMA over the payload.
+#[cfg(feature = "dyn")]
+pub fn write_to_buf_with_schema<T: traits::MmapWrite + LayoutHash + crate::schema::GetSchema>(
+    value: &T,
+    write_crc: bool,
+    schema_bytes: &[u8],
+) -> Vec<u8> {
+    let mut ctx = WriteContext::new();
+    value.write(&mut ctx);
+    let buf = ctx.finish();
+
+    let header = FileHeader::with_schema::<T>();
+    let padded_schema = (schema_bytes.len() + 7) & !7;
+    let ext_header_size = HEADER_SIZE + 4 + padded_schema;
+    let mut result = Vec::with_capacity(ext_header_size + buf.len());
+
+    result.extend_from_slice(bytemuck::bytes_of(&header));
+    result.extend_from_slice(&(schema_bytes.len() as u32).to_le_bytes());
+    result.extend_from_slice(schema_bytes);
+    // Zero-pad to 8-byte alignment
+    let pad = padded_schema - schema_bytes.len();
+    if pad > 0 {
+        result.extend(std::iter::repeat(0u8).take(pad));
+    }
+    result.extend_from_slice(&buf);
+
+    if write_crc {
+        let crc = compute_crc64(&result[ext_header_size..]);
+        // CRC field is at offset 16 in the base header
+        result[16..24].copy_from_slice(&crc.to_le_bytes());
+    }
+    result
+}
+
 /// Serialize `value` **without** a file header. For tests / raw data.
 pub fn write_to_buf_raw<T: traits::MmapWrite>(value: &T) -> Vec<u8> {
     let mut ctx = WriteContext::new();

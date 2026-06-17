@@ -5,14 +5,23 @@ use std::ops::Range;
 pub const HEADER_SIZE: usize = 24;
 pub const MMAP_MAGIC: u32 = u32::from_le_bytes(*b"MMAP");
 pub const HEADER_VER_1: u16 = 1;
+pub const HEADER_VER_2: u16 = 2;
 pub const HEADER_FLAG_HASH_PRESENT: u16 = 1 << 0;
+pub const HEADER_FLAG_HAS_SCHEMA: u16 = 1 << 1;
 
-/// 24-byte file header (hdr_ver = 1).
+/// 24-byte file header.
 ///
-/// Layout:
+/// v1 Layout:
 /// ```text
-/// [magic: u32, hdr_ver: u16, flags: u16, layout_hash: u64, crc64: u64]
+/// [magic: u32, hdr_ver=1: u16, flags: u16, layout_hash: u64, crc64: u64]
 /// ```
+///
+/// v2 Layout (when `flags & HEADER_FLAG_HAS_SCHEMA`):
+/// ```text
+/// [magic: u32, hdr_ver=2: u16, flags: u16, layout_hash: u64, crc64: u64]
+/// [schema_size: u32le][schema bytes (padded to 8)][payload...]
+/// ```
+/// CRC covers the payload only (for backward compatibility).
 ///
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
@@ -32,6 +41,28 @@ impl FileHeader {
             flags: HEADER_FLAG_HASH_PRESENT,
             layout_hash: T::HASH,
             crc64: 0,
+        }
+    }
+
+    pub fn with_schema<T: LayoutHash>() -> Self {
+        Self {
+            magic: MMAP_MAGIC,
+            hdr_ver: HEADER_VER_2,
+            flags: HEADER_FLAG_HASH_PRESENT | HEADER_FLAG_HAS_SCHEMA,
+            layout_hash: T::HASH,
+            crc64: 0,
+        }
+    }
+
+    /// Total size of the extended header (base header + schema prefix).
+    /// Without schema, returns `HEADER_SIZE`.
+    /// With schema, returns `HEADER_SIZE + 4 + padded_schema_size`.
+    pub fn total_header_size(&self, schema_bytes: &[u8]) -> usize {
+        if self.flags & HEADER_FLAG_HAS_SCHEMA != 0 {
+            let padded = (schema_bytes.len() + 7) & !7;
+            HEADER_SIZE + 4 + padded
+        } else {
+            HEADER_SIZE
         }
     }
 }

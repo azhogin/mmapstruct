@@ -84,6 +84,38 @@ magic: u32 = "MMAP" | hdr_ver: u16 = 1 | flags: u16 | layout_hash: u64 | crc64: 
 - Layout hash: compile-time structural fingerprint, verified at read time
 - CRC-64-ECMA: optional integrity check (`write_to_buf(value, true)`)
 - v0 (8-byte) headers auto-detected for backward compatibility
+- v2 extended header: optional embedded schema for zero-config tree view
+
+## Tree view (`mmapview --tree`)
+
+Quick visual inspection of any mmapstruct file with embedded schema:
+
+```
+> mmapview data.mms --tree
+
+ItemCatalog
+├── version: u32 = 42
+├── items: Array = [3 elements]
+│   ├── [0]: Item = { ... }
+│   │   ├── name: str = "Sword"
+│   │   ├── price: u32 = 100
+│   │   └── tags: Array = [3 elements]
+│   ├── [1]: Item = { ... }
+│   │   └── ...
+│   └── ... (1 more)
+└── metadata: Metadata = { ... }
+```
+
+Auto-detected when stdout is a pipe (e.g., in Midnight Commander's F3 view):
+
+```ini
+# ~/.config/mc/mc.ext
+regex/\.(mms|mmap|mmaps)$
+    View=%view mmapview --tree --depth=3 --max-array=15 %p
+```
+
+Use `write_to_file_with_embedded_schema()` (from `mmapstruct-schema`) to write files
+with embedded schema for zero-config viewing.
 
 ## DSL query language (`mmapview`)
 

@@ -4,6 +4,8 @@ mod interpreter;
 #[cfg(feature = "json")]
 pub mod json_conv;
 mod parser;
+pub mod registry;
+pub mod tree;
 mod tokenizer;
 pub mod query_context;
 

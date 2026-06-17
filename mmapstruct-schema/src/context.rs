@@ -203,7 +203,7 @@ impl<'a> SchemaDynContext<'a> {
     // Type helpers
     // ------------------------------------------------------------------
 
-    pub(crate) fn type_reader(&self, type_idx: u32) -> &SchemaTypeDefReader<'a> {
+    pub fn type_reader(&self, type_idx: u32) -> &SchemaTypeDefReader<'a> {
         &self.types[type_idx as usize]
     }
 

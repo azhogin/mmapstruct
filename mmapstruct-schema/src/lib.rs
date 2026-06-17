@@ -384,18 +384,27 @@ fn type_placeholder(vt: &DynValueType) -> SchemaTypeDef {
 // Write helper — data + schema in one buffer
 // ---------------------------------------------------------------------------
 
-/// Write a value with its serialized schema prepended as a separate section.
-///
-/// The output buffer layout:
-///   [data written by `write_to_buf_raw`] ++ [schema bytes]
-///
-/// The caller is responsible for embedding the schema offset/length (e.g.
-/// in a file header). Returns `(data_buf, schema_buf)`.
+/// Write a value with its serialized schema as a separate section.
+/// Returns `(data_buf, schema_buf)`.
 pub fn write_with_schema<T: MmapWrite + GetSchema>(value: &T) -> (Vec<u8>, Vec<u8>) {
     let data = write_to_buf_raw(value);
     let schema = build_serialized_schema::<T>();
     let schema_bytes = write_to_buf_raw(&schema);
     (data, schema_bytes)
+}
+
+/// Write a value with its schema embedded in an extended v2 header.
+///
+/// The output is a complete mmapstruct file that can be read by any
+/// v2-aware reader. The schema is retrievable via
+/// `MmapReader::embedded_schema()` / `BufReader::embedded_schema()`.
+pub fn write_to_file_with_embedded_schema<T: MmapWrite + GetSchema + mmapstruct::LayoutHash>(
+    value: &T,
+    write_crc: bool,
+) -> Vec<u8> {
+    let schema = build_serialized_schema::<T>();
+    let schema_bytes = write_to_buf_raw(&schema);
+    mmapstruct::write_to_buf_with_schema(value, write_crc, &schema_bytes)
 }
 
 // ---------------------------------------------------------------------------
