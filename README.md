@@ -31,6 +31,8 @@ No serde, no deserialization — the reader is a projection over `&[u8]` via `by
 |-------|-------------|
 | `mmapstruct` | Core library: traits, readers, writers, schema system |
 | `mmapstruct-derive` | Proc-macro: `#[derive(MmapStruct)]` for structs and enums |
+| `mmapstruct-schema` | Schema runtime: `DynContext`, `Value`, `GetSchema` |
+| `mmapstruct-schemagen` | Build-time self-schema generation (used by `build.rs`) |
 | `mmapview` | Zero-copy DSL query language (`/items[?id>10] \| avg(.price)`) |
 | `mmapview-http` | Axum web UI for browsing mmapstruct files in a browser |
 
@@ -133,9 +135,4 @@ magic: u32 = "MMAP" | hdr_ver: u16 = 1 | flags: u16 | layout_hash: u64 | crc64: 
 
 ```
 > cargo test
-
-mmapstruct:    89 tests
-mmapview:      65 tests (tokenizer + parser + interpreter + format_value)
-mmapview-http:  8 tests (7 integration + 1 doctest)
-Total:        168 tests (3 new: enum schema access)
 ```
