@@ -20,7 +20,7 @@ fn save_schema(layout_hash: u64, schema_bytes: &[u8]) {
 
 fn main() {
     let schema = mmapstruct_schema::build_serialized_schema::<mmapstruct_schema::Schema>();
-    let bytes = mmapstruct::write_to_buf_raw(&schema);
+    let bytes = mmapstruct_schema::write_to_file_with_embedded_schema(&schema, false);
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let path = std::path::Path::new(&out_dir).join("self-schema.mms");
     std::fs::write(&path, &bytes).unwrap();
@@ -32,9 +32,11 @@ fn main() {
         let _ = std::fs::write(td.join("self-schema.mms"), &bytes);
     }
 
-    // Register in schema registry for tree viewer
+    // Register raw schema bytes (payload only) in registry for tree viewer
     let layout_hash = <mmapstruct_schema::Schema as mmapstruct::LayoutHash>::HASH;
-    save_schema(layout_hash, &bytes);
+    use mmapstruct::file_reader::parse_header;
+    let (payload, _, _, _) = parse_header(&bytes);
+    save_schema(layout_hash, payload);
 
     println!("cargo::rerun-if-changed=build.rs");
 }

@@ -50,33 +50,9 @@ fn main() {
     if args.len() >= 3 && args[1] == "--self-schema-path" {
         let path = &args[2];
         let payload = mmapstruct_schemagen::SELF_SCHEMA_MMS;
-        // Build a v2 file: raw Schema bytes as payload with self-schema embedded
-        use mmapstruct::traits::{
-            FileHeader, LayoutHash, HEADER_FLAG_HASH_PRESENT,
-            HEADER_FLAG_HAS_SCHEMA, HEADER_SIZE, MMAP_MAGIC,
-        };
-        let hash = <mmapstruct_schema::Schema as LayoutHash>::HASH;
-        let header = FileHeader {
-            magic: MMAP_MAGIC,
-            hdr_ver: 2,
-            flags: HEADER_FLAG_HASH_PRESENT | HEADER_FLAG_HAS_SCHEMA,
-            layout_hash: hash,
-            crc64: 0,
-        };
-        let padded_schema = (payload.len() + 7) & !7;
-        let ext_header_size = HEADER_SIZE + 4 + padded_schema;
-        let mut result = Vec::with_capacity(ext_header_size + payload.len());
-        result.extend_from_slice(bytemuck::bytes_of(&header));
-        result.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        result.extend_from_slice(payload);
-        let pad = padded_schema - payload.len();
-        if pad > 0 {
-            result.extend(std::iter::repeat(0u8).take(pad));
-        }
-        result.extend_from_slice(payload);
-        match fs::write(path, &result) {
+        match fs::write(path, payload) {
             Ok(_) => {
-                println!("Wrote self-schema ({} bytes) to {}", result.len(), path);
+                println!("Wrote self-schema ({} bytes) to {}", payload.len(), path);
                 process::exit(0);
             }
             Err(e) => {
