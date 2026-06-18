@@ -83,15 +83,15 @@ pub fn format_file(data: &[u8], opts: &TreeOptions) -> Result<String, String> {
     out.push_str(&root_name);
     out.push('\n');
 
-    match type_info {
+    match &type_info {
         mmapstruct_schema::SchemaTypeDefReader::Struct { def } => {
-            write_struct_children(&ctx, &root, &def, &mut out, 0, opts);
+            write_struct_children(&ctx, &root, def, &mut out, 0, opts);
         }
         mmapstruct_schema::SchemaTypeDefReader::Enum { .. } => {
-            write_value_tree(&ctx, &root, &mut out, 0, true, opts);
+            write_value_tree(&ctx, &root, &mut out, 0, opts);
         }
         _ => {
-            write_value_tree(&ctx, &root, &mut out, 0, false, opts);
+            write_value_tree(&ctx, &root, &mut out, 0, opts);
         }
     }
 
@@ -110,7 +110,6 @@ fn write_struct_children(
     for i in 0..field_count {
         let is_last = i + 1 == field_count;
         let field = def.fields.get(i).unwrap();
-
         let prefix = if is_last { "└── " } else { "├── " };
 
         out.push_str(&format!("{}{}", "    ".repeat(depth), prefix));
@@ -127,7 +126,7 @@ fn write_struct_children(
                 write_value_inline(ctx, &fv, out, opts);
                 out.push('\n');
             }
-            write_value_tree(ctx, &fv, out, depth + 1, is_last, opts);
+            write_value_tree(ctx, &fv, out, depth + 1, opts);
         } else {
             out.push_str(" = <error>\n");
         }
@@ -190,7 +189,11 @@ fn write_value_inline(
         SchemaTypeDefReader::Usize => out.push_str(&ctx.read_usize(val).to_string()),
         SchemaTypeDefReader::Isize => out.push_str(&ctx.read_isize(val).to_string()),
         SchemaTypeDefReader::Str { .. } => {
-            let s = ctx.read_str(val);
+            let s = if val.limit as usize <= ctx.data().len() {
+                ctx.read_str(val).to_string()
+            } else {
+                "<bad str>".to_string()
+            };
             if s.len() > opts.max_string {
                 out.push_str(&format!("\"{}...\"", &s[..opts.max_string.saturating_sub(3)]));
             } else {
@@ -198,18 +201,42 @@ fn write_value_inline(
             }
         }
         SchemaTypeDefReader::Struct { .. } => out.push_str("{ ... }"),
-        SchemaTypeDefReader::Enum { .. } => out.push_str("<enum>"),
-        SchemaTypeDefReader::Array { .. } => {
-            out.push_str(&format!("[{} elements]", ctx.array_len(val)));
+        SchemaTypeDefReader::Enum { .. } => {
+            if let Some((variant, _)) = ctx.enum_variant(val) {
+                out.push_str(variant.name);
+            } else {
+                out.push_str("<enum>");
+            }
         }
-        SchemaTypeDefReader::Option { .. } => out.push_str("?"),
+        SchemaTypeDefReader::Array { .. } => {
+            if val.limit as usize <= ctx.data().len() {
+                out.push_str(&format!("[{} elements]", ctx.array_len(val)));
+            } else {
+                out.push_str("[?]");
+            }
+        }
+        SchemaTypeDefReader::Option { def } => {
+            if val.offset == val.limit {
+                out.push_str("None");
+            } else {
+                let inner_type = def.inner_type;
+                let inner_val = mmapstruct_schema::context::SchemaValue::new(val.offset, val.limit, inner_type);
+                out.push_str("Some(");
+                write_value_inline(ctx, &inner_val, out, opts);
+                out.push_str(")");
+            }
+        }
         SchemaTypeDefReader::ByRef { .. } => {
             let inner = val.type_idx;
             let inner_val = mmapstruct_schema::context::SchemaValue::new(val.offset, val.limit, inner);
             write_value_inline(ctx, &inner_val, out, opts);
         }
         SchemaTypeDefReader::HashMap { .. } => {
-            out.push_str(&format!("[{} entries]", ctx.hashmap_len(val)));
+            if val.limit as usize <= ctx.data().len() {
+                out.push_str(&format!("[{} entries]", ctx.hashmap_len(val)));
+            } else {
+                out.push_str("[?]");
+            }
         }
         SchemaTypeDefReader::PodStruct { .. } => out.push_str("[pod]"),
     }
@@ -220,7 +247,6 @@ fn write_value_tree(
     val: &mmapstruct_schema::context::SchemaValue,
     out: &mut String,
     depth: usize,
-    _is_last: bool,
     opts: &TreeOptions,
 ) {
     if depth > opts.depth {
@@ -234,11 +260,38 @@ fn write_value_tree(
             write_struct_children(ctx, val, def, out, depth, opts);
         }
         SchemaTypeDefReader::Enum { .. } => {
-            if let Some((_variant, _data_off)) = ctx.enum_variant(val) {
-                // variant children printing — skip for now
+            if let Some((variant, _data_off)) = ctx.enum_variant(val) {
+                let field_count = variant.fields.len();
+                for fi in 0..field_count {
+                    let field = variant.fields.get(fi).unwrap();
+                    let is_last = fi + 1 == field_count;
+                    let prefix = if is_last { "└── " } else { "├── " };
+                    out.push_str(&format!("{}{}", "    ".repeat(depth), prefix));
+                    out.push_str(field.name);
+                    let fv = ctx.field_get(val, field.name);
+                    if let Some(fv) = fv {
+                        let ft = ctx.type_reader(fv.type_idx);
+                        write_type_annotation(ft, out);
+                        if opts.no_values {
+                            out.push('\n');
+                        } else {
+                            out.push_str(" = ");
+                            write_value_inline(ctx, &fv, out, opts);
+                            out.push('\n');
+                        }
+                        if fv.offset < fv.limit && fv.limit as usize <= ctx.data().len() {
+                            write_value_tree(ctx, &fv, out, depth + 1, opts);
+                        }
+                    } else {
+                        out.push_str(" = <error>\n");
+                    }
+                }
             }
         }
         SchemaTypeDefReader::Array { .. } => {
+            if val.limit as usize > ctx.data().len() {
+                return;
+            }
             let len = ctx.array_len(val);
             let show = len.min(opts.max_array);
             for i in 0..show {
@@ -255,7 +308,7 @@ fn write_value_tree(
                         write_value_inline(ctx, &elem, out, opts);
                         out.push('\n');
                     }
-                    write_value_tree(ctx, &elem, out, depth + 1, elem_last, opts);
+                    write_value_tree(ctx, &elem, out, depth + 1, opts);
                 } else {
                     out.push_str(" = <error>\n");
                 }
@@ -267,6 +320,15 @@ fn write_value_tree(
                     "    ".repeat(depth),
                     remaining
                 ));
+            }
+        }
+        SchemaTypeDefReader::Option { def } => {
+            if val.offset < val.limit {
+                let inner_type = def.inner_type;
+                let inner_val = mmapstruct_schema::context::SchemaValue::new(
+                    val.offset, val.limit, inner_type,
+                );
+                write_value_tree(ctx, &inner_val, out, depth, opts);
             }
         }
         _ => {}

@@ -29,6 +29,7 @@ pub(crate) struct VarGen {
     pub(crate) from_body: proc_macro2::TokenStream,
     pub(crate) default_body: proc_macro2::TokenStream,
     pub(crate) layout_hash: proc_macro2::TokenStream,
+    pub(crate) is_tuple: bool,
 }
 
 pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStream {
@@ -56,29 +57,47 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     quote! { unreachable!() }
                 },
                 layout_hash: quote! { #disc as u64 },
+                is_tuple: false,
             });
             continue;
         }
 
-        let named = match &variant.fields {
-            Fields::Named(f) => &f.named,
-            _ => panic!("MmapStruct enum requires named variant fields"),
-        };
+        let is_tuple = matches!(&variant.fields, Fields::Unnamed(_));
 
         let mut all_fields: Vec<FieldInfo> = Vec::new();
 
-        for field in named.iter() {
-            let category = classify_field(field);
-            let (is_byref, dedup, _inline_size) = parse_mmap_attrs(&field.attrs);
+        match &variant.fields {
+            Fields::Named(f) => {
+                for field in f.named.iter() {
+                    let category = classify_field(field);
+                    let (is_byref, dedup, _inline_size) = parse_mmap_attrs(&field.attrs);
 
-            all_fields.push(FieldInfo {
-                name: field.ident.as_ref().unwrap().to_string(),
-                ty: field.ty.clone(),
-                category,
-                is_byref,
-                dedup,
-                ident: field.ident.as_ref().unwrap().clone(),
-            });
+                    all_fields.push(FieldInfo {
+                        name: field.ident.as_ref().unwrap().to_string(),
+                        ty: field.ty.clone(),
+                        category,
+                        is_byref,
+                        dedup,
+                        ident: field.ident.as_ref().unwrap().clone(),
+                    });
+                }
+            }
+            Fields::Unnamed(f) => {
+                for (i, field) in f.unnamed.iter().enumerate() {
+                    let category = classify_field(field);
+                    let (is_byref, dedup, _inline_size) = parse_mmap_attrs(&field.attrs);
+                    let ident = format_ident!("_{}", i);
+                    all_fields.push(FieldInfo {
+                        name: i.to_string(),
+                        ty: field.ty.clone(),
+                        category,
+                        is_byref,
+                        dedup,
+                        ident,
+                    });
+                }
+            }
+            Fields::Unit => {}
         }
 
         let inline_dyn_indices = collect_inline_dyn_indices(&all_fields);
@@ -136,9 +155,13 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         let rfields: Vec<_> = all_fields
             .iter()
             .map(|fi| {
-                let id = &fi.ident;
                 let rt = reader_type(fi);
-                quote! { #id: #rt }
+                if is_tuple {
+                    quote! { #rt }
+                } else {
+                    let id = &fi.ident;
+                    quote! { #id: #rt }
+                }
             })
             .collect();
 
@@ -160,18 +183,16 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     .map(|(_, o, _)| *o)
                     .unwrap();
                 let ty = &fi.ty;
-                rinit.push(quote! {
-                    #id: ::mmapstruct::bytemuck::from_bytes(&data[#rs + #off .. #rs + #off + std::mem::size_of::<#ty>()])
-                });
+                let expr = quote! { ::mmapstruct::bytemuck::from_bytes(&data[#rs + #off .. #rs + #off + std::mem::size_of::<#ty>()]) };
+                if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
             } else if is_inline_string {
                 let (off_val, sz) = pod_layout
                     .iter()
                     .find(|(n, _, _)| *n == fi.name)
                     .map(|(_, o, sz)| (*o, *sz))
                     .unwrap();
-                rinit.push(quote! {
-                    #id: <String as ::mmapstruct::traits::MmapRead>::read(data, #rs + #off_val .. #rs + #off_val + #sz)
-                });
+                let expr = quote! { <String as ::mmapstruct::traits::MmapRead>::read(data, #rs + #off_val .. #rs + #off_val + #sz) };
+                if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
             } else if fi.is_byref {
                 let off = byref_layout
                     .iter()
@@ -180,23 +201,21 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     .unwrap();
                 match &fi.category {
                     FieldCategory::DynamicOption { inner } => {
-                        rinit.push(quote! {
-                            #id: {
-                                let base = #rs;
-                                let br: ::mmapstruct::traits::ByRefRange = *::mmapstruct::bytemuck::from_bytes(&data[base + #off .. base + #off + 8]);
-                                if br.begin == 0 && br.end == 0 { None }
-                                else { Some(<#inner as ::mmapstruct::traits::MmapRead>::read(data, br.range(base))) }
-                            }
-                        });
+                        let expr = quote! {{
+                            let base = #rs;
+                            let br: ::mmapstruct::traits::ByRefRange = *::mmapstruct::bytemuck::from_bytes(&data[base + #off .. base + #off + 8]);
+                            if br.begin == 0 && br.end == 0 { None }
+                            else { Some(<#inner as ::mmapstruct::traits::MmapRead>::read(data, br.range(base))) }
+                        }};
+                        if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                     }
                     _ => {
                         let ty = &fi.ty;
-                        rinit.push(quote! {
-                            #id: {
-                                let base = #rs;
-                                ::mmapstruct::reader::read_by_ref::<#ty>(data, base, #rs + #off .. #rs + #off + 8)
-                            }
-                        });
+                        let expr = quote! {{
+                            let base = #rs;
+                            ::mmapstruct::reader::read_by_ref::<#ty>(data, base, #rs + #off .. #rs + #off + 8)
+                        }};
+                        if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                     }
                 }
             } else {
@@ -216,10 +235,12 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                 let ty = &fi.ty;
                 match &fi.category {
                     FieldCategory::DynamicString => {
-                        rinit.push(quote! { #id: { let (s, e) = #rc; <#ty as ::mmapstruct::traits::MmapRead>::read(data, s..e) } });
+                        let expr = quote! { { let (s, e) = #rc; <#ty as ::mmapstruct::traits::MmapRead>::read(data, s..e) } };
+                        if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                     }
                     FieldCategory::DynamicVecByRef { .. } => {
-                        rinit.push(quote! { #id: { let base = #rs; let (s, e) = #rc; ::mmapstruct::byref_array::ByRefArrayReader::new(data, ::mmapstruct::traits::FileRange::new(s, e), base) } });
+                        let expr = quote! { { let base = #rs; let (s, e) = #rc; ::mmapstruct::byref_array::ByRefArrayReader::new(data, ::mmapstruct::traits::FileRange::new(s, e), base) } };
+                        if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                     }
                     FieldCategory::DynamicVec {
                         elem_is_pod,
@@ -227,15 +248,19 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                         ..
                     } => {
                         if *elem_is_pod {
-                            rinit.push(quote! { #id: { let (s, e) = #rc; ::mmapstruct::bytemuck::cast_slice(&data[s..e]) } });
+                            let expr = quote! { { let (s, e) = #rc; ::mmapstruct::bytemuck::cast_slice(&data[s..e]) } };
+                            if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                         } else if *elem_fixed {
-                            rinit.push(quote! { #id: { let (s, e) = #rc; ::mmapstruct::fixed_array::FixedArrayReader::new(data, ::mmapstruct::traits::FileRange::new(s, e)) } });
+                            let expr = quote! { { let (s, e) = #rc; ::mmapstruct::fixed_array::FixedArrayReader::new(data, ::mmapstruct::traits::FileRange::new(s, e)) } };
+                            if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                         } else {
-                            rinit.push(quote! { #id: { let (s, e) = #rc; ::mmapstruct::indexed_array::IndexedArrayReader::new(data, ::mmapstruct::traits::FileRange::new(s, e)) } });
+                            let expr = quote! { { let (s, e) = #rc; ::mmapstruct::indexed_array::IndexedArrayReader::new(data, ::mmapstruct::traits::FileRange::new(s, e)) } };
+                            if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                         }
                     }
                     _ => {
-                        rinit.push(quote! { #id: { let (s, e) = #rc; <#ty as ::mmapstruct::traits::MmapRead>::read(data, s..e) } });
+                        let expr = quote! { { let (s, e) = #rc; <#ty as ::mmapstruct::traits::MmapRead>::read(data, s..e) } };
+                        if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                     }
                 }
             }
@@ -249,18 +274,13 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         let align_after_disc = quote! { ctx.align_to(#variant_data_align_inner); };
 
         let wbody = if !has_dynamic {
-            let writes: Vec<_> = all_fields
-                .iter()
-                .map(|fi| {
-                    let id = &fi.ident;
-                    quote! { ctx.write_pod(#id); }
-                })
-                .collect();
+            let fw_pod = write_helpers::generate_fixed_writes(&all_fields, &field_ref);
             quote! {
                 ctx.write_u32_le(#disc as u32);
                 #align_after_disc
-                #(#writes)*
-                ctx.align_to(8);
+                let start = ctx.current_offset();
+                #(#fw_pod)*
+                ctx.align_from(start, 8);
             }
         } else {
             quote! {
@@ -302,20 +322,36 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                         quote! { #id.into() }
                     }
                 };
-                quote! { #id: #expr }
+                if is_tuple {
+                    expr
+                } else {
+                    quote! { #id: #expr }
+                }
             })
             .collect();
-        let fbody = quote! { #name::#vident { #(#fconv),* } };
+        let fbody = if is_tuple {
+            quote! { #name::#vident(#(#fconv),*) }
+        } else {
+            quote! { #name::#vident { #(#fconv),* } }
+        };
 
         let dfields: Vec<_> = all_fields
             .iter()
             .map(|fi| {
                 let id = &fi.ident;
-                quote! { #id: Default::default() }
+                if is_tuple {
+                    quote! { Default::default() }
+                } else {
+                    quote! { #id: Default::default() }
+                }
             })
             .collect();
         let dbody = if disc == 0 {
-            quote! { #name::#vident { #(#dfields),* } }
+            if is_tuple {
+                quote! { #name::#vident(#(#dfields),*) }
+            } else {
+                quote! { #name::#vident { #(#dfields),* } }
+            }
         } else {
             quote! { unreachable!() }
         };
@@ -356,6 +392,8 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             reader_fields: rfields,
             reader_init: if rinit.is_empty() {
                 quote! { #reader_name::#vident }
+            } else if is_tuple {
+                quote! { #reader_name::#vident(#(#rinit),*) }
             } else {
                 quote! { #reader_name::#vident { #(#rinit),* } }
             },
@@ -363,6 +401,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             from_body: fbody,
             default_body: dbody,
             layout_hash: quote! { ::mmapstruct::traits::combine_hashes(&[#disc_u64 as u64, #(#variant_field_hashes),*, #fixed_sz as u64, #hdr_sz as u64]) },
+            is_tuple,
         });
     }
 
@@ -372,6 +411,9 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             let vi = &v.ident;
             if v.reader_fields.is_empty() {
                 quote! { #vi }
+            } else if v.is_tuple {
+                let fs = &v.reader_fields;
+                quote! { #vi(#(#fs),*) }
             } else {
                 let fs = &v.reader_fields;
                 quote! { #vi { #(#fs),* } }
@@ -410,6 +452,8 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             let body = &v.write_body;
             if fidents.is_empty() {
                 quote! { #name::#vi => { #body } , }
+            } else if v.is_tuple {
+                quote! { #name::#vi(#(#fidents),*) => { #body } , }
             } else {
                 quote! { #name::#vi { #(#fidents),* } => { #body } , }
             }
@@ -434,6 +478,8 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             let from = &v.from_body;
             if fidents.is_empty() {
                 quote! { #reader_name::#vi => #from , }
+            } else if v.is_tuple {
+                quote! { #reader_name::#vi(#(#fidents),*) => #from , }
             } else {
                 quote! { #reader_name::#vi { #(#fidents),* } => #from , }
             }

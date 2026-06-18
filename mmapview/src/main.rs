@@ -64,8 +64,9 @@ fn main() {
 
     // Determine mode: tree vs query
     // Tree mode if --tree flag is present, or auto-detect on non-TTY stdout
+    // (but only when there are ≤ 2 args — otherwise it's likely query mode)
     let explicit_tree = args.iter().any(|a| a == "--tree");
-    let auto_tree = !std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let auto_tree = !std::io::IsTerminal::is_terminal(&std::io::stdout()) && args.len() <= 3;
 
     if explicit_tree || auto_tree {
         // Find the data file: last argument that is not a flag

@@ -944,6 +944,63 @@ fn test_enum_unit_something() {
     assert_eq!(w2, w);
 }
 
+// Enum with tuple variants
+#[derive(MmapStruct, Debug, PartialEq)]
+enum TupleEnum {
+    None,
+    Pod(f32, u64),
+    Mixed(String, u32, Vec<u8>),
+}
+
+#[test]
+fn test_enum_tuple_none() {
+    let w = TupleEnum::None;
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<TupleEnum>();
+    match reader {
+        TupleEnumReader::None => {}
+        _ => panic!("expected None"),
+    }
+    let w2: TupleEnum = r.read::<TupleEnum>().into();
+    assert_eq!(w2, w);
+}
+
+#[test]
+fn test_enum_tuple_pod() {
+    let w = TupleEnum::Pod(3.14, 42);
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<TupleEnum>();
+    match reader {
+        TupleEnumReader::Pod(p0, p1) => {
+            assert_eq!(*p0, 3.14);
+            assert_eq!(*p1, 42);
+        }
+        _ => panic!("expected Pod"),
+    }
+    let w2: TupleEnum = r.read::<TupleEnum>().into();
+    assert_eq!(w2, w);
+}
+
+#[test]
+fn test_enum_tuple_mixed() {
+    let w = TupleEnum::Mixed("test".into(), 7, vec![1, 2, 3]);
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<TupleEnum>();
+    match reader {
+        TupleEnumReader::Mixed(name, val, data) => {
+            assert_eq!(name, "test");
+            assert_eq!(*val, 7);
+            assert_eq!(data.to_vec(), vec![1u8, 2, 3]);
+        }
+        _ => panic!("expected Mixed"),
+    }
+    let w2: TupleEnum = r.read::<TupleEnum>().into();
+    assert_eq!(w2, w);
+}
+
 // Enum with byref fields
 #[derive(MmapStruct, Debug, PartialEq)]
 enum ByRefEnum {
