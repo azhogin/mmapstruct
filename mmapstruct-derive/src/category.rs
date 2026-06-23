@@ -50,7 +50,7 @@ pub(crate) fn classify_field(field: &syn::Field) -> FieldCategory {
     if is_primitive_pod(ty) {
         return FieldCategory::PodPrimitive;
     }
-    let (is_byref, dedup, inline_size) = parse_mmap_attrs(&field.attrs);
+    let (is_byref, dedup, inline_size, _is_bool) = parse_mmap_attrs(&field.attrs);
     if let Some(size) = inline_size {
         if is_string_type(ty) {
             return FieldCategory::InlineString { size };

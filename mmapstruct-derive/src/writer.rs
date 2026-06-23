@@ -18,7 +18,7 @@ pub(crate) fn compute_max_field_align(fields: &[FieldInfo]) -> usize {
             if al > align {
                 align = al;
             }
-        } else if fi.is_byref {
+        } else if fi.is_fixed_byref() {
             if 4 > align {
                 align = 4;
             }

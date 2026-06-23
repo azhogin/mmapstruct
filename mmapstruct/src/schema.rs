@@ -12,7 +12,7 @@ use crate::traits::mmap_read_pod;
 ///
 /// Stores an **offset** into the buffer and a **schema** describing
 /// how to interpret the bytes at that offset. All reading goes through
-/// [`DynContext`].
+/// [`SchemaCtx`].
 #[derive(Clone, Copy)]
 pub struct Value {
     /// Byte offset to the start of this value's data.
@@ -172,8 +172,6 @@ pub struct FieldDescriptor {
     pub inline_dyn_index: Option<usize>,
     /// The value type at this offset.
     pub value_type: &'static DynValueType,
-    /// Whether this field is stored by-reference (has a `ByRefRange` placeholder).
-    pub is_byref: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -206,19 +204,19 @@ pub enum ArrayLayout {
 }
 
 // ---------------------------------------------------------------------------
-// DynContext — reads values from a buffer using DynValue offsets + schemas
+// SchemaCtx — reads values from a buffer using DynValue offsets + schemas
 // ---------------------------------------------------------------------------
 
 /// Provides methods to read values from a buffer, using [`Value`] references.
 ///
-/// `DynContext` borrows the buffer (`&'a [u8]`). It can wrap an mmap,
+/// `SchemaCtx` borrows the buffer (`&'a [u8]`). It can wrap an mmap,
 /// a `&Vec<u8>`, or any other contiguous byte slice.
-pub struct DynContext<'a> {
+pub struct SchemaCtx<'a> {
     data: &'a [u8],
 }
 
-impl<'a> DynContext<'a> {
-    /// Create a new `DynContext` over `data`.
+impl<'a> SchemaCtx<'a> {
+    /// Create a new `SchemaCtx` over `data`.
     ///
     /// `data` must be the raw struct payload **without** the 8‑byte file header.
     /// Header stripping is handled by `MmapReader` / `BufReader` before they
@@ -235,65 +233,24 @@ impl<'a> DynContext<'a> {
     // Scalar reads
     // -----------------------------------------------------------------------
 
-    pub fn read_u32(&self, dv: &Value) -> u32 {
+    pub fn read_pod<T: bytemuck::Pod>(&self, dv: &Value) -> T {
         let off = dv.offset as usize;
-        unsafe { mmap_read_pod::<u32>(&self.data[off..off + 4]) }
+        unsafe { mmap_read_pod::<T>(&self.data[off..off + core::mem::size_of::<T>()]) }
     }
 
-    pub fn read_u64(&self, dv: &Value) -> u64 {
-        let off = dv.offset as usize;
-        unsafe { mmap_read_pod::<u64>(&self.data[off..off + 8]) }
-    }
-
-    pub fn read_i32(&self, dv: &Value) -> i32 {
-        let off = dv.offset as usize;
-        unsafe { mmap_read_pod::<i32>(&self.data[off..off + 4]) }
-    }
-
-    pub fn read_i64(&self, dv: &Value) -> i64 {
-        let off = dv.offset as usize;
-        unsafe { mmap_read_pod::<i64>(&self.data[off..off + 8]) }
-    }
-
-    pub fn read_f32(&self, dv: &Value) -> f32 {
-        let off = dv.offset as usize;
-        unsafe { mmap_read_pod::<f32>(&self.data[off..off + 4]) }
-    }
-
-    pub fn read_f64(&self, dv: &Value) -> f64 {
-        let off = dv.offset as usize;
-        unsafe { mmap_read_pod::<f64>(&self.data[off..off + 8]) }
-    }
-
-    pub fn read_bool(&self, dv: &Value) -> bool {
-        self.data[dv.offset as usize] != 0
-    }
-
-    pub fn read_u16(&self, dv: &Value) -> u16 {
-        let off = dv.offset as usize;
-        unsafe { mmap_read_pod::<u16>(&self.data[off..off + 2]) }
-    }
-
-    pub fn read_i16(&self, dv: &Value) -> i16 {
-        let off = dv.offset as usize;
-        unsafe { mmap_read_pod::<i16>(&self.data[off..off + 2]) }
-    }
-
-    pub fn read_u8(&self, dv: &Value) -> u8 {
-        self.data[dv.offset as usize]
-    }
-
-    pub fn read_i8(&self, dv: &Value) -> i8 {
-        self.data[dv.offset as usize] as i8
-    }
-
-    pub fn read_usize(&self, dv: &Value) -> usize {
-        self.read_u64(dv) as usize
-    }
-
-    pub fn read_isize(&self, dv: &Value) -> isize {
-        self.read_i64(dv) as isize
-    }
+    pub fn read_u32(&self, dv: &Value) -> u32 { self.read_pod(dv) }
+    pub fn read_u64(&self, dv: &Value) -> u64 { self.read_pod(dv) }
+    pub fn read_i32(&self, dv: &Value) -> i32 { self.read_pod(dv) }
+    pub fn read_i64(&self, dv: &Value) -> i64 { self.read_pod(dv) }
+    pub fn read_f32(&self, dv: &Value) -> f32 { self.read_pod(dv) }
+    pub fn read_f64(&self, dv: &Value) -> f64 { self.read_pod(dv) }
+    pub fn read_u16(&self, dv: &Value) -> u16 { self.read_pod(dv) }
+    pub fn read_i16(&self, dv: &Value) -> i16 { self.read_pod(dv) }
+    pub fn read_u8(&self, dv: &Value) -> u8 { self.read_pod(dv) }
+    pub fn read_i8(&self, dv: &Value) -> i8 { self.read_pod(dv) }
+    pub fn read_usize(&self, dv: &Value) -> usize { self.read_u64(dv) as usize }
+    pub fn read_isize(&self, dv: &Value) -> isize { self.read_i64(dv) as isize }
+    pub fn read_bool(&self, dv: &Value) -> bool { self.read_pod::<u32>(dv) != 0 }
 
     /// Read a string using the Value's offset..limit range.
     /// Trailing null bytes are trimmed (for `#[mmap(inline(N))]` strings).
@@ -330,6 +287,7 @@ impl<'a> DynContext<'a> {
             DynValueType::I8 => Some(self.read_i8(dv) as i64),
             DynValueType::Usize => Some(self.read_usize(dv) as i64),
             DynValueType::Isize => Some(self.read_isize(dv) as i64),
+            DynValueType::Bool => Some(self.read_u32(dv) as i64),
             _ => None,
         }
     }
@@ -367,10 +325,10 @@ impl<'a> DynContext<'a> {
         match dv.schema {
             DynValueType::Lazy(resolve) => match resolve() {
                 DynValueType::Struct(resolve2) => resolve2(),
-                _ => panic!("DynContext::get_struct_schema: resolved lazy value is not a struct"),
+                _ => panic!("SchemaCtx::get_struct_schema: resolved lazy value is not a struct"),
             },
             DynValueType::Struct(resolve) => resolve(),
-            _ => panic!("DynContext::get_struct_schema: value is not a struct"),
+            _ => panic!("SchemaCtx::get_struct_schema: value is not a struct"),
         }
     }
 
@@ -446,7 +404,7 @@ impl<'a> DynContext<'a> {
 
         if let Some(dyn_idx) = desc.inline_dyn_index {
             self.field_get_inline_dyn_off(base, schema, desc, dyn_idx)
-        } else if desc.is_byref {
+        } else if is_byref_value_type(desc.value_type) {
             self.field_get_byref_off(base, desc)
         } else {
             // Pod or inline string in fixed section
@@ -503,6 +461,9 @@ impl<'a> DynContext<'a> {
         let data_off = base + br.begin as u64;
         let data_limit = base + br.end as u64;
         let schema = match desc.value_type {
+            DynValueType::ByRef(DynValueType::Option(inner)) => inner,
+            DynValueType::Option(DynValueType::ByRef(inner)) => inner,
+            DynValueType::ByRef(inner) => inner,
             DynValueType::Option(inner) => inner,
             other => other,
         };
@@ -517,7 +478,7 @@ impl<'a> DynContext<'a> {
     pub fn array_len(&self, dv: &Value) -> usize {
         let array_schema = match dv.schema {
             DynValueType::Array(a) => a,
-            _ => panic!("DynContext::array_len: value is not an array"),
+            _ => panic!("SchemaCtx::array_len: value is not an array"),
         };
         match &array_schema.layout {
             ArrayLayout::Pod { stride } => {
@@ -582,7 +543,7 @@ impl<'a> DynContext<'a> {
     pub fn hashmap_len(&self, dv: &Value) -> usize {
         let _ = match dv.schema {
             DynValueType::HashMap(_) => (),
-            _ => panic!("DynContext::hashmap_len: value is not a hashmap"),
+            _ => panic!("SchemaCtx::hashmap_len: value is not a hashmap"),
         };
         let count =
             unsafe { mmap_read_pod::<u64>(&self.data[dv.offset as usize..dv.offset as usize + 8]) };
@@ -698,7 +659,8 @@ impl<'a> DynContext<'a> {
 /// Natural alignment for a DynValueType (mirrors `core::mem::align_of` for concrete types).
 pub fn dyn_value_align(vt: &DynValueType) -> usize {
     match vt {
-        DynValueType::U8 | DynValueType::I8 | DynValueType::Bool => 1,
+        DynValueType::U8 | DynValueType::I8 => 1,
+        DynValueType::Bool => 4,
         DynValueType::U16 | DynValueType::I16 => 2,
         DynValueType::U32 | DynValueType::I32 | DynValueType::F32 => 4,
         DynValueType::U64
@@ -727,7 +689,8 @@ pub fn dyn_value_align(vt: &DynValueType) -> usize {
 
 pub fn dyn_value_size(vt: &DynValueType) -> usize {
     match vt {
-        DynValueType::U8 | DynValueType::I8 | DynValueType::Bool => 1,
+        DynValueType::U8 | DynValueType::I8 => 1,
+        DynValueType::Bool => 4,
         DynValueType::U16 | DynValueType::I16 => 2,
         DynValueType::U32 | DynValueType::I32 | DynValueType::F32 => 4,
         DynValueType::U64
@@ -743,6 +706,10 @@ pub fn dyn_value_size(vt: &DynValueType) -> usize {
 #[inline(always)]
 pub(crate) const fn align_up(offset: usize, align: usize) -> usize {
     (offset + align - 1) & !(align - 1)
+}
+
+fn is_byref_value_type(vt: &DynValueType) -> bool {
+    matches!(vt, DynValueType::ByRef(_) | DynValueType::Option(DynValueType::ByRef(_)))
 }
 
 impl DynValueType {

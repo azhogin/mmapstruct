@@ -38,7 +38,7 @@ pub(crate) fn collect_inline_dyn_indices(fields: &[FieldInfo]) -> Vec<usize> {
 pub(crate) fn fixed_section_index(fields: &[FieldInfo], field_name: &str) -> usize {
     fields
         .iter()
-        .filter(|f| is_pod_field(&f.category) || is_inline_string_field(&f.category) || f.is_byref)
+        .filter(|f| is_pod_field(&f.category) || is_inline_string_field(&f.category) || f.has_byref_attr)
         .position(|f| f.name == field_name)
         .expect("field not in fixed section")
 }
@@ -109,7 +109,7 @@ pub(crate) fn generate_fixed_layout_consts(
                 fo_stmts.push(quote! { __off += #size; });
                 fs_stmts.push(quote! { __off += #size; });
             }
-        } else if ff.is_byref {
+        } else if ff.has_byref_attr {
             fo_stmts.push(quote! { __off = (__off + 3) & !3; });
             fs_stmts.push(quote! { __off = (__off + 3) & !3; });
             fo_stmts.push(quote! { __fo[#i] = __off; });

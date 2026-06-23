@@ -4,7 +4,7 @@ use axum::{
     routing::get,
     Router,
 };
-use mmapstruct::{DynContext, DynValueType, Value};
+use mmapstruct::{SchemaCtx, DynValueType, Value};
 use mmapview::json_conv::{compute_stats, result_to_json, value_type_to_json};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -62,7 +62,7 @@ async fn query_handler(
     let page = params.page.unwrap_or(0);
     let limit = params.limit.unwrap_or(50);
 
-    let ctx = DynContext::new(&state.data);
+    let ctx = SchemaCtx::new(&state.data);
     let root = Value::new(0, state.data.len() as u64, state.root_schema);
 
     let results = match mmapview::query_from(q, &ctx, &root) {
@@ -110,7 +110,7 @@ async fn schema_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::
 async fn stats_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     use serde_json::json;
 
-    let ctx = DynContext::new(&state.data);
+    let ctx = SchemaCtx::new(&state.data);
     let root = Value::new(0, state.data.len() as u64, state.root_schema);
 
     let stats = compute_stats(&ctx, &root);

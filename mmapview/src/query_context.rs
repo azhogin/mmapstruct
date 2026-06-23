@@ -1,7 +1,8 @@
-use mmapstruct::{DynContext, DynValueType, Value};
-use mmapstruct_schema::context::{SchemaDynContext, SchemaValue};
+use mmapstruct::{SchemaCtx, DynValueType, Value};
+use mmapstruct_schema::context::RuntimeSchemaCtx;
+use mmapstruct_schema::SchemaValue;
 
-/// Trait abstracting over `DynContext` and `SchemaDynContext` for the
+/// Trait abstracting over `SchemaCtx` and `RuntimeSchemaCtx` for the
 /// query interpreter. Allows the same filter/aggregate logic to work
 /// with both compile-time and schema-based navigation.
 pub trait QueryContext<'a> {
@@ -18,35 +19,35 @@ pub trait QueryContext<'a> {
     fn is_str_type(&self, val: &Self::Val) -> bool;
 }
 
-impl<'a> QueryContext<'a> for DynContext<'a> {
+impl<'a> QueryContext<'a> for SchemaCtx<'a> {
     type Val = Value;
 
     fn field_get(&self, val: &Value, name: &str) -> Option<Value> {
-        DynContext::field_get(self, val, name)
+        SchemaCtx::field_get(self, val, name)
     }
 
     fn array_len(&self, val: &Value) -> usize {
-        DynContext::array_len(self, val)
+        SchemaCtx::array_len(self, val)
     }
 
     fn array_get(&self, val: &Value, idx: usize) -> Option<Value> {
-        DynContext::array_get(self, val, idx)
+        SchemaCtx::array_get(self, val, idx)
     }
 
     fn read_as_i64(&self, val: &Value) -> Option<i64> {
-        DynContext::read_as_i64(self, val)
+        SchemaCtx::read_as_i64(self, val)
     }
 
     fn read_as_f64(&self, val: &Value) -> Option<f64> {
-        DynContext::read_as_f64(self, val)
+        SchemaCtx::read_as_f64(self, val)
     }
 
     fn read_str(&self, val: &Value) -> &'a str {
-        DynContext::read_str(self, val)
+        SchemaCtx::read_str(self, val)
     }
 
     fn read_str_opt(&self, val: &Value) -> Option<&'a str> {
-        DynContext::read_str_opt(self, val)
+        SchemaCtx::read_str_opt(self, val)
     }
 
     fn is_array_type(&self, val: &Value) -> bool {
@@ -58,42 +59,46 @@ impl<'a> QueryContext<'a> for DynContext<'a> {
     }
 }
 
-impl<'a> QueryContext<'a> for SchemaDynContext<'a> {
+impl<'a> QueryContext<'a> for RuntimeSchemaCtx<'a> {
     type Val = SchemaValue;
 
     fn field_get(&self, val: &SchemaValue, name: &str) -> Option<SchemaValue> {
-        SchemaDynContext::field_get(self, val, name)
+        RuntimeSchemaCtx::field_get(self, val, name)
     }
 
     fn array_len(&self, val: &SchemaValue) -> usize {
-        SchemaDynContext::array_len(self, val)
+        RuntimeSchemaCtx::array_len(self, val) as usize
     }
 
     fn array_get(&self, val: &SchemaValue, idx: usize) -> Option<SchemaValue> {
-        SchemaDynContext::array_get(self, val, idx)
+        RuntimeSchemaCtx::array_get(self, val, idx as u64)
     }
 
     fn read_as_i64(&self, val: &SchemaValue) -> Option<i64> {
-        SchemaDynContext::read_as_i64(self, val)
+        RuntimeSchemaCtx::read_as_i64(self, val)
     }
 
     fn read_as_f64(&self, val: &SchemaValue) -> Option<f64> {
-        SchemaDynContext::read_as_f64(self, val)
+        RuntimeSchemaCtx::read_as_f64(self, val)
     }
 
     fn read_str(&self, val: &SchemaValue) -> &'a str {
-        SchemaDynContext::read_str(self, val)
+        RuntimeSchemaCtx::read_str(self, val)
     }
 
     fn read_str_opt(&self, val: &SchemaValue) -> Option<&'a str> {
-        SchemaDynContext::read_str_opt(self, val)
+        if val.offset >= val.limit {
+            None
+        } else {
+            Some(self.read_str(val))
+        }
     }
 
     fn is_array_type(&self, val: &SchemaValue) -> bool {
-        SchemaDynContext::is_array_type(self, val)
+        RuntimeSchemaCtx::is_array_type(self, val.type_idx)
     }
 
     fn is_str_type(&self, val: &SchemaValue) -> bool {
-        SchemaDynContext::is_str_type(self, val)
+        RuntimeSchemaCtx::is_str_type(self, val.type_idx)
     }
 }

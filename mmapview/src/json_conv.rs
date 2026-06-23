@@ -1,8 +1,8 @@
 use crate::EvalResult;
-use mmapstruct::{ArrayLayout, DynContext, DynValueType, StructSchema, Value};
+use mmapstruct::{ArrayLayout, SchemaCtx, DynValueType, StructSchema, Value};
 
 /// Convert a runtime `Value` to a `serde_json::Value` for HTTP output.
-pub fn to_json<'a>(ctx: &DynContext<'a>, val: &Value) -> serde_json::Value {
+pub fn to_json<'a>(ctx: &SchemaCtx<'a>, val: &Value) -> serde_json::Value {
     match val.schema {
         DynValueType::U8 => serde_json::json!(ctx.read_u8(val)),
         DynValueType::U16 => serde_json::json!(ctx.read_u16(val)),
@@ -76,7 +76,7 @@ pub fn to_json<'a>(ctx: &DynContext<'a>, val: &Value) -> serde_json::Value {
 }
 
 /// Convert an `EvalResult` to a `serde_json::Value` for HTTP output.
-pub fn result_to_json<'a>(ctx: &DynContext<'a>, result: &EvalResult) -> serde_json::Value {
+pub fn result_to_json<'a>(ctx: &SchemaCtx<'a>, result: &EvalResult) -> serde_json::Value {
     match result {
         EvalResult::Buf(v) => to_json(ctx, v),
         EvalResult::U64(n) => serde_json::json!(n),
@@ -172,7 +172,6 @@ fn fields_to_json(s: &StructSchema) -> serde_json::Value {
                 "name": fd.name,
                 "type": fd.value_type.name_hint(),
                 "inline_dyn_index": fd.inline_dyn_index,
-                "is_byref": fd.is_byref,
                 "offset_in_fixed": fd.offset_in_fixed,
             })
         })
@@ -224,7 +223,7 @@ impl NameHint for DynValueType {
 }
 
 /// Compute stats for the root struct: read each top-level field and describe it.
-pub fn compute_stats<'a>(ctx: &DynContext<'a>, root: &Value) -> serde_json::Value {
+pub fn compute_stats<'a>(ctx: &SchemaCtx<'a>, root: &Value) -> serde_json::Value {
     let schema = ctx.get_struct_schema(root);
     let mut top_level = serde_json::Map::new();
 

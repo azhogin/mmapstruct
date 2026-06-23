@@ -23,12 +23,46 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
     let all_fields = &analysis.fields;
     let has_dynamic = analysis.has_dynamic;
 
+    // Generate #[mmap(bool)] getter/setter methods
+    let bool_methods: Vec<_> = all_fields
+        .iter()
+        .filter(|f| f.is_mmap_bool)
+        .map(|f| {
+            let fident = &f.ident;
+            let set_ident = format_ident!("set_{}", fident);
+            quote! {
+                pub fn #fident(&self) -> bool {
+                    self.#fident != 0
+                }
+                pub fn #set_ident(&mut self, v: bool) {
+                    self.#fident = v as u32;
+                }
+            }
+        })
+        .collect();
+    let bool_impl = if bool_methods.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            impl #name {
+                #(#bool_methods)*
+            }
+        }
+    };
+
     if !has_dynamic {
         let layout = compute_layout(&all_fields);
         let fixed_layout_consts =
             generate_fixed_layout_consts(name, &all_fields, layout.inline_dyn_count);
 
         let pod_impl = quote! { impl ::mmapstruct::traits::MmapPod for #name {} };
+        let from_ref_impl = quote! {
+            impl<'a> ::core::convert::From<&'a #name> for #name {
+                fn from(r: &'a #name) -> Self {
+                    *r
+                }
+            }
+        };
         let layout_hash_impl = generate_layout_hash_impl(name, &all_fields);
 
         let schema_impl = {
@@ -45,8 +79,10 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
         return (quote! {
             #fixed_layout_consts
             #pod_impl
+            #from_ref_impl
             #layout_hash_impl
             #schema_impl
+            #bool_impl
         })
         .into();
     }
@@ -95,6 +131,7 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
         #reader_ord_impl
         #default_impl
         #schema_impl
+        #bool_impl
     })
     .into()
 }

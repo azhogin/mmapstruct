@@ -1,0 +1,722 @@
+use mmapstruct::{MmapStruct, write_to_buf_raw};
+use mmapstruct::traits::MmapRead;
+use mmapstruct_schema::builder::build_serialized_schema;
+use mmapstruct_schema::{
+    format_schema_value, navigate_path, RuntimeSchemaCtx, SchemaValue,
+    write_with_schema,
+};
+
+#[test]
+fn test_schema_build_simple() {
+    #[derive(MmapStruct)]
+    struct Point {
+        x: u64,
+        y: String,
+    }
+
+    let schema = build_serialized_schema::<Point>();
+    match &schema.types[0] {
+        mmapstruct_schema::schema::TypeDef::Struct { name, fields, .. } => {
+            assert_eq!(name, "Point");
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].name, "x");
+            assert_eq!(fields[1].name, "y");
+        }
+        _ => panic!("expected struct"),
+    }
+    assert!(matches!(
+        schema.types[1],
+        mmapstruct_schema::schema::TypeDef::Primitive(mmapstruct_schema::schema::PrimitiveDef::U64)
+    ));
+    assert!(matches!(schema.types[2], mmapstruct_schema::schema::TypeDef::Str { .. }));
+    assert_eq!(schema.root_type, 0);
+}
+
+#[test]
+fn test_schema_build_mixed() {
+    #[derive(MmapStruct)]
+    struct Rec {
+        id: u64,
+        name: String,
+        tags: Vec<String>,
+    }
+
+    let schema = build_serialized_schema::<Rec>();
+    match &schema.types[0] {
+        mmapstruct_schema::schema::TypeDef::Struct { name, fields, .. } => {
+            assert_eq!(name, "Rec");
+            assert_eq!(fields.len(), 3);
+            assert_eq!(fields[0].name, "id");
+            assert_eq!(fields[1].name, "name");
+            assert_eq!(fields[2].name, "tags");
+        }
+        _ => panic!("expected struct"),
+    }
+    assert!(matches!(
+        schema.types[1],
+        mmapstruct_schema::schema::TypeDef::Primitive(mmapstruct_schema::schema::PrimitiveDef::U64)
+    ));
+    assert!(matches!(schema.types[2], mmapstruct_schema::schema::TypeDef::Str { .. }));
+
+    match &schema.types[3] {
+        mmapstruct_schema::schema::TypeDef::Array { layout, .. } => {
+            assert!(matches!(layout, mmapstruct_schema::schema::ArrayLayoutDef::Indexed));
+        }
+        _ => panic!("expected array"),
+    }
+    assert_eq!(schema.root_type, 0);
+}
+
+#[test]
+fn test_schema_build_enum() {
+    #[derive(MmapStruct)]
+    enum MyEnum {
+        Alpha { id: u64 },
+        Beta { name: String, val: u64 },
+    }
+
+    let schema = build_serialized_schema::<MyEnum>();
+    match &schema.types[0] {
+        mmapstruct_schema::schema::TypeDef::Enum { name, variants, .. } => {
+            assert_eq!(name, "MyEnum");
+            assert_eq!(variants.len(), 2);
+            assert_eq!(variants[0].name, "MyEnum::Alpha");
+            assert_eq!(variants[0].fields.len(), 1);
+            assert_eq!(variants[1].name, "MyEnum::Beta");
+            assert_eq!(variants[1].fields.len(), 2);
+        }
+        _ => panic!("expected enum"),
+    }
+    assert_eq!(schema.root_type, 0);
+}
+
+#[test]
+fn test_schema_build_with_option() {
+    #[derive(MmapStruct)]
+    struct WithOpt {
+        id: u64,
+        label: Option<String>,
+    }
+
+    let schema = build_serialized_schema::<WithOpt>();
+    match &schema.types[0] {
+        mmapstruct_schema::schema::TypeDef::Struct { fields, .. } => {
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].name, "id");
+            assert_eq!(fields[1].name, "label");
+            assert_eq!(fields[1].type_index, 2);
+        }
+        _ => panic!("expected struct"),
+    }
+    assert!(matches!(
+        schema.types[1],
+        mmapstruct_schema::schema::TypeDef::Primitive(mmapstruct_schema::schema::PrimitiveDef::U64)
+    ));
+    match &schema.types[2] {
+        mmapstruct_schema::schema::TypeDef::Option { inner_type } => {
+            assert_eq!(*inner_type, 3);
+        }
+        _ => panic!("expected option"),
+    }
+    assert!(matches!(schema.types[3], mmapstruct_schema::schema::TypeDef::Str { .. }));
+    assert_eq!(schema.root_type, 0);
+}
+
+#[test]
+fn test_write_with_schema() {
+    #[derive(MmapStruct)]
+    struct Rec {
+        id: u64,
+        name: String,
+    }
+
+    let pt = Rec {
+        id: 10,
+        name: "hello".into(),
+    };
+    let (data, schema_bytes) = write_with_schema(&pt);
+
+    assert!(!data.is_empty());
+    let schema = build_serialized_schema::<Rec>();
+    assert_eq!(schema.root_type, 0);
+    assert!(!schema_bytes.is_empty());
+
+    let full = mmapstruct::write_to_buf(&pt, false);
+    assert_eq!(&full[24..], &data[..]);
+}
+
+#[test]
+fn test_schema_roundtrip_simple() {
+    #[derive(MmapStruct)]
+    struct Point {
+        x: u64,
+        y: String,
+    }
+
+    let schema = build_serialized_schema::<Point>();
+    let buf = write_to_buf_raw(&schema);
+
+    let schema2: mmapstruct_schema::schema::Schema =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&buf, 0..buf.len()).into();
+    assert_eq!(schema.types.len(), schema2.types.len());
+    assert_eq!(schema.root_type, schema2.root_type);
+}
+
+#[test]
+fn test_schema_roundtrip_mixed() {
+    #[derive(MmapStruct)]
+    struct Rec {
+        id: u64,
+        name: String,
+        tags: Vec<String>,
+    }
+
+    let schema = build_serialized_schema::<Rec>();
+    let buf = write_to_buf_raw(&schema);
+
+    let schema2: mmapstruct_schema::schema::Schema =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&buf, 0..buf.len()).into();
+    assert_eq!(schema.types.len(), schema2.types.len());
+}
+
+#[test]
+fn test_schema_roundtrip_enum() {
+    #[derive(MmapStruct)]
+    enum MyEnum {
+        Alpha { id: u64 },
+        Beta { name: String, val: u64 },
+    }
+
+    let schema = build_serialized_schema::<MyEnum>();
+    let buf = write_to_buf_raw(&schema);
+
+    let schema2: mmapstruct_schema::schema::Schema =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&buf, 0..buf.len()).into();
+    assert_eq!(schema.types.len(), schema2.types.len());
+}
+
+#[test]
+fn test_schema_roundtrip_option() {
+    #[derive(MmapStruct)]
+    struct WithOpt {
+        id: u64,
+        label: Option<String>,
+    }
+
+    let schema = build_serialized_schema::<WithOpt>();
+    let buf = write_to_buf_raw(&schema);
+
+    let schema2: mmapstruct_schema::schema::Schema =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&buf, 0..buf.len()).into();
+    assert_eq!(schema.types.len(), schema2.types.len());
+    assert_eq!(schema.root_type, schema2.root_type);
+}
+
+#[test]
+fn test_schema_write_with_schema_readback() {
+    #[derive(MmapStruct)]
+    struct Rec {
+        id: u64,
+        name: String,
+    }
+
+    let pt = Rec {
+        id: 10,
+        name: "hello".into(),
+    };
+    let (_data, schema_bytes) = write_with_schema(&pt);
+
+    let schema: mmapstruct_schema::schema::Schema =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(
+            &schema_bytes,
+            0..schema_bytes.len(),
+        )
+        .into();
+    assert!(schema.types.len() >= 1);
+    assert_eq!(schema.root_type, 0);
+}
+
+#[test]
+fn test_schema_context_field_get() {
+    #[derive(MmapStruct)]
+    struct Point {
+        x: u64,
+        y: String,
+    }
+
+    let pt = Point {
+        x: 42,
+        y: "hello".into(),
+    };
+    let data = mmapstruct::write_to_buf_raw(&pt);
+    let schema = build_serialized_schema::<Point>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let x = ctx.field_get(&root, "x").unwrap();
+    assert_eq!(ctx.read_u64(&x), 42);
+
+    let y = ctx.field_get(&root, "y").unwrap();
+    assert_eq!(ctx.read_str(&y), "hello");
+}
+
+#[test]
+fn test_schema_context_enum_variant() {
+    #[derive(MmapStruct)]
+    enum MyEnum {
+        Alpha { id: u32 },
+        Beta { name: String, val: u64 },
+    }
+
+    let w = MyEnum::Alpha { id: 42 };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<MyEnum>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let id = ctx.field_get(&root, "id").unwrap();
+    assert_eq!(ctx.read_u32(&id), 42);
+
+    let (_variant, _data_off) = ctx.enum_variant(&root).unwrap();
+
+    let w = MyEnum::Beta {
+        name: "test".into(),
+        val: 99,
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let name = ctx.field_get(&root, "name").unwrap();
+    assert_eq!(ctx.read_str(&name), "test");
+    let val = ctx.field_get(&root, "val").unwrap();
+    assert_eq!(ctx.read_u64(&val), 99);
+}
+
+#[test]
+fn test_schema_context_array() {
+    #[derive(MmapStruct)]
+    struct Item {
+        id: u32,
+        label: String,
+    }
+
+    #[derive(MmapStruct)]
+    struct ItemFile {
+        items: Vec<Item>,
+    }
+
+    let w = ItemFile {
+        items: vec![
+            Item {
+                id: 10,
+                label: "a".into(),
+            },
+            Item {
+                id: 20,
+                label: "b".into(),
+            },
+            Item {
+                id: 30,
+                label: "c".into(),
+            },
+        ],
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<ItemFile>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let items = ctx.field_get(&root, "items").unwrap();
+    assert_eq!(ctx.array_len(&items), 3);
+
+    let elem0 = ctx.array_get(&items, 0).unwrap();
+    let id0 = ctx.field_get(&elem0, "id").unwrap();
+    assert_eq!(ctx.read_u32(&id0), 10);
+    let label0 = ctx.field_get(&elem0, "label").unwrap();
+    assert_eq!(ctx.read_str(&label0), "a");
+
+    let elem2 = ctx.array_get(&items, 2).unwrap();
+    let id2 = ctx.field_get(&elem2, "id").unwrap();
+    assert_eq!(ctx.read_u32(&id2), 30);
+}
+
+#[test]
+fn test_schema_context_read_as() {
+    use mmapstruct_schema::RuntimeSchemaCtx;
+    use mmapstruct_schema::SchemaValue;
+
+    #[derive(MmapStruct)]
+    struct Stats {
+        avg: f64,
+        count: u32,
+        name: String,
+    }
+
+    let w = Stats {
+        avg: 3.5,
+        count: 100,
+        name: "test".into(),
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<Stats>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let avg = ctx.field_get(&root, "avg").unwrap();
+    assert!((ctx.read_f64(&avg) - 3.5).abs() < 1e-10);
+    assert!((ctx.read_as_f64(&avg).unwrap() - 3.5).abs() < 1e-10);
+
+    let count = ctx.field_get(&root, "count").unwrap();
+    assert_eq!(ctx.read_u32(&count), 100);
+    assert_eq!(ctx.read_as_i64(&count), Some(100i64));
+
+    let name = ctx.field_get(&root, "name").unwrap();
+    assert_eq!(ctx.read_str(&name), "test");
+}
+
+#[test]
+fn test_schema_context_byref_string() {
+    #[derive(MmapStruct)]
+    struct Rec {
+        name: String,
+    }
+
+    let w = Rec {
+        name: "world".into(),
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<Rec>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let name = ctx.field_get(&root, "name").unwrap();
+    assert_eq!(ctx.read_str(&name), "world");
+}
+
+#[test]
+fn test_schema_context_option_none() {
+    #[derive(MmapStruct)]
+    struct WithOpt {
+        label: Option<String>,
+    }
+
+    let w = WithOpt { label: None };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<WithOpt>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let label = ctx.field_get(&root, "label").unwrap();
+    assert_eq!(label.offset, label.limit);
+}
+
+#[test]
+fn test_schema_context_option_some() {
+    #[derive(MmapStruct)]
+    struct WithOpt {
+        label: Option<String>,
+    }
+
+    let w = WithOpt {
+        label: Some("present".into()),
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<WithOpt>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let label = ctx.field_get(&root, "label").unwrap();
+    assert_eq!(ctx.read_str(&label), "present");
+}
+
+#[test]
+fn test_schema_format_value_struct() {
+    #[derive(MmapStruct)]
+    struct Point {
+        x: u64,
+        y: String,
+    }
+
+    let pt = Point {
+        x: 42,
+        y: "hello".into(),
+    };
+    let data = mmapstruct::write_to_buf_raw(&pt);
+    let schema = build_serialized_schema::<Point>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let s = format_schema_value(&ctx, &root);
+    assert_eq!(s, "{\n  \"x\": 42,\n  \"y\": \"hello\"\n}");
+}
+
+#[test]
+fn test_schema_format_value_enum() {
+    #[derive(MmapStruct)]
+    enum MyEnum {
+        Alpha { id: u32 },
+        Beta { name: String, val: u64 },
+    }
+
+    let w = MyEnum::Beta {
+        name: "test".into(),
+        val: 99,
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<MyEnum>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let s = format_schema_value(&ctx, &root);
+    assert_eq!(s, "MyEnum::Beta {\n  \"name\": \"test\",\n  \"val\": 99\n}");
+
+    // Verify data_off > 0 for this enum (u64 fields → alignment 8 → skip
+    // 4 bytes after u32 discriminant). The formatter delegates field lookup
+    // to field_get which handles the shift internally.
+    let (_variant_type_idx, data_off) = ctx.enum_variant(&root).unwrap();
+    assert!(data_off > 0, "enum with u64 field should have non-zero data offset");
+}
+
+#[test]
+fn test_schema_format_value_array() {
+    #[derive(MmapStruct)]
+    struct Item {
+        id: u32,
+        label: String,
+    }
+
+    #[derive(MmapStruct)]
+    struct ItemFile {
+        items: Vec<Item>,
+    }
+
+    let w = ItemFile {
+        items: vec![
+            Item {
+                id: 1,
+                label: "a".into(),
+            },
+            Item {
+                id: 2,
+                label: "b".into(),
+            },
+        ],
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<ItemFile>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let items = ctx.field_get(&root, "items").unwrap();
+    let s = format_schema_value(&ctx, &items);
+    assert_eq!(
+        s,
+        "[\n  {\n    \"id\": 1,\n    \"label\": \"a\"\n  },\n  {\n    \"id\": 2,\n    \"label\": \"b\"\n  }\n]"
+    );
+}
+
+#[test]
+fn test_schema_deep_nested_enum_field() {
+    // Deep nesting: struct → inline-dyn struct → inline-dyn struct → enum → variant → inline-dyn String
+    #[derive(MmapStruct)]
+    struct DeepA {
+        tag: u64,
+        child: DeepB,
+    }
+    #[derive(MmapStruct)]
+    struct DeepB {
+        val: u64,
+        child: DeepC,
+    }
+    #[derive(MmapStruct)]
+    struct DeepC {
+        data: String,
+        inner: InnerEnum,
+    }
+    #[derive(MmapStruct)]
+    enum InnerEnum {
+        Alpha { x: u64 },
+        Beta { nested: DeeperStruct },
+    }
+    #[derive(MmapStruct)]
+    struct DeeperStruct {
+        message: String,
+        extra: u64,
+    }
+
+    let w = DeepA {
+        tag: 1,
+        child: DeepB {
+            val: 2,
+            child: DeepC {
+                data: "hello".into(),
+                inner: InnerEnum::Beta {
+                    nested: DeeperStruct {
+                        message: "deep".into(),
+                        extra: 99,
+                    },
+                },
+            },
+        },
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<DeepA>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    // Navigate: root → child → child → inner → Beta → nested → message
+    let fv = ctx.field_get(&root, "child").unwrap();
+    let fv = ctx.field_get(&fv, "child").unwrap();
+    let fv = ctx.field_get(&fv, "inner").unwrap();
+    let fv = ctx.field_get(&fv, "nested").unwrap();
+    let msg = ctx.field_get(&fv, "message").unwrap();
+    assert_eq!(
+        ctx.read_str(&msg),
+        "deep",
+        "deep nested string via enum variant"
+    );
+    assert_eq!(
+        ctx.read_u64(&ctx.field_get(&fv, "extra").unwrap()),
+        99,
+        "deep nested extra via enum variant"
+    );
+
+    // Also test formatting through the deep path
+    let fmt = format_schema_value(&ctx, &root);
+    assert!(
+        fmt.contains("\"message\": \"deep\""),
+        "format should contain deep nested field"
+    );
+}
+
+#[test]
+fn test_schema_query_path() {
+    #[derive(MmapStruct)]
+    struct Item {
+        id: u32,
+        label: String,
+    }
+    #[derive(MmapStruct)]
+    struct ItemFile {
+        items: Vec<Item>,
+    }
+
+    let w = ItemFile {
+        items: vec![
+            Item {
+                id: 10,
+                label: "x".into(),
+            },
+            Item {
+                id: 20,
+                label: "y".into(),
+            },
+        ],
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<ItemFile>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let v = navigate_path(&ctx, &root, "/items[0]/label").unwrap();
+    assert_eq!(ctx.read_str(&v), "x");
+
+    let v = navigate_path(&ctx, &root, "/items[1]/id").unwrap();
+    assert_eq!(ctx.read_u32(&v), 20);
+}

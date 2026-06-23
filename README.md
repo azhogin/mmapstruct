@@ -88,7 +88,8 @@ magic: u32 = "MMAP" | hdr_ver: u16 = 1 | flags: u16 | layout_hash: u64 | crc64: 
 
 ## Tree view (`mmapview --tree`)
 
-Quick visual inspection of any mmapstruct file with embedded schema:
+Quick visual inspection of any mmapstruct file with embedded schema.
+Auto-detected when stdout is a pipe (e.g., in Midnight Commander's F3 view):
 
 ```
 > mmapview data.mms --tree
@@ -96,22 +97,40 @@ Quick visual inspection of any mmapstruct file with embedded schema:
 ItemCatalog
 ├── version: u32 = 42
 ├── items: Array = [3 elements]
-│   ├── [0]: Item = { ... }
-│   │   ├── name: str = "Sword"
-│   │   ├── price: u32 = 100
-│   │   └── tags: Array = [3 elements]
-│   ├── [1]: Item = { ... }
-│   │   └── ...
-│   └── ... (1 more)
-└── metadata: Metadata = { ... }
+    ├── [0]: Item
+        ├── name: str = "Sword"
+        ├── price: u32 = 100
+        └── tags: Array = [3 elements]
+            ├── [0]: str = "weapon"
+            ├── [1]: str = "melee"
+            └── [2]: str = "steel"
+    ├── [1]: Item
+        └── ...
+    └── ... (1 more)
+├── metadata: Metadata
+    ├── generated_at: u64 = ...
+    └── item_count: u32 = 3
+└── labels: HashMap = [hash_map]
 ```
 
-Auto-detected when stdout is a pipe (e.g., in Midnight Commander's F3 view):
+### Midnight Commander integration (F3 view)
+
+Add to `~/.config/mc/mc.ext`:
 
 ```ini
-# ~/.config/mc/mc.ext
 regex/\.(mms|mmap|mmaps)$
     View=%view mmapview --tree --depth=3 --max-array=15 %p
+```
+
+Or install automatically:
+
+```bash
+mkdir -p ~/.config/mc
+cat >> ~/.config/mc/mc.ext << 'EOF'
+
+regex/\.(mms|mmap|mmaps)$
+    View=%view mmapview --tree --depth=3 --max-array=15 %p
+EOF
 ```
 
 Use `write_to_file_with_embedded_schema()` (from `mmapstruct-schema`) to write files

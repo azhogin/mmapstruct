@@ -1,4 +1,4 @@
-use mmapstruct::{DynContext, DynValueType, Value};
+use mmapstruct::{SchemaCtx, DynValueType, Value};
 
 mod interpreter;
 #[cfg(feature = "json")]
@@ -20,7 +20,7 @@ pub use tokenizer::Token;
 /// or a computed value from an aggregation function.
 ///
 /// The type parameter `V` defaults to `Value` for backward compatibility
-/// with the compile-time `DynContext`. Use `EvalResult<SchemaValue>` when
+/// with the compile-time `SchemaCtx`. Use `EvalResult<SchemaValue>` when
 /// working with [`query_context::QueryContext`] implementations that use
 /// schema-based navigation.
 #[derive(Clone, Copy)]
@@ -35,23 +35,23 @@ pub enum EvalResult<V = Value> {
     F64(f64),
 }
 
-/// Render a `Value` as a JSON-like string using a `DynContext`.
+/// Render a `Value` as a JSON-like string using a `SchemaCtx`.
 ///
 /// ```
 /// # use mmapstruct::schema::{DynValueType, Value};
-/// # let ctx = mmapstruct::DynContext::new(&[]);
+/// # let ctx = mmapstruct::SchemaCtx::new(&[]);
 /// // A Value for a simple u32 is read as a number:
 /// let dummy = Value::new(0, 4, &DynValueType::U32);
 /// // We can't easily construct a context with data in a doctest here.
 /// ```
-pub fn format_value<'a>(ctx: &DynContext<'a>, val: &Value) -> String {
+pub fn format_value<'a>(ctx: &SchemaCtx<'a>, val: &Value) -> String {
     let mut out = String::new();
     write_val(ctx, val, &mut out);
     out
 }
 
 /// Render an `EvalResult` as a JSON-like string.
-pub fn format_result(ctx: &DynContext<'_>, result: &EvalResult) -> String {
+pub fn format_result(ctx: &SchemaCtx<'_>, result: &EvalResult) -> String {
     match result {
         EvalResult::Buf(v) => format_value(ctx, v),
         EvalResult::U64(n) => n.to_string(),
@@ -66,7 +66,7 @@ pub fn format_result(ctx: &DynContext<'_>, result: &EvalResult) -> String {
     }
 }
 
-fn write_val<'a>(ctx: &DynContext<'a>, val: &Value, out: &mut String) {
+fn write_val<'a>(ctx: &SchemaCtx<'a>, val: &Value, out: &mut String) {
     match val.schema {
         DynValueType::U32 => out.push_str(&ctx.read_u32(val).to_string()),
         DynValueType::I32 => out.push_str(&ctx.read_i32(val).to_string()),
@@ -180,38 +180,38 @@ fn write_val<'a>(ctx: &DynContext<'a>, val: &Value, out: &mut String) {
 }
 
 /// Parse and evaluate a query string against a root value using a
-/// compile-time `DynContext`.
+/// compile-time `SchemaCtx`.
 ///
-/// The caller provides a `DynContext` (wrapping the underlying byte buffer)
+/// The caller provides a `SchemaCtx` (wrapping the underlying byte buffer)
 /// and a root `Value` (typically the top-level struct or array).
 ///
 /// ```
-/// # use mmapstruct::{MmapStruct, MmapRead, DynContext, GetSchema};
+/// # use mmapstruct::{MmapStruct, MmapRead, SchemaCtx, GetSchema};
 /// # use mmapstruct::schema::Value;
 /// # #[derive(MmapStruct)] #[mmap(scope)] struct Rec { x: u32, y: String }
 /// # let data = mmapstruct::write_to_buf_raw(&Rec { x: 42, y: "hello".into() });
-/// let ctx = DynContext::new(&data);
+/// let ctx = SchemaCtx::new(&data);
 /// let root = <Rec as GetSchema>::root_value(data.len() as u64);
 /// let result = mmapview::query_from("/x", &ctx, &root).unwrap();
 /// ```
 pub fn query_from<'a>(
     q: &str,
-    ctx: &DynContext<'a>,
+    ctx: &SchemaCtx<'a>,
     root: &Value,
 ) -> Result<Vec<EvalResult>, String> {
     query_from_generic(q, ctx, root)
 }
 
 /// Parse and evaluate a query string against a root value using any
-/// [`QueryContext`] implementation (e.g. `DynContext` or
-/// [`SchemaDynContext`](mmapstruct_schema::context::SchemaDynContext)).
+/// [`QueryContext`] implementation (e.g. `SchemaCtx` or
+/// [`RuntimeSchemaCtx`](mmapstruct_schema::context::RuntimeSchemaCtx)).
 ///
 /// ```
-/// # use mmapstruct::{MmapStruct, MmapRead, DynContext, GetSchema};
+/// # use mmapstruct::{MmapStruct, MmapRead, SchemaCtx, GetSchema};
 /// # use mmapstruct::schema::Value;
 /// # #[derive(MmapStruct)] #[mmap(scope)] struct Rec { x: u32, y: String }
 /// # let data = mmapstruct::write_to_buf_raw(&Rec { x: 42, y: "hello".into() });
-/// let ctx = DynContext::new(&data);
+/// let ctx = SchemaCtx::new(&data);
 /// let root = <Rec as GetSchema>::root_value(data.len() as u64);
 /// let result = mmapview::query_from_generic("/x", &ctx, &root).unwrap();
 /// ```
@@ -244,7 +244,7 @@ mod tests {
             name: "hello".into(),
         };
         let buf = mmapstruct::write_to_buf_raw(&r);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <Rec as GetSchema>::root_value(buf.len() as u64);
         let s = format_value(&ctx, &root);
         assert_eq!(s, "{\"id\": 42, \"name\": \"hello\"}");
@@ -269,7 +269,7 @@ mod tests {
             ],
         };
         let buf = mmapstruct::write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecFile as GetSchema>::root_value(buf.len() as u64);
         let items_val = ctx.field_get(&root, "items").unwrap();
         let s = format_value(&ctx, &items_val);
@@ -301,7 +301,7 @@ mod tests {
         ];
         let w = RecFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecFile as GetSchema>::root_value(buf.len() as u64);
         let result = query_from("/items[?id>3]", &ctx, &root).unwrap();
         let mut out = String::new();

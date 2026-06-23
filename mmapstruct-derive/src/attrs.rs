@@ -115,10 +115,11 @@ pub(crate) fn parse_hashmap_attrs(attrs: &[syn::Attribute]) -> (Option<HashMapLa
     (key, val)
 }
 
-pub(crate) fn parse_mmap_attrs(attrs: &[syn::Attribute]) -> (bool, bool, Option<usize>) {
+pub(crate) fn parse_mmap_attrs(attrs: &[syn::Attribute]) -> (bool, bool, Option<usize>, bool) {
     let mut byref = false;
     let mut dedup = false;
     let mut inline_size = None;
+    let mut is_bool = false;
     for attr in attrs {
         if !attr.path().is_ident("mmap") {
             continue;
@@ -134,6 +135,9 @@ pub(crate) fn parse_mmap_attrs(attrs: &[syn::Attribute]) -> (bool, bool, Option<
                     if p.is_ident("dedup") {
                         dedup = true;
                     }
+                    if p.is_ident("bool") {
+                        is_bool = true;
+                    }
                 }
                 if let Meta::List(list) = meta {
                     if list.path.is_ident("inline") {
@@ -148,8 +152,11 @@ pub(crate) fn parse_mmap_attrs(attrs: &[syn::Attribute]) -> (bool, bool, Option<
                 if p.is_ident("byref") {
                     byref = true;
                 }
+                if p.is_ident("bool") {
+                    is_bool = true;
+                }
             }
         }
     }
-    (byref, dedup, inline_size)
+    (byref, dedup, inline_size, is_bool)
 }

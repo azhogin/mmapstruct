@@ -313,18 +313,43 @@ fn build_field_schema(
     for fi in fields.iter() {
         let vt_name = format_ident!("__mmap_VT_{}_{}", prefix, fi.ident);
         if matches!(fi.category, FieldCategory::PodPrimitive) {
-            let ty_str = type_ident_name(&fi.ty).unwrap_or_default();
-            let canonical = primitive_vt_ref(&ty_str)
-                .expect("PodPrimitive must have a canonical VT_* ref");
-            field_refs.push(canonical);
+            if fi.is_mmap_bool {
+                field_refs.push(quote! { &::mmapstruct::schema::VT_BOOL });
+            } else {
+                let ty_str = type_ident_name(&fi.ty).unwrap_or_default();
+                let canonical = primitive_vt_ref(&ty_str)
+                    .expect("PodPrimitive must have a canonical VT_* ref");
+                field_refs.push(canonical);
+            }
         } else if matches!(fi.category, FieldCategory::DynamicString) {
-            field_refs.push(quote! { &::mmapstruct::schema::VT_STR_DYNAMIC });
+            if fi.has_byref_attr {
+                let inner = quote! { &::mmapstruct::schema::VT_STR_DYNAMIC };
+                value_type_statics.push(quote! {
+                    #[allow(non_upper_case_globals)]
+                    static #vt_name: ::mmapstruct::schema::DynValueType = ::mmapstruct::schema::DynValueType::ByRef(#inner);
+                });
+                field_refs.push(quote! { &#vt_name });
+            } else {
+                field_refs.push(quote! { &::mmapstruct::schema::VT_STR_DYNAMIC });
+            }
         } else {
             let (vt_expr, extra) = field_value_type(prefix, fi, &fi.ident);
-            value_type_statics.push(quote! {
-                #[allow(non_upper_case_globals)]
-                static #vt_name: ::mmapstruct::schema::DynValueType = #vt_expr;
-            });
+            if fi.is_fixed_byref() {
+                let inner_name = format_ident!("__mmap_inner_{}", vt_name);
+                value_type_statics.push(quote! {
+                    #[allow(non_upper_case_globals)]
+                    static #inner_name: ::mmapstruct::schema::DynValueType = #vt_expr;
+                });
+                value_type_statics.push(quote! {
+                    #[allow(non_upper_case_globals)]
+                    static #vt_name: ::mmapstruct::schema::DynValueType = ::mmapstruct::schema::DynValueType::ByRef(&#inner_name);
+                });
+            } else {
+                value_type_statics.push(quote! {
+                    #[allow(non_upper_case_globals)]
+                    static #vt_name: ::mmapstruct::schema::DynValueType = #vt_expr;
+                });
+            }
             field_refs.push(quote! { &#vt_name });
             resolver_fns.extend(extra);
         }
@@ -341,7 +366,6 @@ fn build_field_schema(
                 Some(idx) => quote! { Some(#idx) },
                 None => quote! { None },
             };
-            let is_byref = fi.is_byref;
             let ref_expr = &field_refs[i];
             quote! {
                 ::mmapstruct::schema::FieldDescriptor {
@@ -349,7 +373,6 @@ fn build_field_schema(
                     offset_in_fixed: #off,
                     inline_dyn_index: #inline_dyn_idx_tok,
                     value_type: #ref_expr,
-                    is_byref: #is_byref,
                 }
             }
         })
@@ -456,7 +479,7 @@ fn variant_field_offset(fields: &[FieldInfo], fi: &FieldInfo) -> proc_macro2::To
             if let FieldCategory::InlineString { size } = &f.category {
                 offset += size;
             }
-        } else if f.is_byref {
+        } else if f.has_byref_attr {
             offset = align_offset(offset, 4);
             offset += 8;
         }
@@ -582,3 +605,5 @@ pub(crate) fn generate_enum_schema_impl(
         }
     }
 }
+
+

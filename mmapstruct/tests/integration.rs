@@ -1307,7 +1307,7 @@ fn test_strict_validation_fixed_array_bounds() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_schema_and_dyn_context() {
-    use mmapstruct::{write_to_buf_raw, DynContext, GetSchema};
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct SchemaTest {
@@ -1325,7 +1325,7 @@ fn test_schema_and_dyn_context() {
         label: "byref_val".to_string(),
     };
     let buf = write_to_buf_raw(&s);
-    let ctx = DynContext::new(&buf);
+    let ctx = SchemaCtx::new(&buf);
 
     let schema = <SchemaTest as GetSchema>::get_struct_schema();
     assert_eq!(schema.name, "SchemaTest");
@@ -1343,7 +1343,7 @@ fn test_schema_and_dyn_context() {
     // id field — pod primitive (u32)
     let id_field = &schema.fields[0];
     assert_eq!(id_field.name, "id");
-    assert!(!id_field.is_byref);
+    assert!(!matches!(id_field.value_type, mmapstruct::schema::DynValueType::ByRef(_)));
 
     // name field — dynamic string
     let name_field = &schema.fields[1];
@@ -1356,9 +1356,9 @@ fn test_schema_and_dyn_context() {
     // label field — byref
     let label_field = &schema.fields[3];
     assert_eq!(label_field.name, "label");
-    assert!(label_field.is_byref);
+    assert!(matches!(label_field.value_type, mmapstruct::schema::DynValueType::ByRef(_)));
 
-    // Read field values via DynContext
+    // Read field values via SchemaCtx
     let id_val = ctx.field_get(&root, "id").unwrap();
     assert_eq!(ctx.read_u32(&id_val), 42);
 
@@ -1379,7 +1379,7 @@ fn test_schema_and_dyn_context() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_pod_array_custom_struct_size() {
-    use mmapstruct::{write_to_buf_raw, DynContext, GetSchema};
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct VecPod3d {
@@ -1401,7 +1401,7 @@ fn test_dyn_pod_array_custom_struct_size() {
     ];
     let s = VecPod3d { points };
     let buf = write_to_buf_raw(&s);
-    let ctx = DynContext::new(&buf);
+    let ctx = SchemaCtx::new(&buf);
 
     let schema = <VecPod3d as GetSchema>::get_struct_schema();
     let root = <VecPod3d as GetSchema>::root_value(schema.header_size);
@@ -1409,7 +1409,7 @@ fn test_dyn_pod_array_custom_struct_size() {
     let field = ctx.field_get(&root, "points").unwrap();
     assert_eq!(ctx.array_len(&field), 2);
 
-    // Read individual fields of Point3d via DynContext::field_get
+    // Read individual fields of Point3d via SchemaCtx::field_get
     let p0 = ctx.array_get(&field, 0).unwrap();
     let x0 = ctx.field_get(&p0, "x").unwrap();
     assert_eq!(ctx.read_f32(&x0), 1.0);
@@ -1430,7 +1430,7 @@ fn test_dyn_pod_array_custom_struct_size() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_hashmap_access() {
-    use mmapstruct::{write_to_buf_raw, DynContext, GetSchema};
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
 
     #[derive(MmapStruct, Debug)]
     struct DynHashMapFile {
@@ -1443,7 +1443,7 @@ fn test_dyn_hashmap_access() {
     map.insert("gamma".into(), 3u32);
     let w = DynHashMapFile { map };
     let buf = write_to_buf_raw(&w);
-    let ctx = DynContext::new(&buf);
+    let ctx = SchemaCtx::new(&buf);
 
     let schema = <DynHashMapFile as GetSchema>::get_struct_schema();
     let root = <DynHashMapFile as GetSchema>::root_value(schema.header_size);
@@ -1951,4 +1951,80 @@ fn test_hashmap_key_with_option() {
         Some("third")
     );
     assert_eq!(result.get(&KeyWithOption { id: 99, tag: None }), None);
+}
+
+// ---------------------------------------------------------------------------
+// #[mmap(bool)] tests
+// ---------------------------------------------------------------------------
+
+#[derive(MmapStruct, Debug, PartialEq, Clone, Copy, Pod, Zeroable, Default)]
+#[repr(C)]
+struct BoolFile {
+    #[mmap(bool)]
+    enabled: u32,
+    id: u32,
+}
+
+#[test]
+fn test_bool_getter_setter() {
+    let mut b = BoolFile::default();
+    assert_eq!(b.enabled(), false);
+    assert_eq!(b.id, 0);
+
+    b.set_enabled(true);
+    assert_eq!(b.enabled(), true);
+    assert_eq!(b.enabled, 1);
+
+    b.set_enabled(false);
+    assert_eq!(b.enabled(), false);
+    assert_eq!(b.enabled, 0);
+}
+
+#[test]
+fn test_bool_write_read() {
+    let mut b = BoolFile::default();
+    b.id = 42;
+    b.set_enabled(true);
+    let buf = mmapstruct::write_to_buf(&b, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<BoolFile>();
+    assert_eq!(reader.id, 42);
+    assert_eq!(reader.enabled, 1);
+}
+
+#[derive(MmapStruct, Debug)]
+struct MixedBoolFile {
+    #[mmap(bool)]
+    enabled: u32,
+    name: String,
+}
+
+#[test]
+fn test_mixed_bool_write_read() {
+    let mut w = MixedBoolFile::default();
+    assert_eq!(w.enabled(), false);
+
+    w.set_enabled(true);
+    assert_eq!(w.enabled(), true);
+    w.name = "test".into();
+    let buf = mmapstruct::write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<MixedBoolFile>();
+    assert_eq!(*reader.enabled, 1);
+    assert_eq!(reader.name, "test");
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_bool_schema_dyn() {
+    use mmapstruct::schema::DynValueType;
+    use mmapstruct::GetSchema;
+
+    let schema = BoolFile::get_struct_schema();
+    let field = &schema.fields[0];
+    assert_eq!(field.name, "enabled");
+    assert!(matches!(field.value_type, DynValueType::Bool));
+
+    assert_eq!(mmapstruct::schema::dyn_value_size(&DynValueType::Bool), 4);
+    assert_eq!(mmapstruct::schema::dyn_value_align(&DynValueType::Bool), 4);
 }

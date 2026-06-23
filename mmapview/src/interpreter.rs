@@ -335,7 +335,7 @@ fn compare_values<'a, C: QueryContext<'a>>(
 mod tests {
     use super::*;
     use crate::query_from;
-    use mmapstruct::{DynContext, GetSchema, MmapStruct};
+    use mmapstruct::{SchemaCtx, GetSchema, MmapStruct};
 
     #[derive(MmapStruct, Debug)]
     #[mmap(scope)]
@@ -351,7 +351,7 @@ mod tests {
             name: "hello".into(),
         };
         let buf = mmapstruct::write_to_buf_raw(&r);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <Record as GetSchema>::root_value(buf.len() as u64);
         let result = query_from("/name", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1);
@@ -368,7 +368,7 @@ mod tests {
             name: "hello".into(),
         };
         let buf = mmapstruct::write_to_buf_raw(&r);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <Record as GetSchema>::root_value(buf.len() as u64);
         let result = query_from("/", &ctx, &root).unwrap();
         assert_eq!(result.len(), 1);
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_negative_float_filter() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -418,7 +418,7 @@ mod tests {
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         // Filter: x > -1.5 (negative float comparison)
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_leading_dot_float_filter() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -468,7 +468,7 @@ mod tests {
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         // Filter: x > .75 (leading-dot float)
@@ -504,7 +504,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(ctx.data().len() as u64);
         let result = query_from("/items[?id>3]", &ctx, &root).unwrap();
         assert_eq!(result.len(), 2);
@@ -533,7 +533,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(ctx.data().len() as u64);
         let result = query_from("/items[?name~sensor]", &ctx, &root).unwrap();
         assert_eq!(result.len(), 2);
@@ -562,7 +562,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(ctx.data().len() as u64);
         let result = query_from("/items[?id>3]", &ctx, &root).unwrap();
         assert_eq!(result.len(), 2);
@@ -591,7 +591,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(ctx.data().len() as u64);
         let result = query_from("/items[?name~sensor]", &ctx, &root).unwrap();
         assert_eq!(result.len(), 2);
@@ -620,7 +620,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = mmapstruct::write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(ctx.data().len() as u64);
         let result = query_from("/items[?name=target]", &ctx, &root).unwrap();
         assert_eq!(result.len(), 2);
@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn test_filter_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -666,7 +666,7 @@ mod tests {
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         // Filter: x > 3 (float literal comparison)
@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn test_field_access_pod_array_elements() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -724,7 +724,7 @@ mod tests {
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
 
         let schema = <VecPod3d as GetSchema>::get_struct_schema();
         let root = <VecPod3d as GetSchema>::root_value(schema.header_size);
@@ -751,7 +751,7 @@ mod tests {
 
     #[test]
     fn test_select_filter_pipe() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -781,7 +781,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         // Pipe items into select with name~sensor filter
@@ -804,7 +804,7 @@ mod tests {
 
     #[test]
     fn test_select_no_match() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -824,7 +824,7 @@ mod tests {
         }];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/items | select(.id>999)", &ctx, &root).unwrap();
@@ -837,7 +837,7 @@ mod tests {
 
     #[test]
     fn test_and_filter() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -867,7 +867,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         // AND: id>3 AND name~sensor
@@ -882,7 +882,7 @@ mod tests {
 
     #[test]
     fn test_or_filter() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -912,7 +912,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         // OR: id>3 OR name~sensor
@@ -922,7 +922,7 @@ mod tests {
 
     #[test]
     fn test_and_or_combined() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -956,7 +956,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         // (id>3 AND name~sensor) OR id=20
@@ -967,7 +967,7 @@ mod tests {
     #[test]
     fn test_and_filter_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1004,7 +1004,7 @@ mod tests {
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         // AND: x > 1 AND y < 6
@@ -1015,7 +1015,7 @@ mod tests {
     #[test]
     fn test_or_filter_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1052,7 +1052,7 @@ mod tests {
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         // OR: x > 3 OR x < 1
@@ -1062,7 +1062,7 @@ mod tests {
 
     #[test]
     fn test_select_and_filter() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1092,7 +1092,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         // select with AND
@@ -1111,7 +1111,7 @@ mod tests {
 
     #[test]
     fn test_count() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1141,7 +1141,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/items | count()", &ctx, &root).unwrap();
@@ -1151,7 +1151,7 @@ mod tests {
 
     #[test]
     fn test_avg() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1185,7 +1185,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/items | avg(.price)", &ctx, &root).unwrap();
@@ -1198,7 +1198,7 @@ mod tests {
 
     #[test]
     fn test_min() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1232,7 +1232,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/items | min(.price)", &ctx, &root).unwrap();
@@ -1245,7 +1245,7 @@ mod tests {
 
     #[test]
     fn test_max() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1279,7 +1279,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/items | max(.price)", &ctx, &root).unwrap();
@@ -1293,7 +1293,7 @@ mod tests {
     #[test]
     fn test_count_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1325,7 +1325,7 @@ mod tests {
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/points | count()", &ctx, &root).unwrap();
@@ -1335,7 +1335,7 @@ mod tests {
     #[test]
     fn test_avg_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1372,7 +1372,7 @@ mod tests {
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/points | avg(.x)", &ctx, &root).unwrap();
@@ -1385,7 +1385,7 @@ mod tests {
     #[test]
     fn test_min_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1422,7 +1422,7 @@ mod tests {
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/points | min(.x)", &ctx, &root).unwrap();
@@ -1435,7 +1435,7 @@ mod tests {
     #[test]
     fn test_max_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1472,7 +1472,7 @@ mod tests {
         ];
         let s = VecPod3d { points };
         let buf = write_to_buf_raw(&s);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <VecPod3d as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/points | max(.x)", &ctx, &root).unwrap();
@@ -1484,7 +1484,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_non_array_fails() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1498,7 +1498,7 @@ mod tests {
             _tag: "x".into(),
         };
         let buf = write_to_buf_raw(&r);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <Record as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/ | count()", &ctx, &root);
@@ -1510,7 +1510,7 @@ mod tests {
 
     #[test]
     fn test_format_aggregate_count() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1536,7 +1536,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/items | count()", &ctx, &root).unwrap();
@@ -1546,7 +1546,7 @@ mod tests {
 
     #[test]
     fn test_format_aggregate_avg() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1575,7 +1575,7 @@ mod tests {
         ];
         let w = RecordFile { items: records };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <RecordFile as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/items | avg(.price)", &ctx, &root).unwrap();
@@ -1589,7 +1589,7 @@ mod tests {
 
     #[test]
     fn test_option_byref_some_via_dsl() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         struct Doc {
@@ -1603,7 +1603,7 @@ mod tests {
             label: Some("hello".into()),
         };
         let buf = write_to_buf_raw(&d);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <Doc as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/label", &ctx, &root).unwrap();
@@ -1614,7 +1614,7 @@ mod tests {
 
     #[test]
     fn test_option_byref_none_via_dsl() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         struct Doc {
@@ -1628,7 +1628,7 @@ mod tests {
             label: None,
         };
         let buf = write_to_buf_raw(&d);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <Doc as GetSchema>::root_value(buf.len() as u64);
 
         let result = query_from("/label", &ctx, &root).unwrap();
@@ -1639,7 +1639,7 @@ mod tests {
 
     #[test]
     fn test_option_byref_none_in_struct_context() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug)]
         struct Doc {
@@ -1653,7 +1653,7 @@ mod tests {
             label: None,
         };
         let buf = write_to_buf_raw(&d);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <Doc as GetSchema>::root_value(buf.len() as u64);
         let s = crate::format_value(&ctx, &root);
         assert_eq!(s, r#"{"id": 99, "label": null}"#);
@@ -1663,7 +1663,7 @@ mod tests {
             label: Some("hello".into()),
         };
         let buf = write_to_buf_raw(&d);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <Doc as GetSchema>::root_value(buf.len() as u64);
         let s = crate::format_value(&ctx, &root);
         assert_eq!(s, r#"{"id": 42, "label": "hello"}"#);
@@ -1671,7 +1671,7 @@ mod tests {
 
     #[test]
     fn test_enum_schema_variant_a() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug, PartialEq)]
         enum MyEnum {
@@ -1681,7 +1681,7 @@ mod tests {
 
         let w = MyEnum::Alpha { id: 42 };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <MyEnum as GetSchema>::root_value(buf.len() as u64);
         let s = crate::format_value(&ctx, &root);
         assert_eq!(s, r#"MyEnum::Alpha { "id": 42 }"#);
@@ -1691,7 +1691,7 @@ mod tests {
             val: 99,
         };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <MyEnum as GetSchema>::root_value(buf.len() as u64);
         let s = crate::format_value(&ctx, &root);
         assert_eq!(s, r#"MyEnum::Beta { "name": "hello", "val": 99 }"#);
@@ -1699,7 +1699,7 @@ mod tests {
 
     #[test]
     fn test_enum_schema_variant_navigate() {
-        use mmapstruct::{write_to_buf_raw, DynContext, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
 
         #[derive(MmapStruct, Debug, PartialEq)]
         enum MyEnum {
@@ -1709,7 +1709,7 @@ mod tests {
 
         let w = MyEnum::Alpha { id: 7 };
         let buf = write_to_buf_raw(&w);
-        let ctx = DynContext::new(&buf);
+        let ctx = SchemaCtx::new(&buf);
         let root = <MyEnum as GetSchema>::root_value(buf.len() as u64);
 
         let (var_schema, _data_off) = ctx.enum_variant(&root).unwrap();

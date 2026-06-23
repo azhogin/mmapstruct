@@ -32,8 +32,65 @@ pub(crate) struct VarGen {
     pub(crate) is_tuple: bool,
 }
 
+/// Fast path for `#[repr(Int)]` enums with all unit variants.
+///
+/// Generates `MmapPod` + `LayoutHash` + `Default` + `bytemuck::{Pod, Zeroable}`
+/// (no reader/writer structs).  Does NOT generate `GetSchema` — user can provide
+/// their own schema mapping.
+fn handle_pod_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStream {
+    let name = &input.ident;
+
+    // Which integer repr was used (e.g. "u32", "u8").
+    let repr_name = find_repr_int(&input.attrs).expect("pod enum requires #[repr(Int)]");
+
+    // First variant is the default (zero discriminant = Zeroable).
+    let first_variant = de.variants.iter().next()
+        .expect("pod enum must have at least one variant").ident.clone();
+
+    // Byte string for the repr tag in the hash.
+    let repr_tag = format!("#[repr({})]", repr_name);
+
+    // Collect discriminants 0u64, 1u64, 2u64, ...
+    let variant_count = de.variants.len();
+    let mut disc_hashes = Vec::with_capacity(variant_count + 1);
+    disc_hashes.push(quote! { ::mmapstruct::traits::fnv1a(#repr_tag.as_bytes()) });
+    for disc in 0..variant_count {
+        let d = disc as u64;
+        disc_hashes.push(quote! { #d });
+    }
+
+    let output = quote! {
+        #[allow(unsafe_code)]
+        unsafe impl ::mmapstruct::bytemuck::Pod for #name {}
+        #[allow(unsafe_code)]
+        unsafe impl ::mmapstruct::bytemuck::Zeroable for #name {}
+
+        impl ::mmapstruct::traits::MmapPod for #name {}
+
+        impl Default for #name {
+            fn default() -> Self {
+                #name::#first_variant
+            }
+        }
+
+        impl ::mmapstruct::traits::LayoutHash for #name {
+            const HASH: u64 = ::mmapstruct::traits::combine_hashes(&[
+                #(#disc_hashes),*
+            ]);
+        }
+    };
+
+    output.into()
+}
+
 pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStream {
     let name = &input.ident;
+
+    // Fast path: #[repr(u32)] enum with all unit variants → MmapPod.
+    if de.variants.iter().all(|v| v.fields.is_empty()) && has_repr_int(&input.attrs) {
+        return handle_pod_enum(input, de);
+    }
+
     let reader_name = format_ident!("{}Reader", name);
 
     let mut vars = Vec::new();
@@ -70,30 +127,47 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             Fields::Named(f) => {
                 for field in f.named.iter() {
                     let category = classify_field(field);
-                    let (is_byref, dedup, _inline_size) = parse_mmap_attrs(&field.attrs);
+                    let (is_byref, dedup, _inline_size, is_bool) = parse_mmap_attrs(&field.attrs);
+
+                    if is_bool && !is_u32_type(&field.ty) {
+                        panic!("#[mmap(bool)] is only supported on u32 fields");
+                    }
+                    if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).map_or(false, |n| n == "bool") {
+                        panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
+                    }
 
                     all_fields.push(FieldInfo {
                         name: field.ident.as_ref().unwrap().to_string(),
                         ty: field.ty.clone(),
                         category,
-                        is_byref,
+                        has_byref_attr: is_byref,
                         dedup,
                         ident: field.ident.as_ref().unwrap().clone(),
+                        is_mmap_bool: is_bool,
                     });
                 }
             }
             Fields::Unnamed(f) => {
                 for (i, field) in f.unnamed.iter().enumerate() {
                     let category = classify_field(field);
-                    let (is_byref, dedup, _inline_size) = parse_mmap_attrs(&field.attrs);
+                    let (is_byref, dedup, _inline_size, is_bool) = parse_mmap_attrs(&field.attrs);
                     let ident = format_ident!("_{}", i);
+
+                    if is_bool && !is_u32_type(&field.ty) {
+                        panic!("#[mmap(bool)] is only supported on u32 fields");
+                    }
+                    if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).map_or(false, |n| n == "bool") {
+                        panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
+                    }
+
                     all_fields.push(FieldInfo {
                         name: i.to_string(),
                         ty: field.ty.clone(),
                         category,
-                        is_byref,
+                        has_byref_attr: is_byref,
                         dedup,
                         ident,
+                        is_mmap_bool: is_bool,
                     });
                 }
             }
@@ -115,7 +189,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                 if al > variant_data_align {
                     variant_data_align = al;
                 }
-            } else if fi.is_byref {
+            } else if fi.has_byref_attr {
                 if 4 > variant_data_align {
                     variant_data_align = 4;
                 }
@@ -141,7 +215,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             } else if let FieldCategory::InlineString { size } = &fi.category {
                 pod_layout.push((fi.name.clone(), fixed_offset, *size));
                 fixed_offset += size;
-            } else if fi.is_byref {
+            } else if fi.has_byref_attr {
                 fixed_offset = align_offset(fixed_offset, 4);
                 byref_layout.push((fi.name.clone(), fixed_offset));
                 fixed_offset += 8;
@@ -193,7 +267,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     .unwrap();
                 let expr = quote! { <String as ::mmapstruct::traits::MmapRead>::read(data, #rs + #off_val .. #rs + #off_val + #sz) };
                 if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
-            } else if fi.is_byref {
+            } else if fi.has_byref_attr {
                 let off = byref_layout
                     .iter()
                     .find(|(n, _)| *n == fi.name)
@@ -361,7 +435,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             let ty = &fi.ty;
             let base = quote! { <#ty as ::mmapstruct::traits::LayoutHash>::HASH };
 
-            if fi.is_byref {
+            if fi.is_fixed_byref() {
                 quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_BYREF, #base]) }
             } else {
                 match &fi.category {

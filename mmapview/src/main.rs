@@ -3,8 +3,8 @@ use std::path::Path;
 use std::process;
 
 use mmapstruct::traits::MmapRead;
-use mmapstruct_schema::context::{format_schema_value, SchemaDynContext, SchemaValue};
-use mmapstruct_schema::Schema;
+use mmapstruct_schema::context::RuntimeSchemaCtx;
+use mmapstruct_schema::{format_schema_value, Schema, SchemaValue};
 use mmapview::{query_from_generic, EvalResult};
 
 fn print_usage() {
@@ -150,7 +150,7 @@ fn main() {
     let schema_reader = <Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
-    let ctx = SchemaDynContext::new(&data, &schema_bytes);
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
     let root = SchemaValue::new(0, data.len() as u64, root_type);
 
     match query_from_generic(query, &ctx, &root) {

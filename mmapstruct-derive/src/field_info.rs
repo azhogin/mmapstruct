@@ -5,20 +5,24 @@ use syn::Fields;
 
 use crate::attrs::*;
 use crate::category::*;
+use crate::utils::*;
 
 #[derive(Clone)]
 pub(crate) struct FieldInfo {
     pub(crate) name: String,
     pub(crate) ty: syn::Type,
     pub(crate) category: FieldCategory,
-    pub(crate) is_byref: bool,
+    pub(crate) has_byref_attr: bool,
     pub(crate) dedup: bool,
     pub(crate) ident: proc_macro2::Ident,
+    pub(crate) is_mmap_bool: bool,
 }
 
 impl FieldInfo {
+    /// Byref stored as a fixed-section `ByRefRange` placeholder (standalone byref fields,
+    /// as opposed to `DynamicVecByRef` which stores ByRefRanges in an indexed array).
     pub(crate) fn is_fixed_byref(&self) -> bool {
-        self.is_byref && !matches!(&self.category, FieldCategory::DynamicVecByRef { .. })
+        self.has_byref_attr && !matches!(&self.category, FieldCategory::DynamicVecByRef { .. })
     }
 }
 
@@ -86,15 +90,27 @@ pub(crate) fn analyze_fields(fields: &syn::Fields) -> FieldAnalysis {
 
     for field in named_fields.iter() {
         let category = classify_field(field);
-        let (is_byref, dedup, _inline_size) = parse_mmap_attrs(&field.attrs);
+        let (is_byref, dedup, _inline_size, is_bool) = parse_mmap_attrs(&field.attrs);
+
+        // Validate #[mmap(bool)]
+        if is_bool {
+            if !is_u32_type(&field.ty) {
+                panic!("#[mmap(bool)] is only supported on u32 fields");
+            }
+        }
+        // Forbid bare bool type
+        if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).map_or(false, |n| n == "bool") {
+            panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
+        }
 
         all_fields.push(FieldInfo {
             name: field.ident.as_ref().unwrap().to_string(),
             ty: field.ty.clone(),
             category,
-            is_byref,
+            has_byref_attr: is_byref,
             dedup,
             ident: field.ident.as_ref().unwrap().clone(),
+            is_mmap_bool: is_bool,
         });
     }
 

@@ -14,7 +14,7 @@ pub(crate) fn generate_layout_hash_impl(
         let ty = &fi.ty;
         let base = quote! { <#ty as ::mmapstruct::traits::LayoutHash>::HASH };
 
-        if fi.is_byref {
+        if fi.is_fixed_byref() {
             quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_BYREF, #base]) }
         } else {
             match &fi.category {

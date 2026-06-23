@@ -29,6 +29,9 @@
 //! - **Production**: default features (zero overhead)
 //! - **Trusted input with safety margin**: `--features safe-strings`
 
+// Compile-time assertion: mmapstruct assumes 64-bit platform (usize == u64).
+const _: () = assert!(core::mem::size_of::<usize>() == 8);
+
 pub mod byref_array;
 pub mod file_reader;
 pub mod fixed_array;
@@ -50,7 +53,7 @@ pub use file_reader::{BufReader, MmapReader};
 pub use mmapstruct_derive::MmapStruct;
 #[cfg(feature = "dyn")]
 pub use schema::{
-    ArrayLayout, ArraySchema, DynContext, DynValueType, FieldDescriptor, GetSchema, StructSchema,
+    ArrayLayout, ArraySchema, SchemaCtx, DynValueType, FieldDescriptor, GetSchema, StructSchema,
     Value,
 };
 pub use traits::{

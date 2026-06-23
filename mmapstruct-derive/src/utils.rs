@@ -28,6 +28,10 @@ pub(crate) fn is_primitive_pod(ty: &Type) -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) fn is_u32_type(ty: &Type) -> bool {
+    type_ident_name(ty).map(|n| n == "u32").unwrap_or(false)
+}
+
 pub(crate) fn is_string_type(ty: &Type) -> bool {
     type_ident_name(ty).map(|n| n == "String").unwrap_or(false)
 }
@@ -103,4 +107,32 @@ pub(crate) fn type_align_expr(ty: &Type) -> proc_macro2::TokenStream {
     } else {
         quote! { { let a = ::std::mem::align_of::<#ty>(); if a > 8 { 8usize } else if a == 0 { 1usize } else { a } } }
     }
+}
+
+/// Find a `#[repr(u32)]` or similar integer repr in the attribute list.
+/// Returns `Some("u32")` with the specific repr name, or `None`.
+pub(crate) fn find_repr_int(attrs: &[syn::Attribute]) -> Option<&'static str> {
+    static REPR_INTS: &[&str] = &["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"];
+    for attr in attrs {
+        if !attr.path().is_ident("repr") {
+            continue;
+        }
+        let Ok(list) = attr.parse_args_with(
+            syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
+        ) else {
+            continue;
+        };
+        for ident in &list {
+            let name = ident.to_string();
+            if let Some(&found) = REPR_INTS.iter().find(|&&s| s == name) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+/// Convenience: check only whether any integer repr exists.
+pub(crate) fn has_repr_int(attrs: &[syn::Attribute]) -> bool {
+    find_repr_int(attrs).is_some()
 }
