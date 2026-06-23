@@ -1,3 +1,3 @@
 [workspace]
-members = ["mmapstruct", "mmapstruct-derive", "mmapview", "mmapview-http", "mmapstruct-schema", "mmapstruct-schemagen"]
+members = ["mmapstruct", "mmapstruct-derive", "mmapview", "mmapview-http", "mmapview-tui", "mmapstruct-schema", "mmapstruct-schemagen"]
 resolver = "2"

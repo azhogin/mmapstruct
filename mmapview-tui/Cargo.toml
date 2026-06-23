@@ -1,0 +1,16 @@
+[package]
+name = "mmapview-tui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratatui = "0.28"
+crossterm = "0.28"
+mmapstruct = { path = "../mmapstruct", features = ["dyn"] }
+mmapstruct-schema = { path = "../mmapstruct-schema" }
+mmapview = { path = "../mmapview" }
+bytemuck = { version = "1", features = ["derive"] }
+
+[[bin]]
+name = "mmapview-tui"
+path = "src/main.rs"

@@ -2,8 +2,6 @@
 //!
 //! Designed for use as an F3 external viewer in Total Commander / Midnight Commander.
 
-use mmapstruct::BufReader;
-
 /// Options for tree formatting.
 #[derive(Clone)]
 pub struct TreeOptions {
@@ -19,40 +17,9 @@ impl Default for TreeOptions {
     }
 }
 
-/// Result of loading a data file: embedded schema bytes and the payload range.
-pub struct SchemaLoadResult {
-    pub schema_bytes: Vec<u8>,
-    pub payload_range: std::ops::Range<usize>,
-}
-
-/// Load embedded schema from a data buffer, falling back to registry.
-pub fn load_schema_for_data(data: &[u8]) -> Result<SchemaLoadResult, String> {
-    let reader = BufReader::new(data.to_vec());
-    if let Some(embedded) = reader.embedded_schema() {
-        let (payload, _, _, _) = mmapstruct::file_reader::parse_header(data);
-        let payload_start = payload.as_ptr() as usize - data.as_ptr() as usize;
-        return Ok(SchemaLoadResult {
-            schema_bytes: embedded.to_vec(),
-            payload_range: payload_start..payload_start + payload.len(),
-        });
-    }
-    let (payload, _schema, hash, _crc) = mmapstruct::file_reader::parse_header(data);
-    if let Some(h) = hash {
-        if let Some(s) = crate::registry::load_schema(h) {
-            let payload_start = payload.as_ptr() as usize - data.as_ptr() as usize;
-            return Ok(SchemaLoadResult {
-                schema_bytes: s,
-                payload_range: payload_start..payload_start + payload.len(),
-            });
-        }
-    }
-    Err(
-        "No embedded schema found and no schema in registry.\n\
-         Write the file with write_to_file_with_embedded_schema() or\n\
-         save the schema to ~/.config/mmapstruct/schemas/<layout_hash>.mms."
-            .to_string(),
-    )
-}
+// Re-export shared schema types for backward compatibility
+pub use crate::schema::SchemaResult as SchemaLoadResult;
+pub use crate::schema::resolve_schema as load_schema_for_data;
 
 /// Render the entire file as a tree string.
 pub fn format_file(data: &[u8], opts: &TreeOptions) -> Result<String, String> {
