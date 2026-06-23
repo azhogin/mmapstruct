@@ -296,7 +296,7 @@ fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
                 format!("\"{}\"", s)
             }
         }
-        TypeDefReader::Struct { .. } => "{ ... }".to_string(),
+        TypeDefReader::Struct { name, .. } => format!("{} {{ ... }}", name),
         TypeDefReader::Enum { .. } => {
             if let Some((variant_type_idx, _)) = ctx.enum_variant(val) {
                 let vt = ctx.type_reader(variant_type_idx);
