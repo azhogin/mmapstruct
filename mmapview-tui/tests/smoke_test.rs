@@ -24,7 +24,7 @@ fn test_build_tree() {
         loaded.payload_range.end as u64,
         root_type,
     );
-    let nodes = mmapview_tui::tree::build_tree(&ctx, &root, "Simple", 3);
+    let nodes = mmapview_tui::tree::build_tree(&ctx, &root, "Simple", 3, None);
     assert!(!nodes.is_empty(), "should have at least a root node");
     assert_eq!(nodes[0].depth, 0);
     assert_eq!(nodes[0].children.len(), 2);

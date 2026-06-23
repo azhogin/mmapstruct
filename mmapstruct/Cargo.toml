@@ -10,6 +10,7 @@ mmapstruct-derive = { path = "../mmapstruct-derive" }
 
 [dev-dependencies]
 tempfile = "3"
+mmapstruct-schema = { path = "../mmapstruct-schema" }
 
 [features]
 default = []

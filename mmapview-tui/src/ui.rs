@@ -12,10 +12,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let [list_area, status_area] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
 
-    let items: Vec<ListItem> = app
-        .visible
+    let height = list_area.height as usize;
+    let end = (app.scroll + height).min(app.visible.len());
+    let items: Vec<ListItem> = app.visible[app.scroll..end]
         .iter()
-        .skip(app.scroll)
         .map(|&node_idx| {
             let node = &app.nodes[node_idx];
             ListItem::new(node.line.clone())

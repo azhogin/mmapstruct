@@ -859,6 +859,7 @@ dependencies = [
  "bytemuck",
  "memmap2",
  "mmapstruct-derive",
+ "mmapstruct-schema",
  "tempfile",
 ]
 

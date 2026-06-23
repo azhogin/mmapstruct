@@ -3,30 +3,44 @@ use mmapstruct_schema::context::RuntimeSchemaCtx;
 use mmapstruct_schema::schema::{PrimitiveDef, TypeDefReader};
 use mmapstruct_schema::SchemaValue;
 
-/// A single node in the tree data structure.
+pub const WINDOW_SIZE: usize = 600;
+pub const MARGIN: usize = 150;
+
 #[derive(Clone)]
 pub struct TreeNode {
-    /// Pre-formatted display line (prefix + name + type + value).
     pub line: Line<'static>,
-    /// Nesting depth (0 = root).
     pub depth: usize,
-    /// Whether children are currently visible.
     pub expanded: bool,
-    /// Whether this node can have children (struct/enum/array/map).
     pub has_children: bool,
-    /// Index of parent node, or None for root.
-    #[allow(dead_code)]
     pub parent: Option<usize>,
-    /// Indices of direct child nodes in the flat list.
     pub children: Vec<usize>,
+    pub value: Option<SchemaValue>,
 }
 
-/// Build the full flat tree from a root schema value.
+/// State for one expanded array/map window.
+#[derive(Clone)]
+pub struct WindowState {
+    pub val_offset: u64,
+    pub val_type_idx: u32,
+    pub total: usize,
+    pub window_start: usize,
+    pub window_count: usize,
+    pub element_expanded: Vec<bool>,
+    pub expanded: bool,
+}
+
+impl WindowState {
+    pub fn matches_val(&self, val: &SchemaValue) -> bool {
+        self.val_offset == val.offset && self.val_type_idx == val.type_idx
+    }
+}
+
 pub fn build_tree(
     ctx: &RuntimeSchemaCtx,
     root: &SchemaValue,
     root_name: &str,
     depth_limit: usize,
+    window_state: Option<&WindowState>,
 ) -> Vec<TreeNode> {
     let mut nodes = Vec::new();
     nodes.push(TreeNode {
@@ -36,8 +50,9 @@ pub fn build_tree(
         has_children: true,
         parent: None,
         children: Vec::new(),
+        value: None,
     });
-    build_children(ctx, root, 0, &mut nodes, 1, depth_limit, "");
+    build_children(ctx, root, 0, &mut nodes, 1, depth_limit, "", window_state);
     nodes
 }
 
@@ -49,6 +64,7 @@ fn build_children(
     depth: usize,
     depth_limit: usize,
     prefix: &str,
+    window_state: Option<&WindowState>,
 ) {
     let t = ctx.type_reader(val.type_idx);
     match t {
@@ -68,9 +84,25 @@ fn build_children(
                 let Some(child_val) = child_val else { continue };
 
                 let has_grandchildren = type_can_expand(ctx, &child_val);
-                let expanded = depth < depth_limit && has_grandchildren;
+                let is_array = matches!(
+                    ctx.type_reader(child_val.type_idx),
+                    TypeDefReader::Array { .. } | TypeDefReader::HashMap { .. }
+                );
 
-                let line = build_node_line(prefix, connector, &field.name, ctx, &child_val, has_grandchildren, expanded);
+                let ws = if is_array {
+                    window_state.filter(|ws| ws.matches_val(&child_val))
+                } else {
+                    None
+                };
+                let expanded = if let Some(ws) = ws {
+                    ws.expanded
+                } else if is_array {
+                    false
+                } else {
+                    depth < depth_limit && has_grandchildren
+                };
+
+                let line = build_node_line(prefix, connector, field.name, ctx, &child_val, has_grandchildren, expanded);
                 let child_idx = nodes.len();
                 nodes[parent_idx].children.push(child_idx);
                 nodes.push(TreeNode {
@@ -80,9 +112,16 @@ fn build_children(
                     has_children: has_grandchildren,
                     parent: Some(parent_idx),
                     children: Vec::new(),
+                    value: if has_grandchildren { Some(child_val) } else { None },
                 });
 
-                    build_children(ctx, &child_val, child_idx, nodes, depth + 1, depth_limit, &child_prefix);
+                if expanded {
+                    if let Some(ws) = ws {
+                        build_array_window(ctx, &child_val, child_idx, nodes, depth + 1, &child_prefix, ws, depth_limit);
+                    } else {
+                        build_children(ctx, &child_val, child_idx, nodes, depth + 1, depth_limit, &child_prefix, window_state);
+                    }
+                }
             }
         }
 
@@ -105,9 +144,24 @@ fn build_children(
                         let Some(child_val) = child_val else { continue };
 
                         let has_grandchildren = type_can_expand(ctx, &child_val);
-                        let expanded = depth < depth_limit && has_grandchildren;
+                        let is_array = matches!(
+                            ctx.type_reader(child_val.type_idx),
+                            TypeDefReader::Array { .. } | TypeDefReader::HashMap { .. }
+                        );
+                        let ws = if is_array {
+                            window_state.filter(|ws| ws.matches_val(&child_val))
+                        } else {
+                            None
+                        };
+                        let expanded = if let Some(ws) = ws {
+                            ws.expanded
+                        } else if is_array {
+                            false
+                        } else {
+                            depth < depth_limit && has_grandchildren
+                        };
 
-                        let line = build_node_line(prefix, connector, &field.name, ctx, &child_val, has_grandchildren, expanded);
+                        let line = build_node_line(prefix, connector, field.name, ctx, &child_val, has_grandchildren, expanded);
                         let child_idx = nodes.len();
                         nodes[parent_idx].children.push(child_idx);
                         nodes.push(TreeNode {
@@ -117,104 +171,107 @@ fn build_children(
                             has_children: has_grandchildren,
                             parent: Some(parent_idx),
                             children: Vec::new(),
+                            value: if has_grandchildren { Some(child_val) } else { None },
                         });
 
-                            build_children(ctx, &child_val, child_idx, nodes, depth + 1, depth_limit, &child_prefix);
+                        if expanded {
+                            if let Some(ws) = ws {
+                                build_array_window(ctx, &child_val, child_idx, nodes, depth + 1, &child_prefix, ws, depth_limit);
+                            } else {
+                                build_children(ctx, &child_val, child_idx, nodes, depth + 1, depth_limit, &child_prefix, window_state);
+                            }
+                        }
                     }
                 }
             }
         }
 
-        TypeDefReader::Array { .. } => {
-            if val.limit as usize > ctx.data().len() {
-                return;
-            }
-            let len = ctx.array_len(val) as usize;
-            for i in 0..len {
-                let is_last = i + 1 == len;
-                let connector = if is_last { "└── " } else { "├── " };
-                let child_prefix = if is_last {
-                    format!("{}    ", prefix)
-                } else {
-                    format!("{}│   ", prefix)
-                };
-
-                if let Some(elem) = ctx.array_get(val, i as u64) {
-                    let has_grandchildren = type_can_expand(ctx, &elem);
-                    let expanded = depth < depth_limit && has_grandchildren;
-
-                    let name = format!("[{}]", i);
-                    let line = build_node_line(prefix, connector, &name, ctx, &elem, has_grandchildren, expanded);
-                    let child_idx = nodes.len();
-                    nodes[parent_idx].children.push(child_idx);
-                    nodes.push(TreeNode {
-                        line,
-                        depth,
-                        expanded,
-                        has_children: has_grandchildren,
-                        parent: Some(parent_idx),
-                        children: Vec::new(),
-                    });
-
-                        build_children(ctx, &elem, child_idx, nodes, depth + 1, depth_limit, &child_prefix);
-                }
-            }
-        }
-
-        TypeDefReader::HashMap { .. } => {
-            if val.limit as usize > ctx.data().len() {
-                return;
-            }
-            let len = ctx.hashmap_len(val);
-            for i in 0..len {
-                let is_last = i + 1 == len;
-                let connector = if is_last { "└── " } else { "├── " };
-                let child_prefix = if is_last {
-                    format!("{}    ", prefix)
-                } else {
-                    format!("{}│   ", prefix)
-                };
-
-                if let Some((key, entry_val)) = ctx.hashmap_get_index(val, i) {
-                    let key_text = inline_value_text(ctx, &key);
-                    let has_grandchildren = type_can_expand(ctx, &entry_val);
-                    let expanded = depth < depth_limit && has_grandchildren;
-
-                    let name = &key_text;
-                    let line = build_node_line(prefix, connector, name, ctx, &entry_val, has_grandchildren, expanded);
-                    let child_idx = nodes.len();
-                    nodes[parent_idx].children.push(child_idx);
-                    nodes.push(TreeNode {
-                        line,
-                        depth,
-                        expanded,
-                        has_children: has_grandchildren,
-                        parent: Some(parent_idx),
-                        children: Vec::new(),
-                    });
-
-                        build_children(ctx, &entry_val, child_idx, nodes, depth + 1, depth_limit, &child_prefix);
-                }
-            }
+        TypeDefReader::Array { .. } | TypeDefReader::HashMap { .. } => {
+            // Only reached when this node itself has a window_state.
+            // The container node was already created by the parent's struct/enum handler.
+            // This arm handles the case where the root itself is an array.
         }
 
         TypeDefReader::Option { inner_type } => {
             if val.offset < val.limit {
                 let inner_val = SchemaValue::new(val.offset, val.limit, **inner_type);
-                build_children(ctx, &inner_val, parent_idx, nodes, depth, depth_limit, prefix);
+                build_children(ctx, &inner_val, parent_idx, nodes, depth, depth_limit, prefix, window_state);
             }
         }
 
         TypeDefReader::ByRef { inner_type } => {
             let inner_val = SchemaValue::new(val.offset, val.limit, **inner_type);
-            build_children(ctx, &inner_val, parent_idx, nodes, depth, depth_limit, prefix);
+            build_children(ctx, &inner_val, parent_idx, nodes, depth, depth_limit, prefix, window_state);
         }
 
         _ => {}
     }
 }
 
-/// Build the display line for a single tree node.
+fn build_array_window(
+    ctx: &RuntimeSchemaCtx,
+    val: &SchemaValue,
+    parent_idx: usize,
+    nodes: &mut Vec<TreeNode>,
+    depth: usize,
+    prefix: &str,
+    ws: &WindowState,
+    depth_limit: usize,
+) {
+    let total = ws.total;
+    let win_start = ws.window_start;
+    let win_end = (win_start + ws.window_count).min(total);
+
+    let is_array = matches!(ctx.type_reader(val.type_idx), TypeDefReader::Array { .. });
+
+    for i in win_start..win_end {
+        let is_last = i + 1 == total;
+        let connector = if is_last { "└── " } else { "├── " };
+        let child_prefix = if is_last {
+            format!("{}    ", prefix)
+        } else {
+            format!("{}│   ", prefix)
+        };
+
+        let elem = if is_array {
+            ctx.array_get(val, i as u64)
+        } else {
+            ctx.hashmap_get_index(val, i).map(|(_key, entry)| entry)
+        };
+        let Some(elem_val) = elem else { continue };
+
+        let local_idx = i - win_start;
+        let elem_expanded = local_idx < ws.element_expanded.len() && ws.element_expanded[local_idx];
+        let has_grandchildren = type_can_expand(ctx, &elem_val);
+
+        let name = if is_array {
+            format!("[{}]", i)
+        } else {
+            if let Some((key, _)) = ctx.hashmap_get_index(val, i) {
+                inline_value_text(ctx, &key)
+            } else {
+                format!("[{}]", i)
+            }
+        };
+        let line = build_node_line(prefix, connector, &name, ctx, &elem_val, has_grandchildren, elem_expanded);
+        let child_idx = nodes.len();
+        nodes[parent_idx].children.push(child_idx);
+        nodes.push(TreeNode {
+            line,
+            depth,
+            expanded: elem_expanded,
+            has_children: has_grandchildren,
+            parent: Some(parent_idx),
+            children: Vec::new(),
+            value: if has_grandchildren { Some(elem_val) } else { None },
+        });
+
+        if elem_expanded {
+            build_children(ctx, &elem_val, child_idx, nodes, depth + 1, depth_limit, &child_prefix, None);
+        }
+    }
+}
+
 fn build_node_line(
     prefix: &str,
     connector: &str,
@@ -227,14 +284,12 @@ fn build_node_line(
     let t = ctx.type_reader(val.type_idx);
     let type_ann = type_annotation(t);
     let inline = inline_value_text(ctx, val);
-    // connector is "├── " or "└── " — strip trailing space, add indicator
     let conn = connector.trim_end();
     let indicator = if !has_children { " " } else if expanded { "▼" } else { "▶" };
     let text = format!("{}{}{} {}{} = {}", prefix, conn, indicator, name, type_ann, inline);
     Line::from(text)
 }
 
-/// Text representation of a value's type annotation.
 fn type_annotation(t: &TypeDefReader) -> &'static str {
     match t {
         TypeDefReader::Primitive(p) => match p {
@@ -263,7 +318,6 @@ fn type_annotation(t: &TypeDefReader) -> &'static str {
     }
 }
 
-/// Single-line text representation of a value.
 fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
     let t = ctx.type_reader(val.type_idx);
     match t {
@@ -339,7 +393,6 @@ fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
     }
 }
 
-/// Whether a type can have expandable children.
 fn type_can_expand(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> bool {
     let t = ctx.type_reader(val.type_idx);
     match t {
