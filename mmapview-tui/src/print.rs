@@ -168,12 +168,27 @@ pub fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
         }
         TypeDefReader::Array { elem_type: _, layout } => {
             if val.mmap_end as usize <= ctx.data().len() {
+                let len = ctx.array_len(val);
                 let layout_label = match layout {
                     ArrayLayoutDefReader::Pod { .. } => "pod",
                     ArrayLayoutDefReader::Indexed => "indexed",
                     ArrayLayoutDefReader::Fixed { .. } => "fixed",
                 };
-                format!("[{} {}]", ctx.array_len(val), layout_label)
+                let mut s = format!("[{} {}]", len, layout_label);
+                // Pod arrays with ≤ 5 elements show inline values
+                if len <= 5 {
+                    if let ArrayLayoutDefReader::Pod { .. } = layout {
+                        s.push_str(" = [");
+                        for i in 0..len {
+                            if i > 0 { s.push_str(", "); }
+                            if let Some(elem) = ctx.array_get(val, i) {
+                                s.push_str(&inline_value_text(ctx, &elem));
+                            }
+                        }
+                        s.push(']');
+                    }
+                }
+                s
             } else {
                 "[?]".to_string()
             }
