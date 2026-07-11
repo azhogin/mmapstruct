@@ -99,7 +99,6 @@ impl App {
                 self.overscan = overscan;
                 self.viewport = viewport;
             }
-            // TODO: else we need to move cursor to the file end (?)
         }
     }
 
@@ -114,6 +113,8 @@ impl App {
         }
     }
 
+    /// Navigate one page up. Moves selection up by one display height.
+    /// Loads a prior overscan segment via BottomUpJoiner if needed.
     pub fn navigate_page_up(&mut self) {
         let page_size = self.viewport.display_height;
         let (target, remaining) = self.overscan.nth_visible_backward(self.viewport.selected, page_size);
@@ -134,6 +135,8 @@ impl App {
         }
     }
 
+    /// Navigate one page down. Moves selection down by one display height.
+    /// Loads a subsequent overscan segment via TopDownJoiner if needed.
     pub fn navigate_page_down(&mut self) {
         let page_size = self.viewport.display_height;
         let (target, remaining) = self.overscan.nth_visible_forward(self.viewport.selected, page_size);
@@ -150,10 +153,12 @@ impl App {
                 self.overscan = overscan;
                 self.viewport = viewport;
             }
-            // TODO: else we need to move cursor to the file end (?)
         }
     }
 
+    /// Navigate to the first visible line. If already at the beginning of
+    /// the current overscan, jumps to viewport top. Otherwise rebuilds the
+    /// overscan from root via `from_next`, preserving expansion state.
     pub fn navigate_home(&mut self) {
         if self.overscan.scanner.path.is_file_begin() {
             self.viewport.selected = 0;
@@ -170,6 +175,12 @@ impl App {
         self.viewport.scroll = 0;
     }
 
+    /// Navigate to the last visible line. Uses `cursor.end` or
+    /// `effective_end_stack` to locate the data boundary, then finds the
+    /// structural last visible element via `last_visible_path` and builds
+    /// a new overscan from `OVERSCAN_STEPS` lines before it.
+    /// If no end marker exists (all data fits in one overscan), positions
+    /// the viewport at `last_visible()` directly.
     pub fn navigate_end(&mut self) {
         let end_path = match self.overscan.cursor.end.clone()
             .or_else(|| self.overscan.cursor.effective_end_stack.last().cloned())

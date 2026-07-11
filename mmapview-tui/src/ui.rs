@@ -34,7 +34,26 @@ pub fn draw_viewport(frame: &mut Frame, viewport: &Viewport, overscan: &Overscan
             } else {
                 "\u{25b6}"
             };
-            let content = format!("{}{} {}", indent, arrow, node.display_text);
+
+            // Show inline preview for collapsed containers
+            let display_text = if node.has_children {
+                let prefix_len = indent.len() + 1 + 1; // indent + arrow + space
+                let char_limit = list_area.width.saturating_sub(prefix_len as u16) as usize;
+                if char_limit > 10 {
+                    let parent = node.parent_val.map(|pv| {
+                        let idx = node.shift.map(|s| s.index()).unwrap_or(0);
+                        (pv, idx)
+                    });
+                    overscan.scanner.format_preview_text(&node.value, parent, char_limit)
+                        .unwrap_or_else(|| node.display_text.clone())
+                } else {
+                    node.display_text.clone()
+                }
+            } else {
+                node.display_text.clone()
+            };
+
+            let content = format!("{}{} {}", indent, arrow, display_text);
             items.push(ListItem::new(content));
         }
 
@@ -65,10 +84,15 @@ pub fn draw_viewport(frame: &mut Frame, viewport: &Viewport, overscan: &Overscan
 
     frame.render_stateful_widget(list, list_area, &mut state);
 
-    // Status bar
+    // Status bar — debug info only in debug builds
+    let debug_info = if cfg!(debug_assertions) {
+        format!("sel={} scroll={} nodes={}  ", viewport.selected, viewport.scroll, overscan.nodes.len())
+    } else {
+        String::new()
+    };
     let status = format!(
-        "sel={} scroll={} nodes={}  q quit  \u{2191}\u{2193} navigate  Space expand",
-        viewport.selected, viewport.scroll, overscan.nodes.len(),
+        "{}q quit  \u{2191}\u{2193} navigate  Space expand",
+        debug_info,
     );
     let status_line = Line::from(Span::raw(status));
     frame.render_widget(status_line, status_area);
