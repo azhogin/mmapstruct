@@ -366,6 +366,64 @@ fn test_schema_context_array() {
 }
 
 #[test]
+fn test_schema_context_fixed_array() {
+    use mmapstruct_schema::RuntimeSchemaCtx;
+    use mmapstruct_schema::SchemaValue;
+
+    #[derive(MmapStruct, Debug)]
+    struct FixedItem {
+        id: u64,
+        #[mmap(byref, dedup)]
+        name: String,
+    }
+
+    #[derive(MmapStruct, Debug)]
+    struct FixedFile {
+        #[fixed]
+        items: Vec<FixedItem>,
+    }
+
+    let w = FixedFile {
+        items: vec![
+            FixedItem { id: 10, name: "alpha".into() },
+            FixedItem { id: 20, name: "beta".into() },
+            FixedItem { id: 30, name: "alpha".into() },
+        ],
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<FixedFile>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let items = ctx.field_get(&root, "items").unwrap();
+    assert_eq!(ctx.array_len(&items), 3);
+
+    let elem0 = ctx.array_get(&items, 0).unwrap();
+    let id0 = ctx.field_get(&elem0, "id").unwrap();
+    assert_eq!(ctx.read_u64(&id0), 10);
+    let name0 = ctx.field_get(&elem0, "name").unwrap();
+    assert_eq!(ctx.read_str(&name0), "alpha");
+
+    let elem1 = ctx.array_get(&items, 1).unwrap();
+    let name1 = ctx.field_get(&elem1, "name").unwrap();
+    assert_eq!(ctx.read_str(&name1), "beta");
+
+    let elem2 = ctx.array_get(&items, 2).unwrap();
+    let id2 = ctx.field_get(&elem2, "id").unwrap();
+    assert_eq!(ctx.read_u64(&id2), 30);
+    let name2 = ctx.field_get(&elem2, "name").unwrap();
+    assert_eq!(ctx.read_str(&name2), "alpha");
+}
+
+#[test]
 fn test_schema_context_read_as() {
     use mmapstruct_schema::RuntimeSchemaCtx;
     use mmapstruct_schema::SchemaValue;

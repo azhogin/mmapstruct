@@ -23,12 +23,12 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                     let count = unsafe { mmap_read_pod::<u64>(&self.data[arr_range.start..arr_range.start + 8]) } as u64;
                     count
                 }
-                ArrayLayoutDefReader::Fixed { stride } => {
-                    let sz = **stride as usize;
-                    if sz == 0 {
+                ArrayLayoutDefReader::Fixed { .. } => {
+                    if arr_range.len() < 8 {
                         return 0;
                     }
-                    (arr_range.len() / sz) as u64
+                    let count = unsafe { mmap_read_pod::<u64>(&self.data[arr_range.start..arr_range.start + 8]) } as u64;
+                    count
                 }
             }
         } else {
@@ -68,7 +68,7 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                 }
                 ArrayLayoutDefReader::Fixed { stride } => {
                     let sz = **stride as usize;
-                    let off = arr_range.start + index as usize * sz;
+                    let off = arr_range.start + 16 + index as usize * sz;
                     let limit = off + sz;
                     (off as u64, limit as u64)
                 }

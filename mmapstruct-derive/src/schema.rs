@@ -94,8 +94,11 @@ fn field_value_type(
                 let stride_expr = type_size_expr(inner);
                 quote! { ::mmapstruct::schema::ArrayLayout::Pod { stride: #stride_expr as u64 } }
             } else if *elem_fixed {
-                let stride_expr = type_size_expr(inner);
-                quote! { ::mmapstruct::schema::ArrayLayout::Fixed { stride: #stride_expr as u64 } }
+                // Fixed array stride = element's binary fixed-section size,
+                // NOT size_of::<T>() (which includes Rust overhead like String ptr/cap/len).
+                let inner_name = type_ident_name(inner).expect("fixed array element must have a type name");
+                let fs_ident = format_ident!("__MMAP_FS_{}", inner_name);
+                quote! { ::mmapstruct::schema::ArrayLayout::Fixed { stride: #fs_ident as u64 } }
             } else {
                 quote! { ::mmapstruct::schema::ArrayLayout::Indexed }
             };

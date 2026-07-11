@@ -123,8 +123,8 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                         _ => unreachable!(),
                     };
                     return Some((i, SchemaValue {
-                        mmap_begin: byref.begin as u64,
-                        mmap_end: byref.end as u64,
+                        mmap_begin: root.mmap_begin + byref.begin as u64,
+                        mmap_end: root.mmap_begin + byref.end as u64,
                         type_idx: inner,
                     }));
                 }
