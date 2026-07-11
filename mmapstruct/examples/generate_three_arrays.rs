@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 
 use mmapstruct::MmapStruct;
 
-// ── Pod element: pure scalars ──
+// ── Pod element ──
 
 #[derive(MmapStruct, Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C, packed)]
@@ -15,13 +15,7 @@ struct PodPoint {
     z: f32,
 }
 
-#[derive(MmapStruct, Debug)]
-struct PodSection {
-    #[pod]
-    points: Vec<PodPoint>,
-}
-
-// ── Fixed element: pod + byref string (no inline-dynamic fields) ──
+// ── Fixed element (only pod + byref, no inline-dynamic) ──
 
 #[derive(MmapStruct, Debug)]
 struct FixedRecord {
@@ -30,13 +24,7 @@ struct FixedRecord {
     bucket: String,
 }
 
-#[derive(MmapStruct, Debug)]
-struct FixedSection {
-    #[fixed]
-    items: Vec<FixedRecord>,
-}
-
-// ── Indexed element: same pod + byref, plus Vec<u8> to force indexed layout ──
+// ── Indexed element (adds Vec<u8> to force indexed layout) ──
 
 #[derive(MmapStruct, Debug)]
 struct IndexedRecord {
@@ -46,12 +34,16 @@ struct IndexedRecord {
     extra: Vec<u8>,
 }
 
-#[derive(MmapStruct, Debug)]
-struct IndexedSection {
-    items: Vec<IndexedRecord>,
-}
+// ── Root struct with all three arrays ──
 
-// ── Helpers ──
+#[derive(MmapStruct, Debug)]
+struct ThreeArrays {
+    #[pod]
+    pod_points: Vec<PodPoint>,
+    #[fixed]
+    fixed_items: Vec<FixedRecord>,
+    indexed_items: Vec<IndexedRecord>,
+}
 
 fn format_bytes(n: u64) -> String {
     if n >= 1_048_576 {
@@ -67,93 +59,66 @@ fn main() {
     let count = 1_000_000;
     let buckets = ["alpha", "beta", "gamma", "delta", "epsilon"];
 
-    // ── Pod ──
-    let pod = PodSection {
-        points: (0..count)
-            .map(|i| {
-                let t = i as f32 * 0.001;
-                PodPoint {
-                    id: i as u64,
-                    x: (t * 2.0).sin(),
-                    y: (t * 3.0).cos(),
-                    z: (t * 5.0).sin() * (t * 7.0).cos(),
-                }
-            })
-            .collect(),
-    };
-    let pod_buf = mmapstruct_schema::write_to_file_with_embedded_schema(&pod, false);
-    let pod_path = PathBuf::from("/tmp/pod_array.mms");
-    fs::write(&pod_path, &pod_buf).expect("write file");
+    let pod_points: Vec<PodPoint> = (0..count)
+        .map(|i| {
+            let t = i as f32 * 0.001;
+            PodPoint {
+                id: i as u64,
+                x: (t * 2.0).sin(),
+                y: (t * 3.0).cos(),
+                z: (t * 5.0).sin() * (t * 7.0).cos(),
+            }
+        })
+        .collect();
 
-    // ── Fixed ──
-    let fixed = FixedSection {
-        items: (0..count)
-            .map(|i| FixedRecord {
+    let fixed_items: Vec<FixedRecord> = (0..count)
+        .map(|i| FixedRecord {
+            id: i as u64,
+            bucket: buckets[i % buckets.len()].to_string(),
+        })
+        .collect();
+
+    let indexed_items: Vec<IndexedRecord> = (0..count)
+        .map(|i| {
+            let extra_len = i % 100;
+            IndexedRecord {
                 id: i as u64,
                 bucket: buckets[i % buckets.len()].to_string(),
-            })
-            .collect(),
+                extra: (0..extra_len as u8).collect(),
+            }
+        })
+        .collect();
+
+    let root = ThreeArrays {
+        pod_points,
+        fixed_items,
+        indexed_items,
     };
-    let fixed_buf = mmapstruct_schema::write_to_file_with_embedded_schema(&fixed, false);
-    let fixed_path = PathBuf::from("/tmp/fixed_array.mms");
-    fs::write(&fixed_path, &fixed_buf).expect("write file");
 
-    // ── Indexed ──
-    let indexed = IndexedSection {
-        items: (0..count)
-            .map(|i| {
-                let extra_len = i % 100;
-                IndexedRecord {
-                    id: i as u64,
-                    bucket: buckets[i % buckets.len()].to_string(),
-                    extra: (0..extra_len as u8).collect(),
-                }
-            })
-            .collect(),
-    };
-    let indexed_buf = mmapstruct_schema::write_to_file_with_embedded_schema(&indexed, false);
-    let indexed_path = PathBuf::from("/tmp/indexed_array.mms");
-    fs::write(&indexed_path, &indexed_buf).expect("write file");
+    let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&root, false);
+    let path = PathBuf::from("/tmp/three_arrays.mms");
+    fs::write(&path, &buf).expect("write file");
 
-    // ── Stats ──
-    let pod_size = pod_buf.len() as u64;
-    let fixed_size = fixed_buf.len() as u64;
-    let indexed_size = indexed_buf.len() as u64;
+    let file_size = buf.len() as u64;
 
-    println!("Generated 3 files with {count} elements each.");
+    // Expected payload bytes (element fixed-section sizes, no overhead)
+    let pod_payload = count as u64 * size_of::<PodPoint>() as u64;  // 20
+    let fixed_payload = count as u64 * 16;  // id(8) + ByRefRange(8)
+    // IndexedRecord fixed section = 16 B, but each has avg 49.5 B of extra + 8 B offset table + ...
+    let indexed_fixed = count as u64 * 16;
+
+    let overhead = file_size - pod_payload - fixed_payload - indexed_fixed;
+
+    println!("Written 3 arrays × {count} elements to {}", path.display());
     println!("bucket cycles through 5 short names → byref+dedup stores each only once.\n");
 
-    // Overhead = file size − raw fixed-section bytes of elements
-    let pod_elem = size_of::<PodPoint>() as u64; // 20 (packed)
-    let fixed_elem = 16u64; // id(8) + ByRefRange(8)
-    let indexed_elem = 16u64; // id(8) + ByRefRange(8)
-
-    let pod_overhead = pod_size - count as u64 * pod_elem;
-    let fixed_overhead = fixed_size - count as u64 * fixed_elem;
-    let indexed_overhead = indexed_size - count as u64 * indexed_elem;
-
-    println!("{:<14} {:>12} {:>12} {:>12} {:>14}",
-        "Section", "File size", "Overhead", "Bytes/elem", "Payload/elem");
-    println!("{:-<14} {:-<12} {:-<12} {:-<12} {:-<14}", "", "", "", "", "");
-
-    println!("{:<14} {:>12} {:>12} {:>11.1} B  {:>11.1} B",
-        "pod", format_bytes(pod_size), format_bytes(pod_overhead),
-        pod_size as f64 / count as f64,
-        pod_elem as f64);
-
-    println!("{:<14} {:>12} {:>12} {:>11.1} B  {:>11.1} B",
-        "fixed", format_bytes(fixed_size), format_bytes(fixed_overhead),
-        fixed_size as f64 / count as f64,
-        fixed_elem as f64);
-
-    println!("{:<14} {:>12} {:>12} {:>11.1} B  {:>11.1} B",
-        "indexed", format_bytes(indexed_size), format_bytes(indexed_overhead),
-        indexed_size as f64 / count as f64,
-        indexed_elem as f64);
-
+    println!("{:<30} {:>14}", "Total file size", format_bytes(file_size));
+    println!("{:<30} {:>14}", "Expected raw payload (all fixed sections)", format_bytes(pod_payload + fixed_payload + indexed_fixed));
+    println!("{:<30} {:>14}", "Overhead (schema + framing + postponed + extra)", format_bytes(overhead));
     println!();
-    println!("Overhead breakdown (header + schema + array framing + postponed):");
-    println!("  pod:     {oh:>12}  — dense pod-array, free of framing", oh = format_bytes(pod_overhead));
-    println!("  fixed:   {oh:>12}  — count+total_size(16) + postponed strings", oh = format_bytes(fixed_overhead));
-    println!("  indexed: {oh:>12}  — offset table + Vec<u8> per element + postponed", oh = format_bytes(indexed_overhead));
+    println!("Section payload estimates:");
+    println!("  {:12}  {:>12} ({:.0} B/elem)", "pod:", format_bytes(pod_payload), size_of::<PodPoint>());
+    println!("  {:12}  {:>12} (16 B/elem + dedup strings)", "fixed:", format_bytes(fixed_payload));
+    println!("  {:12}  {:>12} (16 B/elem + dedup strings + avg 49.5 B extra + offset table)",
+        "indexed:", format_bytes(indexed_fixed));
 }
