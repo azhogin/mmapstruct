@@ -7,6 +7,8 @@ use mmapstruct_schema::context::RuntimeSchemaCtx;
 use mmapstruct_schema::{format_schema_value, Schema, SchemaValue};
 use mmapview::{query_from_generic, EvalResult};
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  mmapview <data-file> <schema-file> <query>            DSL query mode");
@@ -24,6 +26,7 @@ fn print_usage() {
     eprintln!("  --max-array=N    Max array elements (default: 20)");
     eprintln!("  --max-string=N   Max string length (default: 80)");
     eprintln!("  --no-values      Show structure only");
+    eprintln!("  --version, -V    Print version");
     eprintln!();
     eprintln!("Query examples:");
     eprintln!("  mmapview data.mms schema.mms /");
@@ -36,12 +39,17 @@ fn print_usage() {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("mmapview v{}", VERSION);
+        return;
+    }
+
     if args.len() < 2 {
         print_usage();
         process::exit(1);
     }
 
-    if args[1] == "--help" || args[1] == "-h" {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
         print_usage();
         process::exit(0);
     }

@@ -6,7 +6,7 @@ use mmapstruct::traits::mmap_read_pod;
 impl<'a> super::RuntimeSchemaCtx<'a> {
     /// Number of entries in a HashMap value.
     pub fn hashmap_len(&self, val: &SchemaValue) -> usize {
-        let off = val.offset as usize;
+        let off = val.mmap_begin as usize;
         if off + 8 > self.data.len() {
             return 0;
         }
@@ -20,7 +20,7 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
         if index >= count {
             return None;
         }
-        let base = val.offset as usize;
+        let base = val.mmap_begin as usize;
         let ot_byte_size = (count + 1) * 4;
         let key_align = self.type_align(key_type) as usize;
         let val_align = self.type_align(val_type) as usize;

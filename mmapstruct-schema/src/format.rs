@@ -113,11 +113,11 @@ fn write_value_inner(
         }
         TypeDefReader::Option { inner_type: _ } => {
             // Convention from resolve_field_value: None → offset == limit
-            if val.offset < val.limit {
+            if val.mmap_begin < val.mmap_end {
                 let inner = ctx.unwrap_type(val.type_idx);
                 let inner_val = SchemaValue {
-                    offset: val.offset,
-                    limit: val.limit,
+                    mmap_begin: val.mmap_begin,
+                    mmap_end: val.mmap_end,
                     type_idx: inner,
                 };
                 out.push_str("Some(");
@@ -129,8 +129,8 @@ fn write_value_inner(
         }
         TypeDefReader::ByRef { inner_type } => {
             let inner_val = SchemaValue {
-                offset: val.offset,
-                limit: val.limit,
+                mmap_begin: val.mmap_begin,
+                mmap_end: val.mmap_end,
                 type_idx: **inner_type,
             };
             write_value(ctx, &inner_val, depth, out);

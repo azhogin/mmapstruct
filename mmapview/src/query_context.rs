@@ -87,7 +87,7 @@ impl<'a> QueryContext<'a> for RuntimeSchemaCtx<'a> {
     }
 
     fn read_str_opt(&self, val: &SchemaValue) -> Option<&'a str> {
-        if val.offset >= val.limit {
+        if val.mmap_begin >= val.mmap_end {
             None
         } else {
             Some(self.read_str(val))

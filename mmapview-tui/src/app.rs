@@ -1,289 +1,268 @@
-use crate::tree::{self, TreeNode, WindowState, WINDOW_SIZE, MARGIN};
-use mmapstruct_schema::context::RuntimeSchemaCtx;
+use crate::debug_log;
+use crate::joiner::{BottomUpJoiner, TopDownJoiner};
+use crate::overscan::Overscan;
+use crate::scanner::Scanner;
+use crate::viewport::Viewport;
 use mmapstruct_schema::SchemaValue;
+use std::collections::HashSet;
 
+/// Application state built on `Overscan` + `Viewport`.
 pub struct App {
-    pub nodes: Vec<TreeNode>,
-    pub visible: Vec<usize>,
-    pub selected: usize,
-    pub scroll: usize,
-    pub depth: usize,
+    pub overscan: Overscan,
+    pub viewport: Viewport,
     pub should_quit: bool,
-    pub ctx: &'static RuntimeSchemaCtx<'static>,
-    pub root_val: SchemaValue,
-    pub root_name: String,
-    pub window_state: Option<WindowState>,
+    pub term_height: usize,
 }
 
+const EXPAND_LIMIT: usize = 100;
+pub(crate) const OVERSCAN_STEPS: usize = 500;
+const EXTENDED_WINDOW_MULTIPLIER: usize = 10;
+
 impl App {
-    pub fn new(
-        nodes: Vec<TreeNode>,
-        depth: usize,
-        ctx: &'static RuntimeSchemaCtx<'static>,
-        root_val: SchemaValue,
-        root_name: String,
-    ) -> Self {
-        let visible = compute_visible(&nodes);
+    pub fn new(overscan: Overscan, term_height: usize) -> Self {
         App {
-            nodes,
-            visible,
-            selected: 0,
-            scroll: 0,
-            depth,
+            overscan,
+            viewport: Viewport {
+                selected: 0,
+                scroll: 0,
+                display_height: term_height.saturating_sub(1),
+            },
             should_quit: false,
-            ctx,
-            root_val,
-            root_name,
-            window_state: None,
+            term_height,
         }
     }
 
+    pub fn handle_resize(&mut self, h: usize) {
+        self.term_height = h;
+        self.viewport.display_height = h.saturating_sub(1);
+    }
+
+    /// Expand the currently selected node (if collapsable).
+    pub fn expand_selected(&mut self) {
+        let idx = self.viewport.selected;
+        if idx >= self.overscan.nodes.len() {
+            return;
+        }
+        let has_children = self.overscan.nodes[idx].has_children;
+        let expanded = self.overscan.nodes[idx].expanded;
+        if !has_children || expanded {
+            return;
+        }
+        let inserted = self.overscan.expand_node(idx, EXPAND_LIMIT);
+        self.viewport.fixup_for_insertion(idx, inserted);
+    }
+
+    /// Collapse the currently selected node.
+    pub fn collapse_selected(&mut self) {
+        let idx = self.viewport.selected;
+        if idx >= self.overscan.nodes.len() {
+            return;
+        }
+        let has_children = self.overscan.nodes[idx].has_children;
+        let expanded = self.overscan.nodes[idx].expanded;
+        if !has_children || !expanded {
+            return;
+        }
+        self.overscan.collapse_node(idx);
+    }
+
+    /// Navigate one line up.
     pub fn navigate_up(&mut self) {
-        if self.selected > 0 {
-            self.selected -= 1;
-            self.check_window_boundary();
+        if let Some(prev) = self.overscan.prev_visible(self.viewport.selected) {
+            self.viewport.selected = prev;
+            self.ensure_selected_visible();
+        } else if self.overscan.scanner.path.is_file_begin() {
+            // Already at file beginning — nothing to do
+        } else {
+            let overlap_lines = self.term_height * EXTENDED_WINDOW_MULTIPLIER / 3;
+            let (overscan, viewport) =
+                BottomUpJoiner::join(
+                    &self.overscan, overlap_lines, 1, self.viewport.display_height
+                );
+            self.overscan = overscan;
+            self.viewport = viewport;
         }
-        self.ensure_selected_visible();
     }
 
+    /// Navigate one line down.
     pub fn navigate_down(&mut self) {
-        if self.selected + 1 < self.visible.len() {
-            self.selected += 1;
-            self.check_window_boundary();
-        }
-        self.ensure_selected_visible();
-    }
-
-    pub fn navigate_page_up(&mut self) {
-        let page_size: usize = 20;
-        if self.selected >= page_size {
-            self.selected -= page_size;
+        if let Some(next) = self.overscan.next_visible(self.viewport.selected) {
+            self.viewport.selected = next;
+            self.ensure_selected_visible();
         } else {
-            self.selected = 0;
-        }
-        self.check_window_boundary();
-        self.ensure_selected_visible();
-    }
-
-    pub fn navigate_page_down(&mut self) {
-        let page_size: usize = 20;
-        let last = self.visible.len().saturating_sub(1);
-        self.selected = (self.selected + page_size).min(last);
-        self.check_window_boundary();
-        self.ensure_selected_visible();
-    }
-
-    pub fn toggle_expand(&mut self) {
-        if self.selected >= self.visible.len() {
-            return;
-        }
-        let node_idx = self.visible[self.selected];
-        let node = &self.nodes[node_idx];
-        if !node.has_children {
-            return;
-        }
-
-        // If this is an array/map container, toggle via window state
-        if let Some(ref val) = node.value {
-            let t = self.ctx.type_reader(val.type_idx);
-            if matches!(t, mmapstruct_schema::TypeDefReader::Array { .. } | mmapstruct_schema::TypeDefReader::HashMap { .. }) {
-                self.toggle_array_window(node_idx, *val);
-                return;
+            if self.overscan.effective_end().is_some() {
+                let overlap_lines = self.term_height * EXTENDED_WINDOW_MULTIPLIER / 3;
+                let (overscan, viewport) =
+                    TopDownJoiner::join(
+                        &self.overscan, overlap_lines, 1, self.viewport.display_height
+                    );
+                self.overscan = overscan;
+                self.viewport = viewport;
             }
+            // TODO: else we need to move cursor to the file end (?)
         }
-
-        // If this is a child of an expanded array element, toggle via window state
-        if let Some(mut ws) = self.window_state.take() {
-            if let Some(local_idx) = self.find_window_child(node_idx, &ws) {
-                if local_idx < ws.element_expanded.len() {
-                    ws.element_expanded[local_idx] = !ws.element_expanded[local_idx];
-                    self.window_state = Some(ws);
-                    self.rebuild();
-                    return;
-                }
-            }
-            self.window_state = Some(ws);
-        }
-
-        // Normal struct/enum expand (non-window)
-        let node = &mut self.nodes[node_idx];
-        node.expanded = !node.expanded;
-        let text = format!("{}", node.line);
-        let new_text = if text.contains('▶') {
-            text.replacen('▶', "▼", 1)
-        } else {
-            text.replacen('▼', "▶", 1)
-        };
-        node.line = ratatui::text::Line::from(new_text);
-        self.visible = compute_visible(&self.nodes);
-        self.ensure_selected_visible();
-    }
-
-    fn toggle_array_window(&mut self, _node_idx: usize, val: SchemaValue) {
-        if let Some(ref ws) = self.window_state {
-            if ws.matches_val(&val) && ws.expanded {
-                self.window_state = None;
-                self.rebuild();
-                return;
-            }
-        }
-        let t = self.ctx.type_reader(val.type_idx);
-        let total = match t {
-            mmapstruct_schema::TypeDefReader::Array { .. } => self.ctx.array_len(&val) as usize,
-            mmapstruct_schema::TypeDefReader::HashMap { .. } => self.ctx.hashmap_len(&val),
-            _ => 0,
-        };
-        let count = total.min(WINDOW_SIZE);
-        self.window_state = Some(WindowState {
-            val_offset: val.offset,
-            val_type_idx: val.type_idx,
-            total,
-            window_start: 0,
-            window_count: count,
-            element_expanded: vec![false; count],
-            expanded: true,
-        });
-        self.rebuild();
-    }
-
-    fn find_window_child(&self, node_idx: usize, ws: &WindowState) -> Option<usize> {
-        let mut current = node_idx;
-        loop {
-            let node = &self.nodes[current];
-            if let Some(p) = node.parent {
-                let parent = &self.nodes[p];
-                if let Some(ref val) = parent.value {
-                    if ws.matches_val(val) {
-                        return parent.children.iter().position(|&c| c == current);
-                    }
-                }
-                current = p;
-            } else {
-                return None;
-            }
-        }
-    }
-
-    fn check_window_boundary(&mut self) {
-        let Some(ws) = self.window_state.clone() else { return };
-        if !ws.expanded || ws.total <= WINDOW_SIZE { return; }
-        if self.selected >= self.visible.len() {
-            return;
-        }
-
-        let node_idx = self.visible[self.selected];
-        let element_local = self.find_window_child(node_idx, &ws);
-        let Some(local_idx) = element_local else { return };
-        let element_idx = ws.window_start + local_idx;
-
-        if element_idx >= ws.window_start + MARGIN &&
-           element_idx < ws.window_start + ws.window_count - MARGIN
-        {
-            return;
-        }
-
-        let saved = Some(element_idx);
-
-        let new_start = if element_idx < ws.window_start + MARGIN {
-            ws.window_start.saturating_sub(WINDOW_SIZE / 2)
-        } else {
-            (ws.window_start + WINDOW_SIZE / 2).min(ws.total.saturating_sub(WINDOW_SIZE))
-        };
-        let new_start = new_start.min(ws.total.saturating_sub(WINDOW_SIZE));
-        let new_count = (ws.total - new_start).min(WINDOW_SIZE);
-
-        self.window_state = Some(WindowState {
-            element_expanded: vec![false; new_count],
-            window_start: new_start,
-            window_count: new_count,
-            ..ws
-        });
-        self.rebuild_with_saved(saved);
-    }
-
-    /// Rebuild tree and restore a previously-saved conceptual element index.
-    fn rebuild_with_saved(&mut self, saved: Option<usize>) {
-        let nodes = tree::build_tree(
-            self.ctx,
-            &self.root_val,
-            &self.root_name,
-            self.depth,
-            self.window_state.as_ref(),
-        );
-        self.nodes = nodes;
-        self.visible = compute_visible(&self.nodes);
-
-        self.selected = self.restore_conceptual_selected(saved)
-            .unwrap_or(0)
-            .min(self.visible.len().saturating_sub(1));
-        let height: usize = 40;
-        self.scroll = self.selected.saturating_sub(height / 2);
-        self.ensure_selected_visible();
-    }
-
-    fn rebuild(&mut self) {
-        let saved = self.save_conceptual_selected();
-        self.rebuild_with_saved(saved);
-    }
-
-    fn save_conceptual_selected(&self) -> Option<usize> {
-        if self.selected >= self.visible.len() {
-            return None;
-        }
-        let ws = self.window_state.as_ref()?;
-        if !ws.expanded {
-            return None;
-        }
-        let node_idx = self.visible[self.selected];
-        let local_idx = self.find_window_child(node_idx, ws)?;
-        Some(ws.window_start + local_idx)
-    }
-
-    fn restore_conceptual_selected(&self, target: Option<usize>) -> Option<usize> {
-        let element_idx = target?;
-        let ws = self.window_state.as_ref()?;
-        if !ws.expanded {
-            return None;
-        }
-        let clamped = element_idx.clamp(ws.window_start, ws.window_start + ws.window_count - 1);
-        let local_idx = clamped - ws.window_start;
-
-        let array_idx = self.nodes.iter().position(|n| {
-            n.value.as_ref().map_or(false, |v| ws.matches_val(v))
-        })?;
-        let element_node_idx = *self.nodes[array_idx].children.get(local_idx)?;
-        self.visible.iter().position(|&v| v == element_node_idx)
     }
 
     fn ensure_selected_visible(&mut self) {
-        let height: usize = 40;
-        if self.selected < self.scroll {
-            self.scroll = self.selected;
-        } else if self.selected >= self.scroll + height.saturating_sub(1) {
-            self.scroll = self.selected.saturating_sub(height).saturating_add(1);
+        let h = self.viewport.display_height;
+        let vis = self.overscan.visible_line_count_up_to(self.viewport.selected);
+        let vis_idx = vis.saturating_sub(1);
+        if vis_idx < self.viewport.scroll {
+            self.viewport.scroll = vis_idx;
+        } else if vis_idx >= self.viewport.scroll + h {
+            self.viewport.scroll = vis_idx.saturating_sub(h).saturating_add(1);
         }
     }
-}
 
-fn compute_visible(nodes: &[TreeNode]) -> Vec<usize> {
-    let mut visible = Vec::with_capacity(nodes.len());
-    let mut i = 0;
-    while i < nodes.len() {
-        visible.push(i);
-        if !nodes[i].expanded {
-            i = skip_subtree(nodes, i);
+    pub fn navigate_page_up(&mut self) {
+        let page_size = self.viewport.display_height;
+        let (target, remaining) = self.overscan.nth_visible_backward(self.viewport.selected, page_size);
+        if remaining == 0 {
+            self.viewport.selected = target;
+            self.ensure_selected_visible();
+        } else if self.overscan.scanner.path.is_file_begin() {
+            self.viewport.selected = 0;
+            self.viewport.scroll = 0;
         } else {
-            i += 1;
+            let overlap_lines = self.term_height * EXTENDED_WINDOW_MULTIPLIER / 3;
+            let (overscan, viewport) =
+                BottomUpJoiner::join(
+                    &self.overscan, overlap_lines, remaining, page_size
+                );
+            self.overscan = overscan;
+            self.viewport = viewport;
         }
     }
-    visible
-}
 
-fn skip_subtree(nodes: &[TreeNode], idx: usize) -> usize {
-    let depth = nodes[idx].depth;
-    let mut i = idx + 1;
-    while i < nodes.len() && nodes[i].depth > depth {
-        i += 1;
+    pub fn navigate_page_down(&mut self) {
+        let page_size = self.viewport.display_height;
+        let (target, remaining) = self.overscan.nth_visible_forward(self.viewport.selected, page_size);
+        if remaining == 0 {
+            self.viewport.selected = target;
+            self.ensure_selected_visible();
+        } else {
+            if self.overscan.effective_end().is_some() {
+                let overlap_lines = self.term_height * EXTENDED_WINDOW_MULTIPLIER / 3;
+                let (overscan, viewport) =
+                    TopDownJoiner::join(
+                        &self.overscan, overlap_lines, remaining, page_size
+                    );
+                self.overscan = overscan;
+                self.viewport = viewport;
+            }
+            // TODO: else we need to move cursor to the file end (?)
+        }
     }
-    i
+
+    pub fn navigate_home(&mut self) {
+        if self.overscan.scanner.path.is_file_begin() {
+            self.viewport.selected = 0;
+            self.viewport.scroll = 0;
+            return;
+        }
+
+        let ctx = self.overscan.scanner.ctx;
+        let root_val = self.overscan.scanner.path[0].val;
+        let new_scanner = Scanner::new(ctx, root_val, OVERSCAN_STEPS);
+
+        self.overscan = Overscan::from_next(&self.overscan, new_scanner);
+        self.viewport.selected = 0;
+        self.viewport.scroll = 0;
+    }
+
+    pub fn navigate_end(&mut self) {
+        let end_path = match self.overscan.cursor.end.clone()
+            .or_else(|| self.overscan.cursor.effective_end_stack.last().cloned())
+        {
+            Some(p) => p,
+            None => {
+                debug_log!("navigate_end — cursor.end and effective_end_stack both empty, using last_visible fallback");
+                if let Some(last) = self.overscan.last_visible() {
+                    let vis = self.overscan.visible_line_count_up_to(last);
+                    let vis_idx = vis.saturating_sub(1);
+                    self.viewport.selected = last;
+                    self.viewport.scroll = vis_idx.saturating_sub(self.viewport.display_height - 1);
+                }
+                return;
+            }
+        };
+
+        debug_log!("navigate_end — cursor.end: {:?}", end_path);
+
+        let ctx = self.overscan.scanner.ctx;
+
+        // Pre-collect expanded-from-path and expanded-from-nodes
+        // to avoid borrowing self.overscan inside the closure.
+        let expanded_from_path: HashSet<(u64, u32)> = end_path
+            .iter()
+            .map(|seg| (seg.val.mmap_begin, seg.val.type_idx))
+            .collect();
+        let expanded_from_nodes: HashSet<(u64, u32)> = self
+            .overscan
+            .nodes
+            .iter()
+            .filter(|n| n.expanded)
+            .map(|n| (n.value.mmap_begin, n.value.type_idx))
+            .collect();
+
+        debug_log!(
+            "  expanded_from_path entries: {:?}",
+            expanded_from_path.len()
+        );
+        debug_log!(
+            "  expanded_from_nodes entries: {:?}",
+            expanded_from_nodes.len()
+        );
+
+        let should_step_in = move |val: SchemaValue| -> bool {
+            expanded_from_path.contains(&(val.mmap_begin, val.type_idx))
+                || expanded_from_nodes.contains(&(val.mmap_begin, val.type_idx))
+        };
+
+        // Find the last visible element given current expansion state
+        let last_path = match self.overscan.scanner.last_visible_path(&should_step_in) {
+            Some(p) => p,
+            None => {
+                debug_log!("  last_visible_path returned None — fallback");
+                if let Some(last) = self.overscan.last_visible() {
+                    let vis = self.overscan.visible_line_count_up_to(last);
+                    let vis_idx = vis.saturating_sub(1);
+                    self.viewport.selected = last;
+                    self.viewport.scroll = vis_idx.saturating_sub(self.viewport.display_height - 1);
+                }
+                return;
+            }
+        };
+
+        debug_log!("  last_path: {:?}", last_path);
+
+        // Step back from last_path by OVERSCAN_STEPS - 1
+        let back_scanner = Scanner::from_path(ctx, last_path.clone(), 0);
+        let (scan_start, steps) = back_scanner.do_steps_back(
+            &last_path,
+            OVERSCAN_STEPS - 1,
+            &should_step_in,
+        );
+
+        debug_log!("  scan_start: {:?}  steps_back: {}", scan_start, steps);
+
+        // Build new Overscan from scan_start forward with the same expansion
+        let new_scanner = Scanner::from_path(ctx, scan_start, OVERSCAN_STEPS);
+        self.overscan = Overscan::build(new_scanner, should_step_in);
+
+        debug_log!(
+            "  post-build — cursor.end: {:?}  effective_end_stack: {:?}  nodes: {}",
+            self.overscan.cursor.end,
+            self.overscan.cursor.effective_end_stack,
+            self.overscan.nodes.len(),
+        );
+
+        // Position viewport at the last visible element
+        let sel = self.overscan.last_visible().unwrap_or(0);
+        let vis = self.overscan.visible_line_count_up_to(sel);
+        let vis_idx = vis.saturating_sub(1);
+        self.viewport.selected = sel;
+        self.viewport.scroll = vis_idx.saturating_sub(self.viewport.display_height - 1);
+        debug_log!("  done — selected: {}  scroll: {}", sel, self.viewport.scroll);
+    }
 }

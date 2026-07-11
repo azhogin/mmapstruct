@@ -7,11 +7,14 @@ use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use mmapview_tui::app;
+use mmapview_tui::app::App;
 use mmapview_tui::input;
 use mmapview_tui::schema;
-use mmapview_tui::tree;
+use mmapview_tui::scanner::Scanner;
+use mmapview_tui::overscan::Overscan;
 use mmapview_tui::ui;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn print_usage() {
     eprintln!("Usage:");
@@ -19,12 +22,17 @@ fn print_usage() {
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --schema <file>     Schema file (if not embedded)");
-    eprintln!("  --depth <N>         Initial expand depth (default: 1)");
+    eprintln!("  --version, -V       Print version");
     eprintln!("  --help              Print this help");
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("mmapview-tui v{}", VERSION);
+        return;
+    }
 
     if args.len() < 2 || args.iter().any(|a| a == "--help" || a == "-h") {
         print_usage();
@@ -32,7 +40,6 @@ fn main() {
     }
 
     let mut schema_path: Option<String> = None;
-    let mut depth = 1;
     let mut data_path: Option<String> = None;
 
     let mut i = 1;
@@ -40,12 +47,6 @@ fn main() {
         let arg = &args[i];
         if arg == "--schema" && i + 1 < args.len() {
             schema_path = Some(args[i + 1].clone());
-            i += 2;
-        } else if let Some(val) = arg.strip_prefix("--depth=") {
-            depth = val.parse().unwrap_or(1);
-            i += 1;
-        } else if arg == "--depth" && i + 1 < args.len() {
-            depth = args[i + 1].parse().unwrap_or(1);
             i += 2;
         } else if arg.starts_with("--") {
             eprintln!("Unknown option: {}", arg);
@@ -84,7 +85,7 @@ fn main() {
         }
     };
 
-    // Leak data and schema bytes for 'static lifetime (required by RuntimeSchemaCtx + App).
+    // Leak data & ctx to 'static so App doesn't need a lifetime parameter.
     let data: &'static [u8] = Box::leak(data_vec.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
     let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> = Box::leak(Box::new(
@@ -103,15 +104,13 @@ fn main() {
         root_type,
     );
 
-    let type_info = ctx.type_reader(root_type);
-    let root_name = match type_info {
-        mmapstruct_schema::TypeDefReader::Struct { name, .. } => name.to_string(),
-        mmapstruct_schema::TypeDefReader::Enum { name, .. } => name.to_string(),
-        _ => "Root".to_string(),
-    };
-
-    let nodes = tree::build_tree(&ctx, &root, &root_name, depth, None);
-    let mut app = app::App::new(nodes, depth, &ctx, root, root_name);
+    // Build new-style App (Overscan + Viewport)
+    let scanner = Scanner::new(ctx, root, 100);
+    let overscan = Overscan::new(scanner);
+    let term_height = crossterm::terminal::size()
+        .map(|(_, h)| h as usize)
+        .unwrap_or(40);
+    let mut app = App::new(overscan, term_height);
 
     // Setup terminal
     enable_raw_mode().expect("raw mode");
@@ -136,10 +135,11 @@ fn main() {
 
 fn run_tui(
     terminal: &mut Terminal<CrosstermBackend<impl io::Write>>,
-    app: &mut app::App,
+    app: &mut App,
 ) -> Result<(), String> {
     loop {
-        terminal.draw(|f| ui::draw(f, app)).map_err(|e| e.to_string())?;
+        terminal.draw(|f| ui::draw_viewport(f, &app.viewport, &app.overscan))
+            .map_err(|e| e.to_string())?;
         if !input::handle_input(app)? {
             break Ok(());
         }

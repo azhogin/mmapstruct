@@ -55,13 +55,13 @@ impl<'a> RuntimeSchemaCtx<'a> {
     }
 
     pub fn read_pod<T: bytemuck::Pod>(&self, v: &SchemaValue) -> T {
-        let off = v.offset as usize;
+        let off = v.mmap_begin as usize;
         unsafe { mmap_read_pod::<T>(&self.data[off..off + core::mem::size_of::<T>()]) }
     }
 
     /// Read raw bytes for a pod struct.
     pub fn read_pod_bytes(&self, v: &SchemaValue) -> &'a [u8] {
-        &self.data[v.offset as usize..v.limit as usize]
+        &self.data[v.mmap_begin as usize..v.mmap_end as usize]
     }
 
     pub fn read_u32(&self, v: &SchemaValue) -> u32 { self.read_pod(v) }
@@ -78,10 +78,10 @@ impl<'a> RuntimeSchemaCtx<'a> {
     pub fn read_isize(&self, v: &SchemaValue) -> isize { self.read_i64(v) as isize }
     pub fn read_bool(&self, v: &SchemaValue) -> bool { self.read_pod::<u32>(v) != 0 }
 
-    /// Read a string using the Value's offset..limit range.
+    /// Read a string using the Value's mmap_begin..mmap_end range.
     /// Trailing null bytes are trimmed (for `#[mmap(inline(N))]` strings).
     pub fn read_str(&self, v: &SchemaValue) -> &'a str {
-        let raw = &self.data[v.offset as usize..v.limit as usize];
+        let raw = &self.data[v.mmap_begin as usize..v.mmap_end as usize];
         let trimmed = if let Some(null_pos) = raw.iter().position(|&b| b == 0) {
             &raw[..null_pos]
         } else {
@@ -211,7 +211,7 @@ impl<'a> RuntimeSchemaCtx<'a> {
     }
 
     /// Unwrap Option/ByRef wrappers to get the effective value type.
-    pub(crate) fn unwrap_type(&self, type_idx: u32) -> u32 {
+    pub fn unwrap_type(&self, type_idx: u32) -> u32 {
         let t = self.type_reader(type_idx);
         match t {
             TypeDefReader::Option { inner_type } => **inner_type,

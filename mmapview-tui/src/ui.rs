@@ -4,26 +4,60 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::overscan::Overscan;
+use crate::viewport::Viewport;
 
-/// Render the TUI.
-pub fn draw(frame: &mut Frame, app: &App) {
+/// Render a scrollable view of `Overscan` nodes with selection highlighting.
+/// Children of collapsed nodes are skipped.
+pub fn draw_viewport(frame: &mut Frame, viewport: &Viewport, overscan: &Overscan) {
     let area = frame.area();
     let [list_area, status_area] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
-
     let height = list_area.height as usize;
-    let end = (app.scroll + height).min(app.visible.len());
-    let items: Vec<ListItem> = app.visible[app.scroll..end]
-        .iter()
-        .map(|&node_idx| {
-            let node = &app.nodes[node_idx];
-            ListItem::new(node.line.clone())
-        })
-        .collect();
+
+    let mut items = Vec::new();
+    let mut selected_vis = None;
+
+    // Walk all nodes from 0, track visible-line index (`vis`), and build
+    // `items` for the window starting at `viewport.scroll`.
+    let mut i = 0;
+    let mut vis = 0;
+    while i < overscan.nodes.len() {
+        let node = &overscan.nodes[i];
+
+        if vis >= viewport.scroll && items.len() < height {
+            let indent = "  ".repeat(node.depth);
+            let arrow = if !node.has_children {
+                " "
+            } else if node.expanded {
+                "\u{25bc}"
+            } else {
+                "\u{25b6}"
+            };
+            let content = format!("{}{} {}", indent, arrow, node.display_text);
+            items.push(ListItem::new(content));
+        }
+
+        if i == viewport.selected {
+            selected_vis = Some(vis);
+        }
+
+        i += 1;
+        vis += 1;
+
+        // Skip descendants of a collapsed-but-loaded node (they occupy
+        // `nodes[]` slots but are not visible).
+        if node.collapsed_with_children() {
+            i = overscan.skip_loaded_children(i - 1);
+        }
+    }
+
+    let vis_selected = selected_vis
+        .map(|v| v.saturating_sub(viewport.scroll))
+        .filter(|&v| v < items.len());
 
     let mut state = ListState::default();
-    state.select(Some(app.selected.saturating_sub(app.scroll)));
+    state.select(vis_selected);
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::NONE))
@@ -33,10 +67,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // Status bar
     let status = format!(
-        " q quit  ↑↓ navigate  Space expand  depth: {}/{}  nodes: {}",
-        app.depth,
-        "∞",
-        app.visible.len(),
+        "sel={} scroll={} nodes={}  q quit  \u{2191}\u{2193} navigate  Space expand",
+        viewport.selected, viewport.scroll, overscan.nodes.len(),
     );
     let status_line = Line::from(Span::raw(status));
     frame.render_widget(status_line, status_area);

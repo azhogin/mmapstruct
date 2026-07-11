@@ -1,7 +1,7 @@
 [package]
 name = "mmapstruct-schemagen"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Generates the self-schema of Schema (self-schema.mms) at build time and exposes it as a constant."
 
 [build-dependencies]

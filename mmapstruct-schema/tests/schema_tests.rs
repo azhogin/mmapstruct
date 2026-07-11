@@ -456,7 +456,7 @@ fn test_schema_context_option_none() {
     let root = SchemaValue::new(0, data.len() as u64, root_type);
 
     let label = ctx.field_get(&root, "label").unwrap();
-    assert_eq!(label.offset, label.limit);
+    assert_eq!(label.mmap_begin, label.mmap_end);
 }
 
 #[test]

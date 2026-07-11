@@ -7,7 +7,7 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
     pub fn array_len(&self, val: &SchemaValue) -> u64 {
         let t = self.type_reader(val.type_idx);
         if let TypeDefReader::Array { elem_type: _, layout } = t {
-            let arr_range = val.offset as usize..val.limit as usize;
+            let arr_range = val.mmap_begin as usize..val.mmap_end as usize;
             match layout {
                 ArrayLayoutDefReader::Pod { stride } => {
                     let sz = **stride as usize;
@@ -40,7 +40,7 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
     pub fn array_get(&self, val: &SchemaValue, index: u64) -> Option<SchemaValue> {
         let t = self.type_reader(val.type_idx);
         if let TypeDefReader::Array { elem_type, layout } = t {
-            let arr_range = val.offset as usize..val.limit as usize;
+            let arr_range = val.mmap_begin as usize..val.mmap_end as usize;
             let (elem_off, elem_limit) = match layout {
                 ArrayLayoutDefReader::Pod { stride } => {
                     let sz = **stride as usize;
@@ -74,8 +74,8 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                 }
             };
             Some(SchemaValue {
-                offset: elem_off,
-                limit: elem_limit,
+                mmap_begin: elem_off,
+                mmap_end: elem_limit,
                 type_idx: **elem_type,
             })
         } else {
