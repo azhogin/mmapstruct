@@ -367,6 +367,27 @@ impl Overscan {
     /// are currently expanded in this tree view (not just logically
     /// expandable) — the continuation must NOT re‑walk into subtrees that
     /// have already been loaded via `expand_node`.
+    /// After collapsing a node whose loaded children extend to the end of
+    /// `nodes[]`, advance `cursor.end` past the collapsed node (if needed)
+    /// and continue scanning to load subsequent siblings.
+    pub fn fill_after_collapse(&mut self, idx: usize, steps: usize) {
+        if self.cursor.end.is_none() {
+            // cursor.end was inside the collapsed subtree and got saved to
+            // virtual_end — compute the path past the collapsed node.
+            let node_path = self.path_of(idx);
+            let end = crate::scanner::Scanner::from_path(
+                self.scanner.ctx,
+                node_path,
+                1,
+            )
+            .do_steps(|_| {}, |_| false);
+            self.cursor.end = end;
+        }
+        if self.cursor.end.is_some() {
+            self.continue_scan(steps);
+        }
+    }
+
     pub fn continue_scan(&mut self, steps: usize) {
         let end_path = match self.cursor.end.clone() {
             Some(p) => p,

@@ -64,6 +64,13 @@ impl App {
             return;
         }
         self.overscan.collapse_node(idx);
+
+        // If the collapsed subtree extends to the end of loaded nodes,
+        // there are no visible siblings after it — continue scanning
+        // to load them.
+        if self.overscan.skip_loaded_children(idx) >= self.overscan.nodes.len() {
+            self.overscan.fill_after_collapse(idx, OVERSCAN_STEPS);
+        }
     }
 
     /// Navigate one line up.
