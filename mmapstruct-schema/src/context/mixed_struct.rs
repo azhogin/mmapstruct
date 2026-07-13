@@ -4,6 +4,12 @@ use crate::value::SchemaValue;
 use mmapstruct::indexed_array::IndexedArrayReader;
 use mmapstruct::traits::{mmap_read_pod, ByRefRange};
 
+/// Return value of [`RuntimeSchemaCtx::field_get_with_info`].
+pub struct FieldInfo {
+    pub val: SchemaValue,
+    pub is_byref: bool,
+}
+
 impl<'a> super::RuntimeSchemaCtx<'a> {
     /// Navigate from `root` into a named field.
     ///
@@ -16,6 +22,39 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
     /// Returns `None` if the field is not found or the type cannot contain fields.
     pub fn field_get(&self, root: &SchemaValue, name: &str) -> Option<SchemaValue> {
         self.field_index_and_value(root, name).map(|(_, v)| v)
+    }
+
+    /// Like [`field_get`](Self::field_get) but additionally reports whether the
+    /// field's declared type is `ByRef<T>` (after unwrapping `root`'s type for
+    /// enum variants).
+    pub fn field_get_with_info(&self, root: &SchemaValue, name: &str) -> Option<FieldInfo> {
+        let (idx, val) = self.field_index_and_value(root, name)?;
+        let is_byref = self.is_field_byref(root, idx);
+        Some(FieldInfo { val, is_byref })
+    }
+
+    /// Check whether the field at `field_idx` in `parent` is declared as `ByRef<T>`.
+    /// For enum parents the active variant's field list is consulted.
+    pub fn is_field_byref(&self, parent: &SchemaValue, field_idx: usize) -> bool {
+        let type_idx = self.unwrap_type(parent.type_idx);
+        let t = self.type_reader(type_idx);
+        match t {
+            TypeDefReader::Struct { fields, .. } => fields
+                .get(field_idx)
+                .map_or(false, |f| self.type_reader(*f.type_index).is_byref_kind()),
+            TypeDefReader::Enum { .. } => {
+                let Some((variant, _)) = self.enum_variant(parent) else { return false };
+                let vt = self.type_reader(variant);
+                if let TypeDefReader::Struct { fields, .. } = vt {
+                    fields.get(field_idx).map_or(false, |f| {
+                        self.type_reader(*f.type_index).is_byref_kind()
+                    })
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
     }
 
     /// Like `field_get`, but also returns the index of the matched field within

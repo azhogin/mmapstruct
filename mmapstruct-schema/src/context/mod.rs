@@ -10,6 +10,8 @@ mod hash_map;
 mod mixed_struct;
 mod variant;
 
+pub use mixed_struct::FieldInfo;
+
 use crate::value::SchemaValue;
 use crate::schema::{PrimitiveDef, Schema, TypeDefReader};
 use mmapstruct::traits::{mmap_read_pod, MmapRead};

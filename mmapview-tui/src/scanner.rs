@@ -450,7 +450,12 @@ impl Scanner {
             .and_then(|(p, idx)| self.field_name(p, *idx))
             .unwrap_or("");
         let type_ann = type_annotation(self.ctx.type_reader(val.type_idx));
-        let inline = inline_value_text(self.ctx, val);
+        let byref = parent.as_ref().map_or(false, |(p, idx)| self.ctx.is_field_byref(p, *idx));
+        let inline = if byref {
+            format!("&{}", inline_value_text(self.ctx, val))
+        } else {
+            inline_value_text(self.ctx, val)
+        };
         if name.is_empty() {
             format!("type={}{} = {}", val.type_idx, type_ann, inline)
         } else {
@@ -473,16 +478,23 @@ impl Scanner {
             .and_then(|(p, idx)| self.field_name(p, *idx))
             .unwrap_or("");
         let type_ann = type_annotation(self.ctx.type_reader(val.type_idx));
+        let byref = parent.as_ref().map_or(false, |(p, idx)| self.ctx.is_field_byref(p, *idx));
         let prefix_len = if name.is_empty() {
             format!("type={}{} = ", val.type_idx, type_ann).len()
         } else {
             format!("{}{} = ", name, type_ann).len()
         };
-        let preview = preview_text(self.ctx, val, char_limit.saturating_sub(prefix_len))?;
-        if name.is_empty() {
-            Some(format!("type={}{} = {}", val.type_idx, type_ann, preview))
+        let extra = if byref { 1 } else { 0 };
+        let preview = preview_text(self.ctx, val, char_limit.saturating_sub(prefix_len + extra))?;
+        let value = if byref {
+            format!("&{}", preview)
         } else {
-            Some(format!("{}{} = {}", name, type_ann, preview))
+            preview
+        };
+        if name.is_empty() {
+            Some(format!("type={}{} = {}", val.type_idx, type_ann, value))
+        } else {
+            Some(format!("{}{} = {}", name, type_ann, value))
         }
     }
 

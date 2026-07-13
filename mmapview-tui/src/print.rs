@@ -1,4 +1,4 @@
-use mmapstruct_schema::context::RuntimeSchemaCtx;
+use mmapstruct_schema::context::{FieldInfo, RuntimeSchemaCtx};
 use mmapstruct_schema::schema::{ArrayLayoutDefReader, PrimitiveDef, TypeDefReader};
 use mmapstruct_schema::SchemaValue;
 
@@ -51,8 +51,8 @@ pub fn preview_text(
         TypeDefReader::Struct { name, fields, .. } => {
             build_preview(ctx, val, name.as_ref(), fields.len(), |i| {
                 let f = fields.get(i)?;
-                let child = ctx.field_get(val, f.name)?;
-                Some((f.name.to_string(), child))
+                let FieldInfo { val: child, is_byref } = ctx.field_get_with_info(val, f.name)?;
+                Some((f.name.to_string(), child, is_byref))
             }, char_limit)
         }
         TypeDefReader::Enum { .. } => {
@@ -66,12 +66,16 @@ pub fn preview_text(
                 };
                 build_preview(ctx, &shifted, name.as_ref(), fields.len(), |i| {
                     let f = fields.get(i)?;
-                    let child = ctx.field_get(&shifted, f.name)?;
-                    Some((f.name.to_string(), child))
+                    let FieldInfo { val: child, is_byref } = ctx.field_get_with_info(&shifted, f.name)?;
+                    Some((f.name.to_string(), child, is_byref))
                 }, char_limit)
             } else {
                 None
             }
+        }
+        TypeDefReader::ByRef { inner_type } => {
+            let inner = SchemaValue::new(val.mmap_begin, val.mmap_end, **inner_type);
+            preview_text(ctx, &inner, char_limit).map(|s| format!("&{}", s))
         }
         _ => None,
     }
@@ -86,7 +90,7 @@ fn build_preview<F>(
     char_limit: usize,
 ) -> Option<String>
 where
-    F: FnMut(usize) -> Option<(String, SchemaValue)>,
+    F: FnMut(usize) -> Option<(String, SchemaValue, bool)>,
 {
     let mut out = format!("{} {{ ", type_name);
     if out.len() > char_limit {
@@ -96,11 +100,16 @@ where
     let mut first = true;
 
     for i in 0..field_count {
-        let (field_name, child) = field_at(i)?;
-        let field_str = if first {
-            format!("{}: {}", field_name, inline_value_text(ctx, &child))
+        let (field_name, child, is_byref) = field_at(i)?;
+        let value_text = if is_byref {
+            format!("&{}", inline_value_text(ctx, &child))
         } else {
-            format!(", {}: {}", field_name, inline_value_text(ctx, &child))
+            inline_value_text(ctx, &child)
+        };
+        let field_str = if first {
+            format!("{}: {}", field_name, value_text)
+        } else {
+            format!(", {}: {}", field_name, value_text)
         };
 
         let overhead = if i + 1 < field_count { TRUNC_SUFFIX.len() } else { 2 };
@@ -203,7 +212,7 @@ pub fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
         }
         TypeDefReader::ByRef { inner_type } => {
             let inner = SchemaValue::new(val.mmap_begin, val.mmap_end, **inner_type);
-            inline_value_text(ctx, &inner)
+            format!("&{}", inline_value_text(ctx, &inner))
         }
         TypeDefReader::HashMap { .. } => {
             if val.mmap_end as usize <= ctx.data().len() {
