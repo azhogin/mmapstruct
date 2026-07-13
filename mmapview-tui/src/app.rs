@@ -162,16 +162,17 @@ impl App {
         if remaining == 0 {
             self.viewport.selected = target;
             self.ensure_selected_visible();
-        } else {
-            if self.overscan.effective_end().is_some() {
-                let overlap_lines = self.term_height * EXTENDED_WINDOW_MULTIPLIER / 3;
-                let (overscan, viewport) =
-                    TopDownJoiner::join(
-                        &self.overscan, overlap_lines, remaining, page_size
-                    );
-                self.overscan = overscan;
-                self.viewport = viewport;
-            }
+        } else if self.overscan.effective_end().is_some() {
+            let overlap_lines = self.term_height * EXTENDED_WINDOW_MULTIPLIER / 3;
+            let (overscan, viewport) =
+                TopDownJoiner::join(
+                    &self.overscan, overlap_lines, remaining, page_size
+                );
+            self.overscan = overscan;
+            self.viewport = viewport;
+        } else if let Some(last) = self.overscan.last_visible() {
+            self.viewport.selected = last;
+            self.ensure_selected_visible();
         }
     }
 
