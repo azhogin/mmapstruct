@@ -220,40 +220,22 @@ impl App {
 
     /// Find the nearest array ancestor of the current position.
     ///
-    /// 1. Scans `scanner.path` (works after any search/fast-path jump).
-    /// 2. Falls back to ViewNodes (first use with collapsed arrays).
+    /// Uses `path_of(selected)` which always reflects the user's actual
+    /// position — works on first entry into an expanded array, after
+    /// fast-path jumps, and after navigating to a different array.
     ///
     /// Returns `(array_value, prefix_to_arrays_parent)` — a path that stops
     /// **before** the array (the push of the array segment is done by the
     /// caller in `try_fast_path`).
     fn locate_array_for_fastpath(&self) -> Option<(SchemaValue, Path)> {
         let ctx = self.overscan.scanner.ctx;
-
-        // 1. scanner.path — path always has the full chain from root
-        let pos = self.overscan.scanner.path.iter().rposition(|seg| {
+        let cur_path = self.overscan.path_of(self.viewport.selected);
+        let pos = cur_path.iter().rposition(|seg| {
             matches!(ctx.type_reader(seg.val.type_idx), TypeDefReader::Array { .. })
-        });
-        if let Some(pos) = pos {
-            let arr = self.overscan.scanner.path[pos].val;
-            // Prefix up to (but not including) the array segment
-            let prefix = Path(self.overscan.scanner.path[..pos].to_vec());
-            return Some((arr, prefix));
-        }
-
-        // 2. ViewNodes — for initial search when array is collapsed
-        for i in (0..self.overscan.nodes.len()).rev() {
-            let t = ctx.type_reader(self.overscan.nodes[i].value.type_idx);
-            if matches!(t, TypeDefReader::Array { .. }) {
-                let arr = self.overscan.nodes[i].value;
-                let prefix = self.overscan.path_of(i);
-                // path_of returns the path to the parent of this node.
-                // The array is at the implicit child position, not as a
-                // segment.  This is the correct prefix for the caller to
-                // push the array segment onto.
-                return Some((arr, prefix));
-            }
-        }
-        None
+        })?;
+        let arr = cur_path[pos].val;
+        let prefix = Path(cur_path[..pos].to_vec());
+        Some((arr, prefix))
     }
 
     /// Execute a text search from the current selection + 1.
