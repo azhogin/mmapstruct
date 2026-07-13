@@ -1,7 +1,7 @@
 use crate::debug_log;
 use crate::joiner::{BottomUpJoiner, TopDownJoiner};
 use crate::overscan::Overscan;
-use crate::path::{Path, PathShift};
+use crate::path::{Path, PathSegment, PathShift};
 use crate::scanner::Scanner;
 use crate::search::SearchState;
 use crate::view_node;
@@ -180,7 +180,7 @@ impl App {
     /// if a match was found and the overscan was rebuilt.
     fn try_fast_path(&mut self, fp: &crate::search::FastPath) -> bool {
         let ctx = self.overscan.scanner.ctx;
-        let (arr, mut prefix) = match self.locate_array_for_fastpath() {
+        let (arr, prefix_to_arr_parent) = match self.locate_array_for_fastpath() {
             Some(v) => v,
             None => return false,
         };
@@ -203,11 +203,13 @@ impl App {
             return false;
         }
 
-        // Rewrite last segment's shift to point to fp.target
-        if let Some(last) = prefix.last_mut() {
-            last.shift = PathShift::Entry(fp.target as usize);
-        }
-        let new_scanner = Scanner::from_path(ctx, prefix, OVERSCAN_STEPS);
+        // Build path: prefix_to_arr_parent + (array, Entry(target))
+        let mut path = prefix_to_arr_parent;
+        path.push(PathSegment {
+            val: arr,
+            shift: PathShift::Entry(fp.target as usize),
+        });
+        let new_scanner = Scanner::from_path(ctx, path, OVERSCAN_STEPS);
         self.overscan = Overscan::from_next(&self.overscan, new_scanner);
         self.viewport.selected = 0;
         self.viewport.scroll = 0;
@@ -221,17 +223,20 @@ impl App {
     /// 1. Scans `scanner.path` (works after any search/fast-path jump).
     /// 2. Falls back to ViewNodes (first use with collapsed arrays).
     ///
-    /// Returns `(array_value, path_from_root_to_array)`.
+    /// Returns `(array_value, prefix_to_arrays_parent)` — a path that stops
+    /// **before** the array (the push of the array segment is done by the
+    /// caller in `try_fast_path`).
     fn locate_array_for_fastpath(&self) -> Option<(SchemaValue, Path)> {
         let ctx = self.overscan.scanner.ctx;
 
-        // 1. scanner.path — always has the full chain from root
+        // 1. scanner.path — path always has the full chain from root
         let pos = self.overscan.scanner.path.iter().rposition(|seg| {
             matches!(ctx.type_reader(seg.val.type_idx), TypeDefReader::Array { .. })
         });
         if let Some(pos) = pos {
             let arr = self.overscan.scanner.path[pos].val;
-            let prefix = Path(self.overscan.scanner.path[..=pos].to_vec());
+            // Prefix up to (but not including) the array segment
+            let prefix = Path(self.overscan.scanner.path[..pos].to_vec());
             return Some((arr, prefix));
         }
 
@@ -241,6 +246,10 @@ impl App {
             if matches!(t, TypeDefReader::Array { .. }) {
                 let arr = self.overscan.nodes[i].value;
                 let prefix = self.overscan.path_of(i);
+                // path_of returns the path to the parent of this node.
+                // The array is at the implicit child position, not as a
+                // segment.  This is the correct prefix for the caller to
+                // push the array segment onto.
                 return Some((arr, prefix));
             }
         }
