@@ -9,7 +9,14 @@ use crate::viewport::Viewport;
 
 /// Render a scrollable view of `Overscan` nodes with selection highlighting.
 /// Children of collapsed nodes are skipped.
-pub fn draw_viewport(frame: &mut Frame, viewport: &Viewport, overscan: &Overscan) {
+pub fn draw_viewport(
+    frame: &mut Frame,
+    viewport: &Viewport,
+    overscan: &Overscan,
+    search_mode: bool,
+    search_buffer: &str,
+    search_message: Option<&str>,
+) {
     let area = frame.area();
     let [list_area, status_area] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
@@ -84,16 +91,22 @@ pub fn draw_viewport(frame: &mut Frame, viewport: &Viewport, overscan: &Overscan
 
     frame.render_stateful_widget(list, list_area, &mut state);
 
-    // Status bar — debug info only in debug builds
-    let debug_info = if cfg!(debug_assertions) {
-        format!("sel={} scroll={} nodes={}  ", viewport.selected, viewport.scroll, overscan.nodes.len())
+    // Status bar — search prompt, search message, or normal info
+    let status = if search_mode {
+        format!("/{}", search_buffer)
+    } else if let Some(msg) = search_message {
+        msg.to_string()
     } else {
-        String::new()
+        let debug_info = if cfg!(debug_assertions) {
+            format!("sel={} scroll={} nodes={}  ", viewport.selected, viewport.scroll, overscan.nodes.len())
+        } else {
+            String::new()
+        };
+        format!(
+            "{}q quit  \u{2191}\u{2193} navigate  Space expand",
+            debug_info,
+        )
     };
-    let status = format!(
-        "{}q quit  \u{2191}\u{2193} navigate  Space expand",
-        debug_info,
-    );
     let status_line = Line::from(Span::raw(status));
     frame.render_widget(status_line, status_area);
 }

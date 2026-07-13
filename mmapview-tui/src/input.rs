@@ -8,18 +8,38 @@ pub fn handle_input(app: &mut App) -> Result<bool, String> {
         return Ok(true);
     }
     let event = event::read().map_err(|e| format!("Event error: {}", e))?;
+    // Any key press dismisses the search message
+    if let Event::Key(_) = &event {
+        app.search_message = None;
+    }
     match event {
-        Event::Key(key) if key.kind == KeyEventKind::Press => handle_key(key, app),
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            if app.search_mode {
+                handle_search_key(key, app);
+            } else {
+                handle_normal_key(key, app);
+            }
+        }
         Event::Resize(_, h) => app.handle_resize(h as usize),
         _ => {}
     }
     Ok(!app.should_quit)
 }
 
-fn handle_key(key: KeyEvent, app: &mut App) {
+fn handle_normal_key(key: KeyEvent, app: &mut App) {
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => {
             app.should_quit = true;
+        }
+        KeyCode::Char('/') => {
+            app.search_mode = true;
+            app.search_buffer.clear();
+        }
+        KeyCode::Char('n') => {
+            app.search_next();
+        }
+        KeyCode::Char('N') => {
+            // previous match — not yet implemented
         }
         KeyCode::Up | KeyCode::Char('k') => {
             app.navigate_up();
@@ -45,6 +65,30 @@ fn handle_key(key: KeyEvent, app: &mut App) {
             } else {
                 app.expand_selected();
             }
+        }
+        _ => {}
+    }
+}
+
+fn handle_search_key(key: KeyEvent, app: &mut App) {
+    match key.code {
+        KeyCode::Esc => {
+            app.search_mode = false;
+            app.search_buffer.clear();
+        }
+        KeyCode::Enter => {
+            if !app.search_buffer.is_empty() {
+                app.search.start(app.search_buffer.clone());
+                app.execute_search();
+            }
+            app.search_mode = false;
+            app.search_buffer.clear();
+        }
+        KeyCode::Char(c) => {
+            app.search_buffer.push(c);
+        }
+        KeyCode::Backspace => {
+            app.search_buffer.pop();
         }
         _ => {}
     }

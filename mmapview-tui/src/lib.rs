@@ -1,5 +1,6 @@
 pub mod log;
 pub mod app;
+pub mod search;
 pub mod input;
 pub mod joiner;
 pub mod navigate;

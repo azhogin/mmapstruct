@@ -138,7 +138,7 @@ fn run_tui(
     app: &mut App,
 ) -> Result<(), String> {
     loop {
-        terminal.draw(|f| ui::draw_viewport(f, &app.viewport, &app.overscan))
+        terminal.draw(|f| ui::draw_viewport(f, &app.viewport, &app.overscan, app.search_mode, &app.search_buffer, app.search_message))
             .map_err(|e| e.to_string())?;
         if !input::handle_input(app)? {
             break Ok(());

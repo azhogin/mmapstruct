@@ -2,6 +2,8 @@ use crate::debug_log;
 use crate::joiner::{BottomUpJoiner, TopDownJoiner};
 use crate::overscan::Overscan;
 use crate::scanner::Scanner;
+use crate::search::SearchState;
+use crate::view_node;
 use crate::viewport::Viewport;
 use mmapstruct_schema::SchemaValue;
 use std::collections::HashSet;
@@ -10,6 +12,10 @@ use std::collections::HashSet;
 pub struct App {
     pub overscan: Overscan,
     pub viewport: Viewport,
+    pub search: SearchState,
+    pub search_mode: bool,
+    pub search_buffer: String,
+    pub search_message: Option<&'static str>,
     pub should_quit: bool,
     pub term_height: usize,
 }
@@ -27,6 +33,10 @@ impl App {
                 scroll: 0,
                 display_height: term_height.saturating_sub(1),
             },
+            search: SearchState::new(),
+            search_mode: false,
+            search_buffer: String::new(),
+            search_message: None,
             should_quit: false,
             term_height,
         }
@@ -161,6 +171,114 @@ impl App {
                 self.viewport = viewport;
             }
         }
+    }
+
+    /// Execute a text search from the current selection + 1.
+    /// Searches loaded nodes first, then scans forward using the scanner
+    /// with `should_step_in = true` (descend into all containers).
+    pub fn execute_search(&mut self) {
+        let pattern = self.search.pattern.clone();
+        if pattern.is_empty() {
+            return;
+        }
+
+        // Phase 1: search within currently loaded nodes
+        let start = self.viewport.selected + 1;
+        for i in start..self.overscan.nodes.len() {
+            if self.node_matches_search(&self.overscan.nodes[i], i, &pattern) {
+                self.jump_to_match(i);
+                self.search_message = None;
+                return;
+            }
+        }
+
+        // Phase 2: scan forward — always descend into all containers
+        if !self.scan_forward(&pattern) {
+            self.search_message = Some("Pattern not found");
+        }
+    }
+
+    /// Move to the next match (forward from current selection + 1).
+    pub fn search_next(&mut self) {
+        let pattern = self.search.pattern.clone();
+        if pattern.is_empty() {
+            return;
+        }
+
+        // Search forward from selected + 1 in current nodes
+        let start = self.viewport.selected + 1;
+        for i in start..self.overscan.nodes.len() {
+            if self.node_matches_search(&self.overscan.nodes[i], i, &pattern) {
+                self.jump_to_match(i);
+                self.search_message = None;
+                return;
+            }
+        }
+
+        // Phase 2: scan forward
+        if !self.scan_forward(&pattern) {
+            self.search_message = Some("Pattern not found");
+        }
+    }
+
+    /// Scan forward from the next available path, descending into all
+    /// containers (`should_step_in = true`).  Returns `true` if a match
+    /// was found and the overscan was rebuilt.
+    fn scan_forward(&mut self, pattern: &str) -> bool {
+        let ctx = self.overscan.scanner.ctx;
+
+        // Determine starting path: effective_end() first, then last node
+        let start_path = match self.overscan.effective_end() {
+            Some(p) => p,
+            None => {
+                let last = self.overscan.nodes.len().saturating_sub(1);
+                self.overscan.path_of(last)
+            }
+        };
+
+        let mut scanner = Scanner::from_path(ctx, start_path, OVERSCAN_STEPS);
+        for _ in 0..100 {
+            let (match_path, cont) = scanner.find_text_advance(pattern, |_| true);
+            if let Some(mp) = match_path {
+                let new_scanner = Scanner::from_path(ctx, mp, OVERSCAN_STEPS);
+                self.overscan = Overscan::from_next(&self.overscan, new_scanner);
+                self.viewport.selected = 0;
+                self.viewport.scroll = 0;
+                self.search.match_idx = Some(0);
+                return true;
+            }
+            match cont {
+                Some(next_path) => {
+                    scanner = Scanner::from_path(ctx, next_path, OVERSCAN_STEPS);
+                }
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// Check if a loaded `ViewNode` matches a search string.
+    /// Uses `display_text` for leaves, preview text for containers.
+    fn node_matches_search(&self, node: &view_node::ViewNode, _idx: usize, pat: &str) -> bool {
+        if node.display_text.contains(pat) {
+            return true;
+        }
+        // For containers, also check preview text (matches what the user sees)
+        if node.has_children {
+            let parent = node.parent_val.map(|pv| (pv, node.shift.map(|s| s.index()).unwrap_or(0)));
+            if let Some(preview) = self.overscan.scanner.format_preview_text(&node.value, parent, 200) {
+                if preview.contains(pat) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn jump_to_match(&mut self, idx: usize) {
+        self.search.match_idx = Some(idx);
+        self.viewport.selected = idx;
+        self.ensure_selected_visible();
     }
 
     /// Navigate to the first visible line. If already at the beginning of

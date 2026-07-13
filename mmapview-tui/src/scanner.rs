@@ -486,6 +486,137 @@ impl Scanner {
         }
     }
 
+    /// Scan forward and find the first element whose display text contains
+    /// `substr`.  Returns `(match_path, continuation)`:
+    ///
+    /// - `match_path` — `Some` if a matching element was found within
+    ///   `self.steps` elements, `None` otherwise.
+    /// - `continuation` — path right *after* the last processed element
+    ///   (for overlap‑free continuation), or `None` when data is exhausted.
+    ///
+    /// The `should_step_in` closure controls which containers are descended
+    /// into during the DFS walk.
+    pub fn find_text_advance(
+        &self,
+        substr: &str,
+        mut should_step_in: impl FnMut(SchemaValue) -> bool,
+    ) -> (Option<Path>, Option<Path>) {
+        let n = self.steps;
+        if n == 0 {
+            return (None, None);
+        }
+
+        let mut stack: Vec<(SchemaValue, PathShift)> = self.path
+            .iter()
+            .map(|seg| (seg.val, seg.shift))
+            .collect();
+
+        let Some((parent, shift)) = stack.last() else { return (None, None); };
+        let idx = shift.index();
+        let Some(current) = self.child_at(parent, idx) else { return (None, None); };
+        let mut current = current;
+        let mut expand = should_step_in(current);
+
+        if self.matches_search(&current, Some((*parent, idx)), substr) {
+            let match_path = self.path_for_match(&stack, idx);
+            let cont = self.silent_advance(&mut stack, &mut should_step_in);
+            return (Some(match_path), cont);
+        }
+
+        for _ in 1..n {
+            if expand && self.child_count(&current) > 0 {
+                let Some(child) = self.child_at(&current, 0) else { return (None, None); };
+                stack.push((current, self.child_shift(&current, 0)));
+                current = child;
+                expand = should_step_in(current);
+
+                if self.matches_search(&current, Some((stack[stack.len() - 1].0, 0)), substr) {
+                    let match_path = self.path_for_match(&stack, 0);
+                    let cont = self.silent_advance(&mut stack, &mut should_step_in);
+                    return (Some(match_path), cont);
+                }
+                continue;
+            }
+
+            loop {
+                let Some(last) = stack.len().checked_sub(1) else { return (None, None); };
+                let idx = stack[last].1.index();
+                if idx + 1 < self.child_count(&stack[last].0) {
+                    let new_shift = self.child_shift(&stack[last].0, idx + 1);
+                    stack[last].1 = new_shift;
+                    let Some(child) = self.child_at(&stack[last].0, idx + 1) else { return (None, None); };
+                    current = child;
+                    expand = should_step_in(current);
+
+                    if self.matches_search(&current, Some((stack[last].0, idx + 1)), substr) {
+                        let match_path = self.path_for_match(&stack, idx + 1);
+                        let cont = self.silent_advance(&mut stack, &mut should_step_in);
+                        return (Some(match_path), cont);
+                    }
+                    break;
+                }
+                stack.pop();
+                if stack.is_empty() {
+                    let cont = self.silent_advance(&mut stack, &mut should_step_in);
+                    return (None, cont);
+                }
+                let last = stack.len() - 1;
+                let idx = stack[last].1.index();
+                if idx + 1 < self.child_count(&stack[last].0) {
+                    let new_shift = self.child_shift(&stack[last].0, idx + 1);
+                    stack[last].1 = new_shift;
+                    let Some(child) = self.child_at(&stack[last].0, idx + 1) else { return (None, None); };
+                    current = child;
+                    expand = should_step_in(current);
+
+                    if self.matches_search(&current, Some((stack[last].0, idx + 1)), substr) {
+                        let match_path = self.path_for_match(&stack, idx + 1);
+                        let cont = self.silent_advance(&mut stack, &mut should_step_in);
+                        return (Some(match_path), cont);
+                    }
+                    break;
+                }
+            }
+        }
+        // All n steps exhausted — advance past the last element
+        let cont = self.silent_advance(&mut stack, &mut should_step_in);
+        (None, cont)
+    }
+
+    /// Check if `val` matches a search substring using the same text
+    /// the user sees in the UI — preview text for containers, plain
+    /// display text for leaves.
+    fn matches_search(
+        &self,
+        val: &SchemaValue,
+        parent: Option<(SchemaValue, usize)>,
+        substr: &str,
+    ) -> bool {
+        if self.child_count(val) > 0 {
+            self.format_preview_text(val, parent, 200)
+                .is_some_and(|t| t.contains(substr))
+        } else {
+            self.format_display_text(val, parent).contains(substr)
+        }
+    }
+
+    /// Build the `Path` that, when used as a scanner start path, will
+    /// visit `current` first (the element at `child_idx` of `stack`'s
+    /// top-of-stack parent).
+    fn path_for_match(
+        &self,
+        stack: &[(SchemaValue, PathShift)],
+        child_idx: usize,
+    ) -> Path {
+        let mut segs: Vec<PathSegment> = stack.iter()
+            .map(|(val, shift)| PathSegment { val: *val, shift: *shift })
+            .collect();
+        if let Some(last) = segs.last_mut() {
+            last.shift = self.child_shift(&stack.last().unwrap().0, child_idx);
+        }
+        Path(segs)
+    }
+
     pub(crate) fn field_name(&self, parent: &SchemaValue, idx: usize) -> Option<&str> {
         let t = self.ctx.type_reader(parent.type_idx);
         match t {
