@@ -1,10 +1,12 @@
 use crate::debug_log;
 use crate::joiner::{BottomUpJoiner, TopDownJoiner};
 use crate::overscan::Overscan;
+use crate::path::{Path, PathShift};
 use crate::scanner::Scanner;
 use crate::search::SearchState;
 use crate::view_node;
 use crate::viewport::Viewport;
+use mmapstruct_schema::schema::TypeDefReader;
 use mmapstruct_schema::SchemaValue;
 use std::collections::HashSet;
 
@@ -173,13 +175,91 @@ impl App {
         }
     }
 
+    /// Try fast-path: pattern `field:number` jumps directly to array element
+    /// at that index and verifies the field value matches.  Returns `true`
+    /// if a match was found and the overscan was rebuilt.
+    fn try_fast_path(&mut self, fp: &crate::search::FastPath) -> bool {
+        let ctx = self.overscan.scanner.ctx;
+        let (arr, mut prefix) = match self.locate_array_for_fastpath() {
+            Some(v) => v,
+            None => return false,
+        };
+
+        let len = ctx.array_len(&arr);
+        if fp.target >= len {
+            return false;
+        }
+
+        // Verify field value at index
+        let elem = match ctx.array_get(&arr, fp.target) {
+            Some(e) => e,
+            None => return false,
+        };
+        let fv = match ctx.field_get(&elem, &fp.field) {
+            Some(v) => v,
+            None => return false,
+        };
+        if ctx.read_as_i64(&fv) != Some(fp.target as i64) {
+            return false;
+        }
+
+        // Rewrite last segment's shift to point to fp.target
+        if let Some(last) = prefix.last_mut() {
+            last.shift = PathShift::Entry(fp.target as usize);
+        }
+        let new_scanner = Scanner::from_path(ctx, prefix, OVERSCAN_STEPS);
+        self.overscan = Overscan::from_next(&self.overscan, new_scanner);
+        self.viewport.selected = 0;
+        self.viewport.scroll = 0;
+        self.search.match_idx = Some(0);
+        self.search_message = None;
+        true
+    }
+
+    /// Find the nearest array ancestor of the current position.
+    ///
+    /// 1. Scans `scanner.path` (works after any search/fast-path jump).
+    /// 2. Falls back to ViewNodes (first use with collapsed arrays).
+    ///
+    /// Returns `(array_value, path_from_root_to_array)`.
+    fn locate_array_for_fastpath(&self) -> Option<(SchemaValue, Path)> {
+        let ctx = self.overscan.scanner.ctx;
+
+        // 1. scanner.path — always has the full chain from root
+        let pos = self.overscan.scanner.path.iter().rposition(|seg| {
+            matches!(ctx.type_reader(seg.val.type_idx), TypeDefReader::Array { .. })
+        });
+        if let Some(pos) = pos {
+            let arr = self.overscan.scanner.path[pos].val;
+            let prefix = Path(self.overscan.scanner.path[..=pos].to_vec());
+            return Some((arr, prefix));
+        }
+
+        // 2. ViewNodes — for initial search when array is collapsed
+        for i in (0..self.overscan.nodes.len()).rev() {
+            let t = ctx.type_reader(self.overscan.nodes[i].value.type_idx);
+            if matches!(t, TypeDefReader::Array { .. }) {
+                let arr = self.overscan.nodes[i].value;
+                let prefix = self.overscan.path_of(i);
+                return Some((arr, prefix));
+            }
+        }
+        None
+    }
+
     /// Execute a text search from the current selection + 1.
-    /// Searches loaded nodes first, then scans forward using the scanner
-    /// with `should_step_in = true` (descend into all containers).
+    /// First tries fast-path (`field:number`), then text search.
     pub fn execute_search(&mut self) {
         let pattern = self.search.pattern.clone();
         if pattern.is_empty() {
             return;
+        }
+
+        // Fast-path: /id:42 → direct jump
+        if let Some(fp) = self.search.try_fast_path() {
+            if self.try_fast_path(&fp) {
+                return;
+            }
         }
 
         // Phase 1: search within currently loaded nodes
