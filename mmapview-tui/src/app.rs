@@ -241,62 +241,74 @@ impl App {
 
     /// Execute a text search from the current selection + 1.
     /// First tries fast-path (`field:number`), then text search.
-    pub fn execute_search(&mut self) {
-        let pattern = self.search.pattern.clone();
-        if pattern.is_empty() {
-            return;
-        }
+    pub fn search_first(&mut self) {
+        let Some(pattern) = self.search.get_pattern() else { return };
 
         // Fast-path: /id:42 → direct jump
-        if let Some(fp) = self.search.try_fast_path() {
+        if let Some(fp) = self.search.parse_fast_path() {
             if self.try_fast_path(&fp) {
                 return;
             }
         }
 
-        // Phase 1: search within currently loaded nodes
-        let start = self.viewport.selected + 1;
-        for i in start..self.overscan.nodes.len() {
-            if self.node_matches_search(&self.overscan.nodes[i], i, &pattern) {
-                self.jump_to_match(i);
-                self.search_message = None;
-                return;
-            }
-        }
-
-        // Phase 2: scan forward — always descend into all containers
-        if !self.scan_forward(&pattern) {
-            self.search_message = Some("Pattern not found");
-        }
+        self.search_impl(&pattern);
     }
 
     /// Move to the next match (forward from current selection + 1).
     pub fn search_next(&mut self) {
-        let pattern = self.search.pattern.clone();
-        if pattern.is_empty() {
-            return;
-        }
+        let Some(pattern) = self.search.get_pattern() else { return };
+        self.search_impl(&pattern);
+    }
 
-        // Search forward from selected + 1 in current nodes
+    /// Common search implementation used by both `search_first` and `search_next`.
+    /// Phase 1: scan currently loaded nodes from `self.viewport.selected + 1`.
+    /// Phase 2: scan forward into new data.
+    fn search_impl(&mut self, pattern: &str) {
         let start = self.viewport.selected + 1;
         for i in start..self.overscan.nodes.len() {
-            if self.node_matches_search(&self.overscan.nodes[i], i, &pattern) {
+            if self.node_matches_search(&self.overscan.nodes[i], i, pattern) {
                 self.jump_to_match(i);
                 self.search_message = None;
                 return;
             }
         }
-
-        // Phase 2: scan forward
-        if !self.scan_forward(&pattern) {
+        if let Some(mp) = self.scan_forward(pattern) {
+            self.move_to_search_result(mp);
+        } else {
             self.search_message = Some("Pattern not found");
         }
     }
 
+    /// Build an overscan from `mp`, the path of the first search match,
+    /// and update viewport/selection to show it near the bottom of the screen.
+    fn move_to_search_result(&mut self, mp: Path) {
+        let ctx = self.overscan.scanner.ctx;
+        let page = self.viewport.display_height;
+        let back_steps = page.saturating_sub(1);
+
+        // Walk back from the match to get context before it
+        let scanner = Scanner::from_path(ctx, mp.clone(), back_steps);
+        let (back_path, steps_taken) = scanner.do_steps_back(&mp, back_steps, &|_| false);
+
+        // Build overscan from the backed-up position
+        let new_scanner = Scanner::from_path(ctx, back_path, OVERSCAN_STEPS);
+        self.overscan = Overscan::from_next(&self.overscan, new_scanner);
+
+        // Find the match position in the new overscan
+        let match_pos = self.overscan.nodes.iter().position(|n| {
+            n.value.mmap_begin == mp.last().map(|s| s.val.mmap_begin).unwrap_or(0)
+                && n.value.type_idx == mp.last().map(|s| s.val.type_idx).unwrap_or(0)
+        }).unwrap_or(steps_taken);
+
+        self.viewport.selected = match_pos;
+        self.viewport.scroll = 0;
+        self.search.match_idx = Some(match_pos);
+    }
+
     /// Scan forward from the next available path, descending into all
-    /// containers (`should_step_in = true`).  Returns `true` if a match
-    /// was found and the overscan was rebuilt.
-    fn scan_forward(&mut self, pattern: &str) -> bool {
+    /// containers (`should_step_in = true`).  Returns the match path
+    /// if a match was found.
+    fn scan_forward(&mut self, pattern: &str) -> Option<Path> {
         let ctx = self.overscan.scanner.ctx;
 
         // Determine starting path: effective_end() first, then last node
@@ -312,21 +324,16 @@ impl App {
         for _ in 0..100 {
             let (match_path, cont) = scanner.find_text_advance(pattern, |_| true);
             if let Some(mp) = match_path {
-                let new_scanner = Scanner::from_path(ctx, mp, OVERSCAN_STEPS);
-                self.overscan = Overscan::from_next(&self.overscan, new_scanner);
-                self.viewport.selected = 0;
-                self.viewport.scroll = 0;
-                self.search.match_idx = Some(0);
-                return true;
+                return Some(mp);
             }
             match cont {
                 Some(next_path) => {
                     scanner = Scanner::from_path(ctx, next_path, OVERSCAN_STEPS);
                 }
-                None => return false,
+                None => return None,
             }
         }
-        false
+        None
     }
 
     /// Check if a loaded `ViewNode` matches a search string.

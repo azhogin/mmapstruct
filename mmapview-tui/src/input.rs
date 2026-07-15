@@ -79,7 +79,7 @@ fn handle_search_key(key: KeyEvent, app: &mut App) {
         KeyCode::Enter => {
             if !app.search_buffer.is_empty() {
                 app.search.start(app.search_buffer.clone());
-                app.execute_search();
+                app.search_first();
             }
             app.search_mode = false;
             app.search_buffer.clear();

@@ -26,6 +26,11 @@ impl SearchState {
         !self.pattern.is_empty()
     }
 
+    /// Returns `Some(pattern)` when the search pattern is non-empty, `None` otherwise.
+    pub fn get_pattern(&self) -> Option<String> {
+        if self.pattern.is_empty() { None } else { Some(self.pattern.clone()) }
+    }
+
     /// Start a new search with `pattern`. Clears previous match.
     pub fn start(&mut self, pattern: String) {
         self.pattern = pattern;
@@ -40,7 +45,7 @@ impl SearchState {
 
     /// Try to parse the pattern as a fast-path field:number search.
     /// Returns `Some(FastPath)` for patterns like `id:42` or `id=42`.
-    pub fn try_fast_path(&self) -> Option<FastPath> {
+    pub fn parse_fast_path(&self) -> Option<FastPath> {
         let p = self.pattern.trim();
         let (field, num_str) = p.split_once(':').or_else(|| p.split_once('='))?;
         let field = field.trim().to_string();
