@@ -658,6 +658,15 @@ impl Scanner {
             TypeDefReader::Struct { fields, .. } => {
                 fields.get(idx).map(|f| f.name.to_string())
             }
+            TypeDefReader::Enum { .. } => {
+                let (variant_type_idx, _) = self.ctx.enum_variant(parent)?;
+                let vt = self.ctx.type_reader(variant_type_idx);
+                if let TypeDefReader::Struct { fields, .. } = vt {
+                    fields.get(idx).map(|f| f.name.to_string())
+                } else {
+                    None
+                }
+            }
             TypeDefReader::HashMap { .. } => {
                 let (key, _) = self.ctx.hashmap_get_index(parent, idx)?;
                 Some(inline_value_text(self.ctx, &key))
