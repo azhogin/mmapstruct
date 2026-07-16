@@ -183,7 +183,7 @@ pub fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
                     ArrayLayoutDefReader::Indexed => "indexed",
                     ArrayLayoutDefReader::Fixed { .. } => "fixed",
                 };
-                let mut s = format!("[{} {}]", len, layout_label);
+                let mut s = format!("[{} {} (#{})]", len, layout_label, val.type_idx);
                 // Pod arrays with ≤ 5 elements show inline values
                 if len <= 5 {
                     if let ArrayLayoutDefReader::Pod { .. } = layout {
@@ -216,7 +216,7 @@ pub fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
         }
         TypeDefReader::HashMap { .. } => {
             if val.mmap_end as usize <= ctx.data().len() {
-                format!("[{} entries]", ctx.hashmap_len(val))
+                format!("[{} entries (#{})]", ctx.hashmap_len(val), val.type_idx)
             } else {
                 "[?]".to_string()
             }

@@ -410,6 +410,11 @@ impl Scanner {
                 let has_children = self.child_count(&ctx.val) > 0;
                 let arrow = if !has_children { " " } else if ctx.expand { "▼" } else { "▶" };
                 if let Some((ref p, idx)) = ctx.parent {
+                    if matches!(self.ctx.type_reader(p.type_idx), TypeDefReader::Array { .. }) {
+                        let inline = inline_value_text(self.ctx, &ctx.val);
+                        writeln!(out, "{}{}[{}] = {}", indent, arrow, idx, inline).unwrap();
+                        return;
+                    }
                     if let Some(prefix) = self.hashmap_prefix(p) {
                         let name = self.field_name(p, idx).unwrap_or_default();
                         let inline = inline_value_text(self.ctx, &ctx.val);
@@ -454,6 +459,14 @@ impl Scanner {
 
     pub(crate) fn format_display_text(&self, val: &SchemaValue, parent: Option<(SchemaValue, usize)>) -> String {
         if let Some((ref p, idx)) = parent {
+            if matches!(self.ctx.type_reader(p.type_idx), TypeDefReader::Array { .. }) {
+                let inline = if self.ctx.is_str_type(val.type_idx) {
+                    inline_value_text(self.ctx, val)
+                } else {
+                    inline_value_text(self.ctx, val)
+                };
+                return format!("[{}] = {}", idx, inline);
+            }
             if let Some(prefix) = self.hashmap_prefix(p) {
                 let name = self.field_name(p, idx).unwrap_or_default();
                 let inline = inline_value_text(self.ctx, val);
@@ -489,6 +502,11 @@ impl Scanner {
         char_limit: usize,
     ) -> Option<String> {
         if let Some((ref p, idx)) = parent {
+            if matches!(self.ctx.type_reader(p.type_idx), TypeDefReader::Array { .. }) {
+                let prefix = format!("[{}] = ", idx);
+                let preview = preview_text(self.ctx, val, char_limit.saturating_sub(prefix.len()))?;
+                return Some(format!("{}{}", prefix, preview));
+            }
             if let Some(prefix) = self.hashmap_prefix(p) {
                 let name = self.field_name(p, idx).unwrap_or_default();
                 let prefix_len = format!("{}{}: ", prefix, name).len();
