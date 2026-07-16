@@ -407,11 +407,19 @@ impl Scanner {
             |ctx: StepContext| {
                 use std::fmt::Write;
                 let indent = "  ".repeat(ctx.depth);
+                let has_children = self.child_count(&ctx.val) > 0;
+                let arrow = if !has_children { " " } else if ctx.expand { "▼" } else { "▶" };
+                if let Some((ref p, idx)) = ctx.parent {
+                    if let Some(prefix) = self.hashmap_prefix(p) {
+                        let name = self.field_name(p, idx).unwrap_or_default();
+                        let inline = inline_value_text(self.ctx, &ctx.val);
+                        writeln!(out, "{}{}{}{}: {}", indent, arrow, prefix, name, inline).unwrap();
+                        return;
+                    }
+                }
                 let name = ctx.parent.and_then(|(p, idx)| self.field_name(&p, idx)).unwrap_or_default();
                 let type_ann = type_annotation(self.ctx.type_reader(ctx.val.type_idx));
                 let inline = inline_value_text(self.ctx, &ctx.val);
-                let has_children = self.child_count(&ctx.val) > 0;
-                let arrow = if !has_children { " " } else if ctx.expand { "▼" } else { "▶" };
                 if name.is_empty() {
                     writeln!(out, "{}{} type={}{} = {}", indent, arrow, ctx.val.type_idx, type_ann, inline).unwrap();
                 } else {
@@ -445,6 +453,13 @@ impl Scanner {
     }
 
     pub(crate) fn format_display_text(&self, val: &SchemaValue, parent: Option<(SchemaValue, usize)>) -> String {
+        if let Some((ref p, idx)) = parent {
+            if let Some(prefix) = self.hashmap_prefix(p) {
+                let name = self.field_name(p, idx).unwrap_or_default();
+                let inline = inline_value_text(self.ctx, val);
+                return format!("{}{}: {}", prefix, name, inline);
+            }
+        }
         let name = parent
             .as_ref()
             .and_then(|(p, idx)| self.field_name(p, *idx))
@@ -473,6 +488,14 @@ impl Scanner {
         parent: Option<(SchemaValue, usize)>,
         char_limit: usize,
     ) -> Option<String> {
+        if let Some((ref p, idx)) = parent {
+            if let Some(prefix) = self.hashmap_prefix(p) {
+                let name = self.field_name(p, idx).unwrap_or_default();
+                let prefix_len = format!("{}{}: ", prefix, name).len();
+                let preview = preview_text(self.ctx, val, char_limit.saturating_sub(prefix_len))?;
+                return Some(format!("{}{}: {}", prefix, name, preview));
+            }
+        }
         let name = parent
             .as_ref()
             .and_then(|(p, idx)| self.field_name(p, *idx))
@@ -640,6 +663,29 @@ impl Scanner {
                 Some(inline_value_text(self.ctx, &key))
             }
             _ => None,
+        }
+    }
+
+    fn hashmap_prefix(&self, parent: &SchemaValue) -> Option<String> {
+        let t = self.ctx.type_reader(parent.type_idx);
+        if let TypeDefReader::HashMap { key_type, val_type, .. } = t {
+            let kt = self.ctx.type_reader(**key_type);
+            let vt = self.ctx.type_reader(**val_type);
+            Some(format!("({}→{}) ", type_name_short(kt), type_name_short(vt)))
+        } else {
+            None
+        }
+    }
+}
+
+fn type_name_short<'a>(t: &'a TypeDefReader<'a>) -> &'a str {
+    match t {
+        TypeDefReader::Struct { name, .. } => name,
+        TypeDefReader::Array { .. } => "[]",
+        TypeDefReader::HashMap { .. } => "{}",
+        _ => {
+            let ann = type_annotation(t);
+            if ann.len() > 2 { &ann[2..] } else { "?" }
         }
     }
 }
