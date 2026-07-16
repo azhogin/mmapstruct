@@ -50,7 +50,7 @@ impl SearchState {
         let (field, num_str) = p.split_once(':').or_else(|| p.split_once('='))?;
         let field = field.trim().to_string();
         let num_str = num_str.trim();
-        if field.is_empty() || num_str.is_empty() {
+        if num_str.is_empty() {
             return None;
         }
         let target: u64 = num_str.parse().ok()?;

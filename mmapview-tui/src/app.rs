@@ -191,6 +191,23 @@ impl App {
             return false;
         }
 
+        // Jump by array index (when field is empty)
+        if fp.field.is_empty() {
+            // Build path: prefix_to_arr_parent + (array, Entry(target))
+            let mut path = prefix_to_arr_parent;
+            path.push(PathSegment {
+                val: arr,
+                shift: PathShift::Entry(fp.target as usize),
+            });
+            let new_scanner = Scanner::from_path(ctx, path, OVERSCAN_STEPS);
+            self.overscan = Overscan::from_next(&self.overscan, new_scanner);
+            self.viewport.selected = 0;
+            self.viewport.scroll = 0;
+            self.search.match_idx = Some(0);
+            self.search_message = None;
+            return true;
+        }
+
         // Verify field value at index
         let elem = match ctx.array_get(&arr, fp.target) {
             Some(e) => e,
