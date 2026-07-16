@@ -98,6 +98,76 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
         ))
     }
 
+    /// Get only the key at the i-th entry (avoids value-offset computation).
+    pub fn hashmap_get_key(&self, val: &SchemaValue, index: usize) -> Option<SchemaValue> {
+        let (def, key_type, _) = self.hash_map_def(val.type_idx)?;
+        let count = self.hashmap_len(val);
+        if index >= count {
+            return None;
+        }
+        let base = val.mmap_begin as usize;
+        let key_align = self.type_align(key_type) as usize;
+
+        if def.key_is_pod {
+            let key_size = self.type_size(key_type)? as usize;
+            let keys_start = align_up(8, key_align);
+            let ko = keys_start + index * key_size;
+            let ke = keys_start + (index + 1) * key_size;
+            Some(SchemaValue::new(base as u64 + ko as u64, base as u64 + ke as u64, key_type))
+        } else {
+            let ot_byte_size = (count + 1) * 4;
+            let key_ot_start = 8;
+            let offset_tables_end = if def.val_is_pod {
+                key_ot_start + ot_byte_size
+            } else {
+                key_ot_start + 2 * ot_byte_size
+            };
+            let keys_data_start = align_up(offset_tables_end, key_align);
+            let ks_rel = unsafe { mmap_read_pod::<u32>(&self.data[base + key_ot_start + index * 4..]) } as u64;
+            let ke_rel = unsafe { mmap_read_pod::<u32>(&self.data[base + key_ot_start + (index + 1) * 4..]) } as u64;
+            let ko = (keys_data_start as u64 + ks_rel) as usize;
+            let ke = (keys_data_start as u64 + ke_rel) as usize;
+            Some(SchemaValue::new(base as u64 + ko as u64, base as u64 + ke as u64, key_type))
+        }
+    }
+
+    /// Binary search for the entry whose key matches `target`.
+    ///
+    /// Supports numeric keys (parsed from `target` as `i64`) and string keys.
+    pub fn hashmap_find_key(&self, val: &SchemaValue, target: &str) -> Option<usize> {
+        let count = self.hashmap_len(val);
+        if count == 0 {
+            return None;
+        }
+        let (_, key_type, _) = self.hash_map_def(val.type_idx)?;
+        let key_type_reader = self.type_reader(key_type);
+        let is_numeric = matches!(key_type_reader, TypeDefReader::Primitive(_));
+
+        let mut lo = 0isize;
+        let mut hi = count as isize - 1;
+
+        while lo <= hi {
+            let mid = (lo + hi) / 2;
+            let key_val = self.hashmap_get_key(val, mid as usize)?;
+
+            let ordering = if is_numeric {
+                let target_num: i64 = target.parse().ok()?;
+                let key_num = self.read_as_i64(&key_val)?;
+                key_num.cmp(&target_num)
+            } else {
+                let key_str = self.read_str(&key_val);
+                key_str.cmp(target)
+            };
+
+            match ordering {
+                std::cmp::Ordering::Less => lo = mid + 1,
+                std::cmp::Ordering::Greater => hi = mid - 1,
+                std::cmp::Ordering::Equal => return Some(mid as usize),
+            }
+        }
+        None
+    }
+
     /// Get the HashMap's internal structure for iteration.
     pub fn hash_map_def(&self, type_idx: u32) -> Option<(HashMapDef, u32, u32)> {
         let t = self.type_reader(type_idx);

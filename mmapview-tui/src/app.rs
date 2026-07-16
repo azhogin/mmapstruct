@@ -181,23 +181,52 @@ impl App {
     /// if a match was found and the overscan was rebuilt.
     fn try_fast_path(&mut self, fp: &crate::search::FastPath) -> bool {
         let ctx = self.overscan.scanner.ctx;
-        let (arr, prefix_to_arr_parent) = match self.locate_array_for_fastpath() {
-            Some(v) => v,
-            None => return false,
-        };
 
-        let len = ctx.array_len(&arr);
-        if fp.target >= len {
-            return false;
-        }
+        // ---- Array fast-path ----
+        if let Some((arr, prefix_to_arr_parent)) = self.locate_array_for_fastpath() {
+            let idx = match fp.target_as_num() {
+                Some(n) => n,
+                None => return false,
+            };
 
-        // Jump by array index (when field is empty)
-        if fp.field.is_empty() {
-            // Build path: prefix_to_arr_parent + (array, Entry(target))
+            let len = ctx.array_len(&arr);
+            if idx >= len {
+                return false;
+            }
+
+            // Jump by array index (when field is empty)
+            if fp.field.is_empty() {
+                let mut path = prefix_to_arr_parent;
+                path.push(PathSegment {
+                    val: arr,
+                    shift: PathShift::Entry(idx as usize),
+                });
+                let new_scanner = Scanner::from_path(ctx, path, OVERSCAN_STEPS);
+                self.overscan = Overscan::from_next(&self.overscan, new_scanner);
+                self.viewport.selected = 0;
+                self.viewport.scroll = 0;
+                self.search.match_idx = Some(0);
+                self.search_message = None;
+                return true;
+            }
+
+            // Verify field value at index
+            let elem = match ctx.array_get(&arr, idx) {
+                Some(e) => e,
+                None => return false,
+            };
+            let fv = match ctx.field_get(&elem, &fp.field) {
+                Some(v) => v,
+                None => return false,
+            };
+            if ctx.read_as_i64(&fv) != Some(idx as i64) {
+                return false;
+            }
+
             let mut path = prefix_to_arr_parent;
             path.push(PathSegment {
                 val: arr,
-                shift: PathShift::Entry(fp.target as usize),
+                shift: PathShift::Entry(idx as usize),
             });
             let new_scanner = Scanner::from_path(ctx, path, OVERSCAN_STEPS);
             self.overscan = Overscan::from_next(&self.overscan, new_scanner);
@@ -208,24 +237,38 @@ impl App {
             return true;
         }
 
-        // Verify field value at index
-        let elem = match ctx.array_get(&arr, fp.target) {
-            Some(e) => e,
-            None => return false,
-        };
-        let fv = match ctx.field_get(&elem, &fp.field) {
-            Some(v) => v,
-            None => return false,
-        };
-        if ctx.read_as_i64(&fv) != Some(fp.target as i64) {
+        // ---- HashMap fast-path ----
+        let Some((map_val, prefix_to_map_parent)) = self.locate_hashmap_for_fastpath() else {
             return false;
-        }
+        };
 
-        // Build path: prefix_to_arr_parent + (array, Entry(target))
-        let mut path = prefix_to_arr_parent;
+        // Find the target entry index
+        let idx = if fp.field.is_empty() {
+            // Try index jump first
+            if let Some(n) = fp.target_as_num() {
+                if n >= ctx.hashmap_len(&map_val) as u64 {
+                    return false;
+                }
+                n as usize
+            } else {
+                // Not a number — binary search by key
+                match ctx.hashmap_find_key(&map_val, &fp.target_str) {
+                    Some(i) => i,
+                    None => return false,
+                }
+            }
+        } else {
+            // Binary search by key: fp.target_str is the target key value
+            match ctx.hashmap_find_key(&map_val, &fp.target_str) {
+                Some(i) => i,
+                None => return false,
+            }
+        };
+
+        let mut path = prefix_to_map_parent;
         path.push(PathSegment {
-            val: arr,
-            shift: PathShift::Entry(fp.target as usize),
+            val: map_val,
+            shift: PathShift::Entry(idx),
         });
         let new_scanner = Scanner::from_path(ctx, path, OVERSCAN_STEPS);
         self.overscan = Overscan::from_next(&self.overscan, new_scanner);
@@ -254,6 +297,17 @@ impl App {
         let arr = cur_path[pos].val;
         let prefix = Path(cur_path[..pos].to_vec());
         Some((arr, prefix))
+    }
+
+    fn locate_hashmap_for_fastpath(&self) -> Option<(SchemaValue, Path)> {
+        let ctx = self.overscan.scanner.ctx;
+        let cur_path = self.overscan.path_of(self.viewport.selected);
+        let pos = cur_path.iter().rposition(|seg| {
+            matches!(ctx.type_reader(seg.val.type_idx), TypeDefReader::HashMap { .. })
+        })?;
+        let map_val = cur_path[pos].val;
+        let prefix = Path(cur_path[..pos].to_vec());
+        Some((map_val, prefix))
     }
 
     /// Execute a text search from the current selection + 1.

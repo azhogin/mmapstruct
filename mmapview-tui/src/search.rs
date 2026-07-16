@@ -8,10 +8,26 @@ pub struct SearchState {
     pub match_idx: Option<usize>,
 }
 
-/// Parsed fast-path: `field: number` or `field=number`.
+/// Parsed fast-path: `field:target` or `field=target`.
+///
+/// For arrays:
+/// - `field` empty → `target_str` is the array index to jump to
+/// - `field` set   → `target_str` is the expected numeric value of that field
+///
+/// For HashMaps:
+/// - `field` empty → `target_str` is the entry index (numeric)
+/// - `field` set   → `target_str` is the key value to binary-search for
 pub struct FastPath {
     pub field: String,
-    pub target: u64,
+    pub target_str: String,
+}
+
+impl FastPath {
+    /// Parse `target_str` as a numeric `u64` for array-index jumps
+    /// and field-value verification.
+    pub fn target_as_num(&self) -> Option<u64> {
+        self.target_str.parse().ok()
+    }
 }
 
 impl SearchState {
@@ -43,17 +59,15 @@ impl SearchState {
         self.match_idx = None;
     }
 
-    /// Try to parse the pattern as a fast-path field:number search.
-    /// Returns `Some(FastPath)` for patterns like `id:42` or `id=42`.
+    /// Try to parse the pattern as a fast-path `field:target` or `field=target`.
     pub fn parse_fast_path(&self) -> Option<FastPath> {
         let p = self.pattern.trim();
-        let (field, num_str) = p.split_once(':').or_else(|| p.split_once('='))?;
+        let (field, target) = p.split_once(':').or_else(|| p.split_once('='))?;
         let field = field.trim().to_string();
-        let num_str = num_str.trim();
-        if num_str.is_empty() {
+        let target = target.trim().to_string();
+        if target.is_empty() {
             return None;
         }
-        let target: u64 = num_str.parse().ok()?;
-        Some(FastPath { field, target })
+        Some(FastPath { field, target_str: target })
     }
 }
