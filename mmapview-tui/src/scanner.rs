@@ -407,7 +407,7 @@ impl Scanner {
             |ctx: StepContext| {
                 use std::fmt::Write;
                 let indent = "  ".repeat(ctx.depth);
-                let name = ctx.parent.and_then(|(p, idx)| self.field_name(&p, idx)).unwrap_or("");
+                let name = ctx.parent.and_then(|(p, idx)| self.field_name(&p, idx)).unwrap_or_default();
                 let type_ann = type_annotation(self.ctx.type_reader(ctx.val.type_idx));
                 let inline = inline_value_text(self.ctx, &ctx.val);
                 let has_children = self.child_count(&ctx.val) > 0;
@@ -448,7 +448,7 @@ impl Scanner {
         let name = parent
             .as_ref()
             .and_then(|(p, idx)| self.field_name(p, *idx))
-            .unwrap_or("");
+            .unwrap_or_default();
         let type_ann = type_annotation(self.ctx.type_reader(val.type_idx));
         let byref = parent.as_ref().map_or(false, |(p, idx)| self.ctx.is_field_byref(p, *idx));
         let inline = if byref {
@@ -476,7 +476,7 @@ impl Scanner {
         let name = parent
             .as_ref()
             .and_then(|(p, idx)| self.field_name(p, *idx))
-            .unwrap_or("");
+            .unwrap_or_default();
         let type_ann = type_annotation(self.ctx.type_reader(val.type_idx));
         let byref = parent.as_ref().map_or(false, |(p, idx)| self.ctx.is_field_byref(p, *idx));
         let prefix_len = if name.is_empty() {
@@ -629,11 +629,15 @@ impl Scanner {
         Path(segs)
     }
 
-    pub(crate) fn field_name(&self, parent: &SchemaValue, idx: usize) -> Option<&str> {
+    pub(crate) fn field_name(&self, parent: &SchemaValue, idx: usize) -> Option<String> {
         let t = self.ctx.type_reader(parent.type_idx);
         match t {
             TypeDefReader::Struct { fields, .. } => {
-                fields.get(idx).map(|f| f.name.as_ref())
+                fields.get(idx).map(|f| f.name.to_string())
+            }
+            TypeDefReader::HashMap { .. } => {
+                let (key, _) = self.ctx.hashmap_get_index(parent, idx)?;
+                Some(inline_value_text(self.ctx, &key))
             }
             _ => None,
         }
