@@ -231,6 +231,104 @@ fn test_tuple_display() {
 }
 
 #[test]
+fn test_field_type_display() {
+    use mmapstruct_schema::write_to_file_with_embedded_schema;
+
+    // Use three separate structs to avoid scanner issues with byref Option.
+    // ── Inline string + Option<u32> ──
+    #[derive(MmapStruct, Debug)]
+    struct InlineDemo {
+        #[mmap(inline(32))]
+        code: String,
+        maybe_count: Option<u32>,
+    }
+    let demo1 = InlineDemo {
+        code: "ABC123".into(),
+        maybe_count: Some(42),
+    };
+    let buf1 = write_to_file_with_embedded_schema(&demo1, false);
+    let loaded1 = mmapview_tui::schema::load_schema(&buf1, None).unwrap();
+    let d1: &'static [u8] = Box::leak(buf1.into_boxed_slice());
+    let sb1: &'static [u8] = Box::leak(loaded1.schema_bytes.into_boxed_slice());
+    let ctx1 = Box::leak(Box::new(
+        mmapstruct_schema::context::RuntimeSchemaCtx::new(d1, sb1),
+    ));
+    let sr1 = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(sb1, 0..sb1.len());
+    let root1 = mmapstruct_schema::SchemaValue::new(
+        loaded1.payload_range.start as u64,
+        loaded1.payload_range.end as u64,
+        *sr1.root_type,
+    );
+    let sc1 = mmapview_tui::scanner::Scanner::new(ctx1, root1, 100);
+    let os1 = mmapview_tui::overscan::Overscan::build(sc1, |_| true);
+    let t1: Vec<&str> = os1.nodes.iter().map(|n| n.display_text.as_str()).collect();
+    let j1 = t1.join("\n");
+    println!("=== Inline + Option<u32> ===\n{j1}\n============================");
+
+    assert!(t1.iter().any(|t| t.contains("ABC123")), "inline value missing:\n{j1}");
+    assert!(t1.iter().any(|t| t.contains("42")), "option value 42 missing:\n{j1}");
+
+    // ── Vec<String> (indexed array) ──
+    #[derive(MmapStruct, Debug)]
+    struct VecDemo {
+        tags: Vec<String>,
+    }
+    let demo2 = VecDemo {
+        tags: vec!["alpha".into(), "beta".into()],
+    };
+    let buf2 = write_to_file_with_embedded_schema(&demo2, false);
+    let loaded2 = mmapview_tui::schema::load_schema(&buf2, None).unwrap();
+    let d2: &'static [u8] = Box::leak(buf2.into_boxed_slice());
+    let sb2: &'static [u8] = Box::leak(loaded2.schema_bytes.into_boxed_slice());
+    let ctx2 = Box::leak(Box::new(
+        mmapstruct_schema::context::RuntimeSchemaCtx::new(d2, sb2),
+    ));
+    let sr2 = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(sb2, 0..sb2.len());
+    let root2 = mmapstruct_schema::SchemaValue::new(
+        loaded2.payload_range.start as u64,
+        loaded2.payload_range.end as u64,
+        *sr2.root_type,
+    );
+    let sc2 = mmapview_tui::scanner::Scanner::new(ctx2, root2, 100);
+    let os2 = mmapview_tui::overscan::Overscan::build(sc2, |_| true);
+    let t2: Vec<&str> = os2.nodes.iter().map(|n| n.display_text.as_str()).collect();
+    let j2 = t2.join("\n");
+    println!("=== Vec<String> ===\n{j2}\n====================");
+
+    assert!(t2.iter().any(|t| t.contains("alpha")), "array elem alpha missing:\n{j2}");
+    assert!(t2.iter().any(|t| t.contains("beta")), "array elem beta missing:\n{j2}");
+
+    // ── #[mmap(bool)] u32 ──
+    #[derive(MmapStruct, Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+    #[repr(C)]
+    struct BoolDemo {
+        #[mmap(bool)]
+        enabled: u32,
+    }
+    let demo3 = BoolDemo { enabled: 1 };
+    let buf3 = write_to_file_with_embedded_schema(&demo3, false);
+    let loaded3 = mmapview_tui::schema::load_schema(&buf3, None).unwrap();
+    let d3: &'static [u8] = Box::leak(buf3.into_boxed_slice());
+    let sb3: &'static [u8] = Box::leak(loaded3.schema_bytes.into_boxed_slice());
+    let ctx3 = Box::leak(Box::new(
+        mmapstruct_schema::context::RuntimeSchemaCtx::new(d3, sb3),
+    ));
+    let sr3 = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(sb3, 0..sb3.len());
+    let root3 = mmapstruct_schema::SchemaValue::new(
+        loaded3.payload_range.start as u64,
+        loaded3.payload_range.end as u64,
+        *sr3.root_type,
+    );
+    let sc3 = mmapview_tui::scanner::Scanner::new(ctx3, root3, 100);
+    let os3 = mmapview_tui::overscan::Overscan::build(sc3, |_| true);
+    let t3: Vec<&str> = os3.nodes.iter().map(|n| n.display_text.as_str()).collect();
+    let j3 = t3.join("\n");
+    println!("=== BoolDemo ===\n{j3}\n=================");
+
+    assert!(t3.iter().any(|t| t.contains("true")), "bool value true missing:\n{j3}");
+}
+
+#[test]
 fn test_build_hash_map() {
     use std::collections::HashMap;
     let map: HashMap<Status, u64> = [
