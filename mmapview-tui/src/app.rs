@@ -201,11 +201,7 @@ impl App {
                     val: arr,
                     shift: PathShift::Entry(idx as usize),
                 });
-                let new_scanner = Scanner::from_path(ctx, path, OVERSCAN_STEPS);
-                self.overscan = Overscan::from_next(&self.overscan, new_scanner);
-                self.viewport.selected = 0;
-                self.viewport.scroll = 0;
-                self.search.match_idx = Some(0);
+                self.move_to_search_result(path);
                 self.search_message = None;
                 return true;
             }
@@ -228,11 +224,7 @@ impl App {
                 val: arr,
                 shift: PathShift::Entry(idx as usize),
             });
-            let new_scanner = Scanner::from_path(ctx, path, OVERSCAN_STEPS);
-            self.overscan = Overscan::from_next(&self.overscan, new_scanner);
-            self.viewport.selected = 0;
-            self.viewport.scroll = 0;
-            self.search.match_idx = Some(0);
+            self.move_to_search_result(path);
             self.search_message = None;
             return true;
         }
@@ -270,11 +262,7 @@ impl App {
             val: map_val,
             shift: PathShift::Entry(idx),
         });
-        let new_scanner = Scanner::from_path(ctx, path, OVERSCAN_STEPS);
-        self.overscan = Overscan::from_next(&self.overscan, new_scanner);
-        self.viewport.selected = 0;
-        self.viewport.scroll = 0;
-        self.search.match_idx = Some(0);
+        self.move_to_search_result(path);
         self.search_message = None;
         true
     }
