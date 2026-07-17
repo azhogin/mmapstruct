@@ -13,6 +13,17 @@ use crate::write_helpers;
 #[cfg(feature = "dyn")]
 use crate::schema::generate_enum_schema_impl;
 
+#[cfg(feature = "dyn")]
+fn repr_to_disc_size(repr_name: &str) -> proc_macro2::TokenStream {
+    match repr_name {
+        "u8" | "i8" => quote! { 1u64 },
+        "u16" | "i16" => quote! { 2u64 },
+        "u32" | "i32" => quote! { 4u64 },
+        "u64" | "i64" => quote! { 8u64 },
+        _ => panic!("unsupported repr for pod enum: {}", repr_name),
+    }
+}
+
 /// Per-variant generated code for enum handling.
 pub(crate) struct VarGen {
     pub(crate) ident: proc_macro2::Ident,
@@ -78,6 +89,70 @@ fn handle_pod_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStream {
                 #(#disc_hashes),*
             ]);
         }
+    };
+
+    let schema_impl = {
+        #[cfg(feature = "dyn")]
+        {
+            let name_str = name.to_string();
+            let enum_schema_name = format_ident!("__mmap_ENUM_{}", name);
+
+            let mut variant_schema_statics = Vec::new();
+            let mut variant_schema_refs = Vec::new();
+
+            for v in de.variants.iter() {
+                let vident = &v.ident;
+                let schema_name = format_ident!("__mmap_ENUMVAR_{}_{}", name, vident);
+                let field_statics_name = format_ident!("__mmap_ENUMVAR_FIELDS_{}_{}", name, vident);
+                variant_schema_statics.push(quote! {
+                    #[allow(non_upper_case_globals)]
+                    static #field_statics_name: [::mmapstruct::schema::FieldDescriptor; 0] = [];
+                    #[allow(non_upper_case_globals)]
+                    static #schema_name: ::mmapstruct::schema::StructSchema = ::mmapstruct::schema::StructSchema {
+                        name: concat!(#name_str, "::", stringify!(#vident)),
+                        fields: &#field_statics_name,
+                        fixed_section_size: 0u64,
+                        header_size: 0u64,
+                        inline_dyn_count: 0usize,
+                    };
+                });
+                variant_schema_refs.push(quote! { &#schema_name });
+            }
+
+            let disc_size = repr_to_disc_size(repr_name);
+            let schema_refs = variant_schema_refs;
+            let var_statics = variant_schema_statics
+                .into_iter()
+                .collect::<proc_macro2::TokenStream>();
+
+            quote! {
+                #var_statics
+                #[allow(non_upper_case_globals)]
+                static #enum_schema_name: ::mmapstruct::schema::EnumSchema = ::mmapstruct::schema::EnumSchema {
+                    name: #name_str,
+                    variants: &[#(#schema_refs),*],
+                    disc_size: #disc_size,
+                };
+                impl ::mmapstruct::schema::GetSchema for #name {
+                    fn get_struct_schema() -> &'static ::mmapstruct::schema::StructSchema {
+                        panic!("GetSchema::get_struct_schema() called on enum type {}; use root_value_type() instead", stringify!(#name));
+                    }
+                    fn root_value_type() -> &'static ::mmapstruct::schema::DynValueType {
+                        static VT: ::mmapstruct::schema::DynValueType = ::mmapstruct::schema::DynValueType::Enum(&#enum_schema_name);
+                        &VT
+                    }
+                }
+            }
+        }
+        #[cfg(not(feature = "dyn"))]
+        {
+            quote! {}
+        }
+    };
+
+    let output = quote! {
+        #output
+        #schema_impl
     };
 
     output.into()

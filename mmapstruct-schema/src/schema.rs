@@ -43,15 +43,6 @@ impl From<&PrimitiveDef> for PrimitiveDef {
     }
 }
 
-impl mmapstruct::GetSchema for PrimitiveDef {
-    fn root_value_type() -> &'static mmapstruct::schema::DynValueType {
-        &mmapstruct::schema::VT_U32
-    }
-    fn get_struct_schema() -> &'static mmapstruct::schema::StructSchema {
-        panic!("PrimitiveDef is not a struct")
-    }
-}
-
 /// A single type definition in the schema type table.
 #[derive(MmapStruct, Debug, PartialEq)]
 pub enum TypeDef {

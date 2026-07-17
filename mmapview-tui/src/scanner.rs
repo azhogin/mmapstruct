@@ -708,6 +708,7 @@ impl Scanner {
 fn type_name_short<'a>(t: &'a TypeDefReader<'a>) -> &'a str {
     match t {
         TypeDefReader::Struct { name, .. } => name,
+        TypeDefReader::Enum { name, .. } => name,
         TypeDefReader::Array { .. } => "[]",
         TypeDefReader::HashMap { .. } => "{}",
         _ => {

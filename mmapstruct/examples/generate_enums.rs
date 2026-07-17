@@ -10,9 +10,23 @@ enum Shape {
     Empty,
 }
 
+#[derive(MmapStruct, Clone, Copy, Debug)]
+#[repr(u32)]
+enum Color {
+    Red,
+    Green,
+    Blue,
+    Yellow,
+}
+
+impl From<&Color> for Color {
+    fn from(v: &Color) -> Self { *v }
+}
+
 #[derive(MmapStruct, Debug)]
 struct MyEnums {
     shapes: Vec<Shape>,
+    colors: Vec<Color>,
 }
 
 fn format_bytes(n: u64) -> String {
@@ -36,14 +50,31 @@ fn main() {
         })
         .collect();
 
-    let root = MyEnums { shapes };
+    let colors: Vec<Color> = (0..count)
+        .map(|i| match i % 4 {
+            0 => Color::Red,
+            1 => Color::Green,
+            2 => Color::Blue,
+            _ => Color::Yellow,
+        })
+        .collect();
+
+    let root = MyEnums { shapes, colors };
 
     let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&root, false);
     let path = PathBuf::from("/tmp/enums.mms");
     fs::write(&path, &buf).expect("write file");
 
     let file_size = buf.len() as u64;
-    println!("Written 1 enum array × {count} entries to {}", path.display());
+
+    let shape_byte_size = count as u64 * (1 + 8)    // tag + radius (Circle)
+        + count as u64 * (1 + 8 + 8) / 3 * 2        // some Rect
+        + count as u64 * 1 / 3;                     // some Empty (tag only)
+    let color_byte_size = count as u64 * 4;          // pod u32
+
+    println!("Written 2 enum arrays × {count} entries each to {}", path.display());
     println!();
     println!("{:<30} {:>14}", "Total file size", format_bytes(file_size));
+    println!("{:<30} {:>14}", "shapes (Vec<Shape>)", format_bytes(shape_byte_size));
+    println!("{:<30} {:>14}", "colors (Vec<Color>)", format_bytes(color_byte_size));
 }
