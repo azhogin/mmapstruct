@@ -326,6 +326,55 @@ fn test_field_type_display() {
     println!("=== BoolDemo ===\n{j3}\n=================");
 
     assert!(t3.iter().any(|t| t.contains("true")), "bool value true missing:\n{j3}");
+
+}
+
+/// Reproduction for scanner bug: byref Option causes infinite loop / node duplication.
+/// The scanner emits ~100 copies of the inner `Some(...)` as top-level "type=N" nodes.
+/// Remove `#[ignore]` once the scanner handles DynamicOption-byref correctly.
+#[test]
+#[ignore]
+fn test_byref_option_scanner_bug() {
+    use mmapstruct_schema::write_to_file_with_embedded_schema;
+
+    #[derive(MmapStruct, Debug)]
+    struct BugDemo {
+        #[mmap(byref)]
+        label: Option<String>,
+    }
+    let demo = BugDemo { label: Some("test".into()) };
+    let buf = write_to_file_with_embedded_schema(&demo, false);
+
+    let loaded = mmapview_tui::schema::load_schema(&buf, None).unwrap();
+    let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
+    let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
+    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
+        Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes)));
+
+    let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
+        schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+    let root = mmapstruct_schema::SchemaValue::new(
+        loaded.payload_range.start as u64,
+        loaded.payload_range.end as u64,
+        root_type,
+    );
+
+    let scanner = mmapview_tui::scanner::Scanner::new(ctx, root, 100);
+    let os = mmapview_tui::overscan::Overscan::build(scanner, |_| true);
+    let texts: Vec<&str> = os.nodes.iter().map(|n| n.display_text.as_str()).collect();
+    let joined = texts.join("\n");
+
+    // A healthy struct with one field produces at most 3 nodes (field header + inner).
+    // The bug produces 100 entries (full scanner capacity).
+    assert!(
+        texts.len() <= 5,
+        "byref Option scanner bug: expected ≤5 nodes, got {}:\n{}",
+        texts.len(),
+        joined,
+    );
 }
 
 #[test]
