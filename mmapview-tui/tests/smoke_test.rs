@@ -104,6 +104,132 @@ fn test_build_enum_tree() {
     let _ = mmapview_tui::print::inline_value_text(ctx, &os.nodes[0].value);
 }
 
+// ── Data structures for tuple display test ──
+
+#[derive(MmapStruct, Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct PodPoint(u32, u32);
+
+#[derive(MmapStruct, Debug)]
+struct DynPair(String, String);
+
+#[derive(MmapStruct, Debug)]
+struct WithTuple {
+    point: PodPoint,
+    tag: String,
+}
+
+#[derive(MmapStruct, Debug)]
+enum Item {
+    Named { id: u32 },
+    Pair(String, u32),
+}
+
+#[derive(MmapStruct, Debug)]
+struct TupleDisplayDemo {
+    #[pod]
+    points: Vec<PodPoint>,
+    pairs: Vec<DynPair>,
+    nested: WithTuple,
+    items: Vec<Item>,
+}
+
+#[test]
+fn test_tuple_display() {
+    let demo = TupleDisplayDemo {
+        points: vec![PodPoint(10, 20), PodPoint(30, 40)],
+        pairs: vec![DynPair("hello".into(), "world".into())],
+        nested: WithTuple {
+            point: PodPoint(1, 2),
+            tag: "test".into(),
+        },
+        items: vec![
+            Item::Named { id: 7 },
+            Item::Pair("foo".into(), 99),
+        ],
+    };
+    let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&demo, false);
+
+    let loaded = mmapview_tui::schema::load_schema(&buf, None).unwrap();
+    let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
+    let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
+    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
+        Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes)));
+
+    let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
+        schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+    let root = mmapstruct_schema::SchemaValue::new(
+        loaded.payload_range.start as u64,
+        loaded.payload_range.end as u64,
+        root_type,
+    );
+
+    let scanner = mmapview_tui::scanner::Scanner::new(ctx, root, 100);
+    let os = mmapview_tui::overscan::Overscan::build(scanner, |_| true);
+    assert!(!os.nodes.is_empty(), "should have at least a root node");
+
+    // Collect display texts for assertions
+    let texts: Vec<&str> = os.nodes.iter().map(|n| n.display_text.as_str()).collect();
+    let joined = texts.join("\n");
+    println!("=== Tuple display nodes ===\n{joined}\n=========================");
+
+    // Item 1: Pod tuple array – field names "0" and "1"
+    assert!(
+        texts.iter().any(|t| t.contains("0: u32 = 10")),
+        "expected pod tuple field 0 with value 10, got:\n{}",
+        joined
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("1: u32 = 20")),
+        "expected pod tuple field 1 with value 20, got:\n{}",
+        joined
+    );
+
+    // Item 2: All-dynamic tuple array – fields "0" and "1"
+    assert!(
+        texts.iter().any(|t| t.contains("0: str = \"hello\"")),
+        "expected dyn pair field 0 = \"hello\", got:\n{}",
+        joined
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("1: str = \"world\"")),
+        "expected dyn pair field 1 = \"world\", got:\n{}",
+        joined
+    );
+
+    // Item 3: Tuple struct as a direct (nested) field
+    assert!(
+        texts.iter().any(|t| t.contains("point = PodPoint")),
+        "expected nested tuple field named 'point', got:\n{}",
+        joined
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("0: u32 = 1")),
+        "expected nested pod tuple field 0 = 1, got:\n{}",
+        joined
+    );
+
+    // Item 4: Enum with tuple variant
+    assert!(
+        texts.iter().any(|t| t.contains("Item::Pair")),
+        "expected tuple enum variant 'Item::Pair', got:\n{}",
+        joined
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("0: str = \"foo\"")),
+        "expected tuple variant field 0 = \"foo\", got:\n{}",
+        joined
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("1: u32 = 99")),
+        "expected tuple variant field 1 = 99, got:\n{}",
+        joined
+    );
+}
+
 #[test]
 fn test_build_hash_map() {
     use std::collections::HashMap;
