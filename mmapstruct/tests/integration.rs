@@ -2057,6 +2057,19 @@ fn test_tuple_struct_default() {
     assert_eq!(t.1, 0);
 }
 
+#[derive(MmapStruct, Debug, Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct Empty();
+
+#[test]
+fn test_empty_tuple_struct() {
+    let m = Empty();
+    let buf = mmapstruct::write_to_buf(&m, false);
+    let r = mmapstruct::BufReader::new(buf);
+    let reader = r.read::<Empty>();
+    let _restored: Empty = reader.into();
+}
+
 #[cfg(feature = "dyn")]
 #[test]
 fn test_bool_schema_dyn() {

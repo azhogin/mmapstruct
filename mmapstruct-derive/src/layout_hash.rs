@@ -10,7 +10,7 @@ pub(crate) fn generate_layout_hash_impl(
     name: &proc_macro2::Ident,
     fields: &[FieldInfo],
 ) -> proc_macro2::TokenStream {
-    let field_hashes: Vec<_> = fields.iter().map(|fi| {
+    let mut field_hashes: Vec<_> = fields.iter().map(|fi| {
         let ty = &fi.ty;
         let base = quote! { <#ty as ::mmapstruct::traits::LayoutHash>::HASH };
 
@@ -45,12 +45,13 @@ pub(crate) fn generate_layout_hash_impl(
     let fs_name = format_ident!("__MMAP_FS_{}", name);
     let hs_name = format_ident!("__MMAP_HS_{}", name);
 
+    field_hashes.push(quote! { #fs_name as u64 });
+    field_hashes.push(quote! { #hs_name as u64 });
+
     quote! {
         impl ::mmapstruct::traits::LayoutHash for #name {
             const HASH: u64 = ::mmapstruct::traits::combine_hashes(&[
-                #(#field_hashes),*,
-                #fs_name as u64,
-                #hs_name as u64,
+                #(#field_hashes),*
             ]);
         }
     }

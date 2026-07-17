@@ -20,7 +20,12 @@ struct LabelledPoint(u32, u32, #[mmap(byref, dedup)] String);
 #[derive(MmapStruct, Debug)]
 struct TaggedPoint(u32, String, Vec<u8>);
 
-// ── Root struct with all three arrays ──
+// ── Indexed tuple element with zero fixed-section bytes (all dynamic) ──
+
+#[derive(MmapStruct, Debug)]
+struct JustStrings(String, String);
+
+// ── Root struct with all arrays ──
 
 #[derive(MmapStruct, Debug)]
 struct TupleArrays {
@@ -29,6 +34,7 @@ struct TupleArrays {
     #[fixed]
     labels: Vec<LabelledPoint>,
     points: Vec<TaggedPoint>,
+    names: Vec<JustStrings>,
 }
 
 fn format_bytes(n: u64) -> String {
@@ -64,10 +70,18 @@ fn main() {
         })
         .collect();
 
+    let names: Vec<JustStrings> = (0..count)
+        .map(|i| JustStrings(
+            buckets[i % buckets.len()].to_string(),
+            format!("value_{}", i),
+        ))
+        .collect();
+
     let root = TupleArrays {
         colors,
         labels,
         points,
+        names,
     };
 
     let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&root, false);
@@ -80,19 +94,21 @@ fn main() {
     let colors_payload = count as u64 * 3;           // 3 bytes per Rgb
     let labels_payload = count as u64 * 16;          // u32 + u32 + ByRefRange(8) = 16
     let points_fixed = count as u64 * 4;             // u32 only in fixed section
+    let names_fixed = 0;                             // no fixed section
 
-    let overhead = file_size - colors_payload - labels_payload - points_fixed;
+    let total_fixed = colors_payload + labels_payload + points_fixed + names_fixed;
+    let overhead = file_size - total_fixed;
 
-    println!("Written 3 tuple arrays × {count} elements to {}", path.display());
+    println!("Written 4 tuple arrays × {count} elements to {}", path.display());
     println!("bucket cycles through 5 short names → byref+dedup stores each only once.\n");
 
     println!("{:<30} {:>14}", "Total file size", format_bytes(file_size));
-    println!("{:<30} {:>14}", "Expected raw payload (all fixed sections)", format_bytes(colors_payload + labels_payload + points_fixed));
+    println!("{:<30} {:>14}", "Expected raw payload (all fixed sections)", format_bytes(total_fixed));
     println!("{:<30} {:>14}", "Overhead (schema + framing + postponed + extra)", format_bytes(overhead));
     println!();
     println!("Section payload estimates:");
     println!("  {:12}  {:>12} (3 B/elem)", "pod:", format_bytes(colors_payload));
     println!("  {:12}  {:>12} (16 B/elem + dedup strings)", "fixed:", format_bytes(labels_payload));
-    println!("  {:12}  {:>12} (4 B/elem + avg 49.5 B extra + offset table)",
-        "indexed:", format_bytes(points_fixed));
+    println!("  {:12}  {:>12} (4 B/elem + avg 49.5 B extra + offset table)", "indexed(u32):", format_bytes(points_fixed));
+    println!("  {:12}  {:>12} (no fixed section; 2 dynamic strings + 24 B offset table per elem)", "indexed(str):", format_bytes(names_fixed));
 }
