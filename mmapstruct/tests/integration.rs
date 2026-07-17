@@ -2014,6 +2014,49 @@ fn test_mixed_bool_write_read() {
     assert_eq!(reader.name, "test");
 }
 
+#[derive(MmapStruct, Debug, PartialEq, Clone, Copy, Pod, Zeroable, Default)]
+#[repr(C)]
+struct TuplePoint(u32, u32);
+
+#[derive(MmapStruct, Debug, PartialEq)]
+struct TupleStructFile {
+    #[pod]
+    points: Vec<TuplePoint>,
+    labels: Vec<String>,
+}
+
+#[test]
+fn test_tuple_struct_write_read() {
+    let pts = vec![
+        TuplePoint(1, 10),
+        TuplePoint(2, 20),
+        TuplePoint(3, 30),
+    ];
+    let w = TupleStructFile {
+        labels: vec!["a".into(), "b".into(), "c".into()],
+        points: pts.clone(),
+    };
+    let buf = mmapstruct::write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<TupleStructFile>();
+    assert_eq!(reader.points[0].0, 1);
+    assert_eq!(reader.points[1].0, 2);
+    assert_eq!(reader.points[2].0, 3);
+    assert_eq!(reader.points[0].1, 10);
+    assert_eq!(reader.points[2].1, 30);
+
+    // Round-trip via owned conversion
+    let restored: TupleStructFile = reader.into();
+    assert_eq!(restored, w);
+}
+
+#[test]
+fn test_tuple_struct_default() {
+    let t = TuplePoint::default();
+    assert_eq!(t.0, 0);
+    assert_eq!(t.1, 0);
+}
+
 #[cfg(feature = "dyn")]
 #[test]
 fn test_bool_schema_dyn() {

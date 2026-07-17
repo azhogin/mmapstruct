@@ -1,6 +1,6 @@
 //! The `FieldInfo` struct, `reader_type()`, and `analyze_fields()`.
 
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::Fields;
 
 use crate::attrs::*;
@@ -73,22 +73,17 @@ pub(crate) fn reader_type(fi: &FieldInfo) -> proc_macro2::TokenStream {
 pub(crate) struct FieldAnalysis {
     pub fields: Vec<FieldInfo>,
     pub has_dynamic: bool,
+    pub is_tuple: bool,
 }
 
-pub(crate) fn analyze_fields(fields: &syn::Fields) -> FieldAnalysis {
-    let named_fields = match fields {
+fn analyze_named_fields(fields: &syn::Fields) -> FieldAnalysis {
+    let named = match fields {
         Fields::Named(f) => &f.named,
-        _ => {
-            return FieldAnalysis {
-                fields: Vec::new(),
-                has_dynamic: false,
-            }
-        }
+        _ => unreachable!(),
     };
-
     let mut all_fields: Vec<FieldInfo> = Vec::new();
 
-    for field in named_fields.iter() {
+    for field in named.iter() {
         let category = classify_field(field);
         let (is_byref, dedup, _inline_size, is_bool) = parse_mmap_attrs(&field.attrs);
 
@@ -118,5 +113,69 @@ pub(crate) fn analyze_fields(fields: &syn::Fields) -> FieldAnalysis {
     FieldAnalysis {
         fields: all_fields,
         has_dynamic,
+        is_tuple: false,
+    }
+}
+
+fn analyze_unnamed_fields(fields: &syn::Fields) -> FieldAnalysis {
+    let unnamed = match fields {
+        Fields::Unnamed(f) => &f.unnamed,
+        _ => unreachable!(),
+    };
+    let mut all_fields: Vec<FieldInfo> = Vec::new();
+
+    for (i, field) in unnamed.iter().enumerate() {
+        let ident = format_ident!("_{}", i);
+        let name = i.to_string();
+        let category = classify_field(field);
+        let (is_byref, dedup, _inline_size, is_bool) = parse_mmap_attrs(&field.attrs);
+
+        if is_bool {
+            if !is_u32_type(&field.ty) {
+                panic!("#[mmap(bool)] is only supported on u32 fields");
+            }
+        }
+        if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).map_or(false, |n| n == "bool") {
+            panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
+        }
+
+        all_fields.push(FieldInfo {
+            name,
+            ty: field.ty.clone(),
+            category,
+            has_byref_attr: is_byref,
+            dedup,
+            ident,
+            is_mmap_bool: is_bool,
+        });
+    }
+
+    let has_dynamic = all_fields.iter().any(|f| !is_pod_field(&f.category));
+    FieldAnalysis {
+        fields: all_fields,
+        has_dynamic,
+        is_tuple: true,
+    }
+}
+
+pub(crate) fn analyze_fields(fields: &syn::Fields) -> FieldAnalysis {
+    match fields {
+        Fields::Named(_) => analyze_named_fields(fields),
+        Fields::Unnamed(_) => analyze_unnamed_fields(fields),
+        Fields::Unit => FieldAnalysis {
+            fields: Vec::new(),
+            has_dynamic: false,
+            is_tuple: false,
+        },
+    }
+}
+
+/// Convert a FieldInfo to a syn::Member for field access.
+pub(crate) fn field_member(fi: &FieldInfo, is_tuple: bool) -> syn::Member {
+    if is_tuple {
+        let idx: usize = fi.name.parse().expect("tuple field name should be a number");
+        syn::Member::Unnamed(syn::Index::from(idx))
+    } else {
+        syn::Member::Named(fi.ident.clone())
     }
 }

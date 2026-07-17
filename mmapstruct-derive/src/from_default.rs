@@ -11,34 +11,50 @@ pub(crate) fn generate_from_impl(
     name: &proc_macro2::Ident,
     reader_name: &proc_macro2::Ident,
     fields: &[FieldInfo],
+    is_tuple: bool,
 ) -> proc_macro2::TokenStream {
     let conversions: Vec<_> = fields
         .iter()
         .map(|fi| {
-            let fident = &fi.ident;
+            let member = field_member(fi, is_tuple);
             let expr = match &fi.category {
                 FieldCategory::PodPrimitive | FieldCategory::PodCustom => {
-                    quote! { *r.#fident }
+                    quote! { *r.#member }
                 }
                 FieldCategory::DynamicOption { inner } => {
                     if is_primitive_pod(inner) {
-                        quote! { r.#fident.map(|v| *v) }
+                        quote! { r.#member.map(|v| *v) }
                     } else {
-                        quote! { r.#fident.map(|v| v.into()) }
+                        quote! { r.#member.map(|v| v.into()) }
                     }
                 }
                 _ => {
-                    quote! { r.#fident.into() }
+                    quote! { r.#member.into() }
                 }
             };
-            quote! { #fident: #expr }
+            if is_tuple {
+                expr
+            } else {
+                let fident = &fi.ident;
+                quote! { #fident: #expr }
+            }
         })
         .collect();
 
-    quote! {
-        impl<'a> From<#reader_name<'a>> for #name {
-            fn from(r: #reader_name<'a>) -> Self {
-                Self { #(#conversions),* }
+    if is_tuple {
+        quote! {
+            impl<'a> From<#reader_name<'a>> for #name {
+                fn from(r: #reader_name<'a>) -> Self {
+                    Self(#(#conversions),*)
+                }
+            }
+        }
+    } else {
+        quote! {
+            impl<'a> From<#reader_name<'a>> for #name {
+                fn from(r: #reader_name<'a>) -> Self {
+                    Self { #(#conversions),* }
+                }
             }
         }
     }
@@ -49,6 +65,7 @@ pub(crate) fn generate_reader_owned_impl(
     name: &proc_macro2::Ident,
     _reader_name: &proc_macro2::Ident,
     _fields: &[FieldInfo],
+    _is_tuple: bool,
 ) -> proc_macro2::TokenStream {
     quote! {
         impl ::mmapstruct::traits::ReaderOwned for #name {
@@ -64,6 +81,7 @@ pub(crate) fn generate_reader_ord_impl(
     name: &proc_macro2::Ident,
     reader_name: &proc_macro2::Ident,
     fields: &[FieldInfo],
+    is_tuple: bool,
 ) -> proc_macro2::TokenStream {
     let is_simple_field = |cat: &FieldCategory| -> bool {
         match cat {
@@ -80,21 +98,21 @@ pub(crate) fn generate_reader_ord_impl(
     }
 
     let comparisons: Vec<_> = fields.iter().map(|fi| {
-        let fident = &fi.ident;
+        let member = field_member(fi, is_tuple);
         match &fi.category {
             FieldCategory::PodPrimitive | FieldCategory::PodCustom => {
                 if is_f32_or_f64(&fi.ty) {
-                    quote! { reader.#fident.partial_cmp(&key.#fident).unwrap_or(std::cmp::Ordering::Equal) }
+                    quote! { reader.#member.partial_cmp(&key.#member).unwrap_or(std::cmp::Ordering::Equal) }
                 } else {
-                    quote! { reader.#fident.cmp(&key.#fident) }
+                    quote! { reader.#member.cmp(&key.#member) }
                 }
             }
             FieldCategory::DynamicString | FieldCategory::InlineString { .. } => {
-                quote! { reader.#fident.cmp(key.#fident.as_str()) }
+                quote! { reader.#member.cmp(key.#member.as_str()) }
             }
             FieldCategory::DynamicOption { inner } => {
                 quote! {
-                    match (&reader.#fident, &key.#fident) {
+                    match (&reader.#member, &key.#member) {
                         (Some(r), Some(k)) => <#inner as ::mmapstruct::traits::ReaderOrd>::cmp_reader(r, k),
                         (None, None) => std::cmp::Ordering::Equal,
                         (None, Some(_)) => std::cmp::Ordering::Less,
@@ -131,19 +149,30 @@ pub(crate) fn generate_reader_ord_impl(
 pub(crate) fn generate_default_impl(
     name: &proc_macro2::Ident,
     fields: &[FieldInfo],
+    is_tuple: bool,
 ) -> proc_macro2::TokenStream {
-    let defaults: Vec<_> = fields
-        .iter()
-        .map(|fi| {
-            let fident = &fi.ident;
-            quote! { #fident: Default::default() }
-        })
-        .collect();
-
-    quote! {
-        impl Default for #name {
-            fn default() -> Self {
-                Self { #(#defaults),* }
+    if is_tuple {
+        let defaults: Vec<_> = fields.iter().map(|_| quote! { Default::default() }).collect();
+        quote! {
+            impl Default for #name {
+                fn default() -> Self {
+                    Self(#(#defaults),*)
+                }
+            }
+        }
+    } else {
+        let defaults: Vec<_> = fields
+            .iter()
+            .map(|fi| {
+                let fident = &fi.ident;
+                quote! { #fident: Default::default() }
+            })
+            .collect();
+        quote! {
+            impl Default for #name {
+                fn default() -> Self {
+                    Self { #(#defaults),* }
+                }
             }
         }
     }

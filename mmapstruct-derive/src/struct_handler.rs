@@ -22,20 +22,22 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
     let analysis = analyze_fields(&ds.fields);
     let all_fields = &analysis.fields;
     let has_dynamic = analysis.has_dynamic;
+    let is_tuple = analysis.is_tuple;
 
     // Generate #[mmap(bool)] getter/setter methods
     let bool_methods: Vec<_> = all_fields
         .iter()
         .filter(|f| f.is_mmap_bool)
         .map(|f| {
+            let member = field_member(f, is_tuple);
             let fident = &f.ident;
             let set_ident = format_ident!("set_{}", fident);
             quote! {
                 pub fn #fident(&self) -> bool {
-                    self.#fident != 0
+                    self.#member != 0
                 }
                 pub fn #set_ident(&mut self, v: bool) {
-                    self.#fident = v as u32;
+                    self.#member = v as u32;
                 }
             }
         })
@@ -93,20 +95,21 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
     let fixed_layout_consts =
         generate_fixed_layout_consts(name, &all_fields, layout.inline_dyn_count);
 
-    let reader_struct = generate_reader_struct(&reader_name, &all_fields);
+    let reader_struct = generate_reader_struct(&reader_name, &all_fields, is_tuple);
     let read_impl = generate_read_impl(
         name,
         &reader_name,
         &all_fields,
         &layout,
         &inline_dyn_indices,
+        is_tuple,
     );
     let write_impl =
-        generate_write_impl(name, &all_fields, &layout, &inline_dyn_indices, is_scoped);
-    let from_impl = generate_from_impl(name, &reader_name, &all_fields);
-    let reader_owned_impl = generate_reader_owned_impl(name, &reader_name, &all_fields);
-    let reader_ord_impl = generate_reader_ord_impl(name, &reader_name, &all_fields);
-    let default_impl = generate_default_impl(name, &all_fields);
+        generate_write_impl(name, &all_fields, &layout, &inline_dyn_indices, is_scoped, is_tuple);
+    let from_impl = generate_from_impl(name, &reader_name, &all_fields, is_tuple);
+    let reader_owned_impl = generate_reader_owned_impl(name, &reader_name, &all_fields, is_tuple);
+    let reader_ord_impl = generate_reader_ord_impl(name, &reader_name, &all_fields, is_tuple);
+    let default_impl = generate_default_impl(name, &all_fields, is_tuple);
     let layout_hash_impl = generate_layout_hash_impl(name, &all_fields);
 
     let schema_impl = {

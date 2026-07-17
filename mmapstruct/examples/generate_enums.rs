@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use bytemuck::{Pod, Zeroable};
 use mmapstruct::MmapStruct;
 
 #[derive(MmapStruct, Debug)]
@@ -23,10 +24,15 @@ impl From<&Color> for Color {
     fn from(v: &Color) -> Self { *v }
 }
 
+#[derive(MmapStruct, Clone, Copy, Debug, Default, Pod, Zeroable)]
+#[repr(C)]
+struct Point(u32, u32);
+
 #[derive(MmapStruct, Debug)]
 struct MyEnums {
     shapes: Vec<Shape>,
     colors: Vec<Color>,
+    points: Vec<Point>,
 }
 
 fn format_bytes(n: u64) -> String {
@@ -59,7 +65,11 @@ fn main() {
         })
         .collect();
 
-    let root = MyEnums { shapes, colors };
+    let points: Vec<Point> = (0..count)
+        .map(|i| Point(i as u32, (i * 2) as u32))
+        .collect();
+
+    let root = MyEnums { shapes, colors, points };
 
     let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&root, false);
     let path = PathBuf::from("/tmp/enums.mms");
@@ -72,9 +82,12 @@ fn main() {
         + count as u64 * 1 / 3;                     // some Empty (tag only)
     let color_byte_size = count as u64 * 4;          // pod u32
 
-    println!("Written 2 enum arrays × {count} entries each to {}", path.display());
+    println!("Written enum arrays + tuple struct × {count} entries each to {}", path.display());
     println!();
+    let point_byte_size = count as u64 * 8; // two u32s
+
     println!("{:<30} {:>14}", "Total file size", format_bytes(file_size));
     println!("{:<30} {:>14}", "shapes (Vec<Shape>)", format_bytes(shape_byte_size));
     println!("{:<30} {:>14}", "colors (Vec<Color>)", format_bytes(color_byte_size));
+    println!("{:<30} {:>14}", "points (Vec<Point>)", format_bytes(point_byte_size));
 }

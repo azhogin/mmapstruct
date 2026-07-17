@@ -8,6 +8,16 @@ use crate::field_info::*;
 use crate::layout::*;
 use crate::write_helpers;
 
+/// Build a `syn::Member` from a field ident. For tuple structs the ident is `_0`, `_1`, etc.
+fn ident_member(id: &proc_macro2::Ident, is_tuple: bool) -> syn::Member {
+    if is_tuple {
+        let idx: usize = id.to_string().strip_prefix('_').unwrap().parse().expect("tuple field ident should be _N");
+        syn::Member::Unnamed(syn::Index::from(idx))
+    } else {
+        syn::Member::Named(id.clone())
+    }
+}
+
 /// Compute maximum field alignment for a list of fields.
 pub(crate) fn compute_max_field_align(fields: &[FieldInfo]) -> usize {
     let mut align = 1usize;
@@ -34,8 +44,12 @@ pub(crate) fn generate_write_impl(
     layout: &StructLayout,
     inline_dyn_indices: &[usize],
     scoped: bool,
+    is_tuple: bool,
 ) -> proc_macro2::TokenStream {
-    let field_ref = |id: &proc_macro2::Ident| quote! { &self.#id };
+    let field_ref = move |id: &proc_macro2::Ident| {
+        let member = ident_member(id, is_tuple);
+        quote! { &self.#member }
+    };
     let fixed_writes = write_helpers::generate_fixed_writes(fields, field_ref);
     let inline_dyn_writes = write_helpers::generate_inline_dyn_writes(fields, inline_dyn_indices, field_ref);
     let inline_dyn_count = layout.inline_dyn_count;
