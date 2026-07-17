@@ -329,11 +329,8 @@ fn test_field_type_display() {
 
 }
 
-/// Reproduction for scanner bug: byref Option causes infinite loop / node duplication.
-/// The scanner emits ~100 copies of the inner `Some(...)` as top-level "type=N" nodes.
-/// Remove `#[ignore]` once the scanner handles DynamicOption-byref correctly.
+/// Regression test: byref Option should not cause scanner infinite loop.
 #[test]
-#[ignore]
 fn test_byref_option_scanner_bug() {
     use mmapstruct_schema::write_to_file_with_embedded_schema;
 

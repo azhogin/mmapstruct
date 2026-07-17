@@ -384,9 +384,9 @@ impl Scanner {
             TypeDefReader::HashMap { .. } => {
                 self.ctx.hashmap_get_index(val, idx).map(|(_, v)| v)
             }
-            TypeDefReader::Option { .. } => {
+            TypeDefReader::Option { inner_type } => {
                 if idx == 0 && val.mmap_begin < val.mmap_end {
-                    Some(*val)
+                    Some(SchemaValue::new(val.mmap_begin, val.mmap_end, **inner_type))
                 } else {
                     None
                 }
