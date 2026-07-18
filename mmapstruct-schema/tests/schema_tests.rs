@@ -778,3 +778,113 @@ fn test_schema_query_path() {
     let v = navigate_path(&ctx, &root, "/items[1]/id").unwrap();
     assert_eq!(ctx.read_u32(&v), 20);
 }
+
+#[test]
+fn test_schema_fixed_array() {
+    use mmapstruct_schema::RuntimeSchemaCtx;
+    use mmapstruct_schema::SchemaValue;
+
+    #[derive(MmapStruct)]
+    struct WithArray {
+        id: u32,
+        mat: [[u32; 4]; 4],
+    }
+
+    let w = WithArray {
+        id: 42,
+        mat: [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]],
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<WithArray>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    // Verify id field
+    let id_val = ctx.field_get(&root, "id").unwrap();
+    assert_eq!(ctx.read_u32(&id_val), 42);
+
+    // Verify matrix field — top-level array
+    let mat_val = ctx.field_get(&root, "mat").unwrap();
+    assert_eq!(ctx.array_len(&mat_val), 4); // 4 rows
+
+    // Access row 2 (index 2)
+    let row = ctx.array_get(&mat_val, 2).unwrap();
+    assert_eq!(ctx.array_len(&row), 4); // 4 cols per row
+
+    // Access element [2][1] = 10
+    let elem = ctx.array_get(&row, 1).unwrap();
+    assert_eq!(ctx.read_u32(&elem), 10);
+
+    // Quick format check
+    let s = format_schema_value(&ctx, &root);
+    assert!(s.contains("\"id\": 42"), "missing id: {s}");
+    assert!(s.contains("[\n      1,\n      2,\n      3,\n      4\n    ]"), "missing row 0: {s}");
+    assert!(s.contains("[\n      13,\n      14,\n      15,\n      16\n    ]"), "missing row 3: {s}");
+}
+
+#[test]
+fn test_schema_fixed_array_top_level() {
+    #[derive(MmapStruct)]
+    struct SimpleArray {
+        arr: [u32; 4],
+    }
+
+    let w = SimpleArray { arr: [10, 20, 30, 40] };
+    let data = write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<SimpleArray>();
+    let schema_bytes = write_to_buf_raw(&schema);
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, *<mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len()).root_type);
+
+    let arr_val = ctx.field_get(&root, "arr").unwrap();
+    assert_eq!(ctx.array_len(&arr_val), 4);
+    assert_eq!(ctx.read_u32(&ctx.array_get(&arr_val, 0).unwrap()), 10);
+    assert_eq!(ctx.read_u32(&ctx.array_get(&arr_val, 3).unwrap()), 40);
+}
+
+#[test]
+fn test_schema_fixed_array_podstruct() {
+    use bytemuck::{Pod, Zeroable};
+
+    #[derive(MmapStruct, Clone, Copy, Pod, Zeroable, Default)]
+    #[repr(C)]
+    struct PodPoint {
+        x: f32,
+        y: f32,
+    }
+
+    #[derive(MmapStruct)]
+    struct WithPoints {
+        pts: [PodPoint; 3],
+        tag: u32,
+    }
+
+    let w = WithPoints {
+        pts: [PodPoint { x: 1.0, y: 2.0 }, PodPoint { x: 3.0, y: 4.0 }, PodPoint { x: 5.0, y: 6.0 }],
+        tag: 99,
+    };
+    let data = write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<WithPoints>();
+    let schema_bytes = write_to_buf_raw(&schema);
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, *<mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len()).root_type);
+
+    let pts_val = ctx.field_get(&root, "pts").unwrap();
+    assert_eq!(ctx.array_len(&pts_val), 3);
+
+    let p0 = ctx.array_get(&pts_val, 0).unwrap();
+    assert!((ctx.read_f32(&p0) - 1.0).abs() < 1e-6);
+
+    let tag_val = ctx.field_get(&root, "tag").unwrap();
+    assert_eq!(ctx.read_u32(&tag_val), 99);
+}

@@ -24,6 +24,7 @@ where
         .filter(|(_, f)| {
             is_pod_field(&f.category)
                 || is_inline_string_field(&f.category)
+                || is_fixed_array_field(&f.category)
                 || (f.is_fixed_byref())
         })
         .map(|(i, _)| i)
@@ -63,6 +64,15 @@ where
                     quote! {
                         ctx.write_byref(#field, start, #dedup_literal);
                     }
+                }
+            }
+        } else if is_fixed_array_field(&fi.category) {
+            let ty = &fi.ty;
+            quote! {
+                ctx.align_from(start, std::mem::align_of::<#ty>());
+                unsafe {
+                    let bytes = std::slice::from_raw_parts((#field as *const #ty).cast::<u8>(), std::mem::size_of::<#ty>());
+                    ctx.write_raw(bytes);
                 }
             }
         } else {

@@ -13,7 +13,7 @@ mod variant;
 pub use mixed_struct::FieldInfo;
 
 use crate::value::SchemaValue;
-use crate::schema::{PrimitiveDef, Schema, TypeDefReader};
+use crate::schema::{ArrayLayoutDefReader, PrimitiveDef, Schema, TypeDefReader};
 use mmapstruct::traits::{mmap_read_pod, MmapRead};
 
 // ---------------------------------------------------------------------------
@@ -204,7 +204,13 @@ impl<'a> RuntimeSchemaCtx<'a> {
             TypeDefReader::Str { size } => {
                 size.map(|s| *s as u64)
             }
-            // Struct, Array, Enum, HashMap, Option, ByRef — not fixed-size;
+            TypeDefReader::Array { layout, .. } => match layout {
+                ArrayLayoutDefReader::FixedPod { stride, count } => {
+                    Some(**stride * **count)
+                }
+                _ => None,
+            },
+            // Struct, Enum, HashMap, Option, ByRef — not fixed-size;
             // their extent depends on offset tables, variant discriminants, or
             // dynamic content.  Callers that need the full range for these types
             // must resolve via offset tables or child fields instead.

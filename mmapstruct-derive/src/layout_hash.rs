@@ -34,6 +34,10 @@ pub(crate) fn generate_layout_hash_impl(
                 FieldCategory::DynamicVecByRef { .. } => {
                     quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_BYREF_VEC, #base]) }
                 }
+                FieldCategory::FixedArray { count, .. } => {
+                    let c = *count as u64;
+                    quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_FIXED_ARRAY, #base, #c]) }
+                }
                 FieldCategory::DynamicHashMap { .. } => {
                     quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_HASHMAP, #base]) }
                 }

@@ -63,6 +63,22 @@ pub(crate) fn generate_inline_string_reader_init_expr(
     }
 }
 
+/// Generate reader init expression for a fixed-size array field.
+pub(crate) fn generate_fixed_array_reader_init_expr(
+    field: &FieldInfo,
+    struct_name: &proc_macro2::Ident,
+    all_fields: &[FieldInfo],
+) -> proc_macro2::TokenStream {
+    let fo_name = format_ident!("__MMAP_FO_{}", struct_name);
+    let idx = fixed_section_index(all_fields, field.name.as_str());
+    let ty = &field.ty;
+    quote! {
+        unsafe {
+            &*(data.as_ptr().add(range.start + #fo_name[#idx]) as *const #ty)
+        }
+    }
+}
+
 /// Generate reader init expression for a byref field (read_by_ref or Option<byref>).
 pub(crate) fn generate_byref_reader_init_expr(
     field: &FieldInfo,
@@ -199,9 +215,10 @@ pub(crate) fn generate_reader_inits(
                 generate_pod_reader_init_expr(fi, struct_name, fields)
             } else if is_inline_string_field(&fi.category) {
                 generate_inline_string_reader_init_expr(fi, struct_name, fields)
-            } else if fi.is_fixed_byref()
-            {
+            } else if fi.is_fixed_byref() {
                 generate_byref_reader_init_expr(fi, struct_name, fields)
+            } else if is_fixed_array_field(&fi.category) {
+                generate_fixed_array_reader_init_expr(fi, struct_name, fields)
             } else {
                 generate_inline_dyn_reader_init_expr(fi, layout, struct_name, fields, inline_dyn_indices)
             };

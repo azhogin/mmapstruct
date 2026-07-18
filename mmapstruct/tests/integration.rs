@@ -2070,6 +2070,79 @@ fn test_empty_tuple_struct() {
     let _restored: Empty = reader.into();
 }
 
+// ── FixedArray ([[u32; 16]; 16]) tests ──
+
+#[derive(MmapStruct, Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+struct MatrixFile {
+    matrix: [[u32; 16]; 16],
+}
+
+#[test]
+fn test_fixed_array_pod() {
+    let mut m = MatrixFile { matrix: [[0u32; 16]; 16] };
+    m.matrix[0][0] = 42;
+    m.matrix[7][8] = 99;
+    let buf = mmapstruct::write_to_buf(&m, false);
+    let r = mmapstruct::BufReader::new(buf);
+    let reader = r.read::<MatrixFile>();
+    assert_eq!(reader.matrix[0][0], 42);
+    assert_eq!(reader.matrix[7][8], 99);
+    let restored: MatrixFile = reader.into();
+    assert_eq!(restored, m);
+}
+
+#[derive(MmapStruct, Debug)]
+struct SimpleWithArray {
+    id: u32,
+    matrix: [[u32; 4]; 4],
+}
+
+#[test]
+fn test_fixed_array_mixed() {
+    let m = SimpleWithArray {
+        id: 7,
+        matrix: [
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            [9, 10, 11, 12],
+            [13, 14, 15, 16],
+        ],
+    };
+    let buf = mmapstruct::write_to_buf(&m, false);
+    let r = mmapstruct::BufReader::new(buf);
+    let reader = r.read::<SimpleWithArray>();
+    assert_eq!(*reader.id, 7);
+    assert_eq!(reader.matrix[0][3], 4);
+    assert_eq!(reader.matrix[3][0], 13);
+    assert_eq!(reader.matrix[3][3], 16);
+    let restored: SimpleWithArray = reader.into();
+    assert_eq!(restored.id, m.id);
+    assert_eq!(restored.matrix, m.matrix);
+}
+
+#[derive(MmapStruct, Debug)]
+struct MixedWithStringAndArray {
+    label: String,
+    matrix: [[u32; 4]; 4],
+}
+
+#[test]
+fn test_fixed_array_with_string() {
+    let m = MixedWithStringAndArray {
+        label: "test".into(),
+        matrix: [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]],
+    };
+    let buf = mmapstruct::write_to_buf(&m, false);
+    let r = mmapstruct::BufReader::new(buf);
+    let reader = r.read::<MixedWithStringAndArray>();
+    assert_eq!(reader.label, "test");
+    assert_eq!(reader.matrix[2][1], 10);
+    let restored: MixedWithStringAndArray = reader.into();
+    assert_eq!(restored.label, m.label);
+    assert_eq!(restored.matrix, m.matrix);
+}
+
 #[cfg(feature = "dyn")]
 #[test]
 fn test_bool_schema_dyn() {
@@ -2083,4 +2156,574 @@ fn test_bool_schema_dyn() {
 
     assert_eq!(mmapstruct::schema::dyn_value_size(&DynValueType::Bool), 4);
     assert_eq!(mmapstruct::schema::dyn_value_align(&DynValueType::Bool), 4);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: FixedArray in enum variants
+// ---------------------------------------------------------------------------
+
+#[derive(MmapStruct, Debug, PartialEq)]
+enum SimpleEnumWithArray {
+    Alpha {
+        id: u32,
+        arr: [u32; 4],
+    },
+    Beta {
+        val: u64,
+    },
+}
+
+#[test]
+fn test_fixed_array_enum_alpha() {
+    let w = SimpleEnumWithArray::Alpha {
+        id: 42,
+        arr: [10, 20, 30, 40],
+    };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<SimpleEnumWithArray>();
+    match reader {
+        SimpleEnumWithArrayReader::Alpha { id, arr } => {
+            assert_eq!(*id, 42);
+            assert_eq!(arr[0], 10);
+            assert_eq!(arr[3], 40);
+        }
+        _ => panic!("expected Alpha"),
+    }
+    let w2: SimpleEnumWithArray = r.read::<SimpleEnumWithArray>().into();
+    assert_eq!(w2, w);
+}
+
+#[test]
+fn test_fixed_array_enum_beta() {
+    let w = SimpleEnumWithArray::Beta { val: 99 };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<SimpleEnumWithArray>();
+    match reader {
+        SimpleEnumWithArrayReader::Beta { val } => assert_eq!(*val, 99),
+        _ => panic!("expected Beta"),
+    }
+    let w2: SimpleEnumWithArray = r.read::<SimpleEnumWithArray>().into();
+    assert_eq!(w2, w);
+}
+
+#[derive(MmapStruct, Debug, PartialEq)]
+struct TopLevelArray {
+    arr: [u32; 4],
+}
+
+#[test]
+fn test_fixed_array_top_level() {
+    let w = TopLevelArray { arr: [1, 2, 3, 4] };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<TopLevelArray>();
+    assert_eq!(reader.arr[0], 1);
+    assert_eq!(reader.arr[3], 4);
+    let w2: TopLevelArray = r.read::<TopLevelArray>().into();
+    assert_eq!(w2, w);
+}
+
+#[derive(MmapStruct, Debug, PartialEq, Clone, Copy, Pod, Zeroable, Default)]
+#[repr(C)]
+struct PodPoint {
+    x: f32,
+    y: f32,
+}
+
+#[derive(MmapStruct, Debug, PartialEq)]
+struct WithPodStructArray {
+    points: [PodPoint; 3],
+}
+
+#[test]
+fn test_fixed_array_podstruct() {
+    let w = WithPodStructArray {
+        points: [PodPoint { x: 1.0, y: 2.0 }, PodPoint { x: 3.0, y: 4.0 }, PodPoint { x: 5.0, y: 6.0 }],
+    };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<WithPodStructArray>();
+    assert!((reader.points[0].x - 1.0).abs() < 1e-6);
+    assert!((reader.points[0].y - 2.0).abs() < 1e-6);
+    assert!((reader.points[2].x - 5.0).abs() < 1e-6);
+    assert!((reader.points[2].y - 6.0).abs() < 1e-6);
+    let w2: WithPodStructArray = r.read::<WithPodStructArray>().into();
+    assert_eq!(w2, w);
+}
+
+// Nested fixed array inside enum variant
+#[derive(MmapStruct, Debug, PartialEq)]
+enum NestedArrayInEnum {
+    VariantWithMatrix {
+        label: String,
+        mat: [[u32; 4]; 4],
+    },
+    Empty,
+}
+
+#[test]
+fn test_fixed_array_enum_nested() {
+    let w = NestedArrayInEnum::VariantWithMatrix {
+        label: "test".into(),
+        mat: [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]],
+    };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<NestedArrayInEnum>();
+    match reader {
+        NestedArrayInEnumReader::VariantWithMatrix { label, mat } => {
+            assert_eq!(label, "test");
+            assert_eq!(mat[0][0], 1);
+            assert_eq!(mat[2][1], 10);
+            assert_eq!(mat[3][3], 16);
+        }
+        _ => panic!("expected VariantWithMatrix"),
+    }
+    let w2: NestedArrayInEnum = r.read::<NestedArrayInEnum>().into();
+    assert_eq!(w2, w);
+}
+
+#[test]
+fn test_fixed_array_enum_empty() {
+    let w = NestedArrayInEnum::Empty;
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<NestedArrayInEnum>();
+    match reader {
+        NestedArrayInEnumReader::Empty => {},
+        _ => panic!("expected Empty"),
+    }
+    let w2: NestedArrayInEnum = r.read::<NestedArrayInEnum>().into();
+    assert_eq!(w2, w);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: #[mmap(byref)] on fixed arrays
+// ---------------------------------------------------------------------------
+
+#[derive(MmapStruct, Debug, PartialEq)]
+struct WithByrefArray {
+    id: u32,
+    #[mmap(byref)]
+    arr: [u32; 4],
+}
+
+#[test]
+fn test_fixed_array_byref() {
+    let w = WithByrefArray {
+        id: 42,
+        arr: [10, 20, 30, 40],
+    };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<WithByrefArray>();
+    assert_eq!(*reader.id, 42);
+    assert_eq!(reader.arr[0], 10);
+    assert_eq!(reader.arr[3], 40);
+    let w2: WithByrefArray = r.read::<WithByrefArray>().into();
+    assert_eq!(w2, w);
+}
+
+#[derive(MmapStruct, Debug, PartialEq)]
+struct WithByrefPodPointArray {
+    tag: u32,
+    #[mmap(byref)]
+    points: [PodPoint; 3],
+}
+
+#[test]
+fn test_fixed_array_byref_podstruct() {
+    let w = WithByrefPodPointArray {
+        tag: 7,
+        points: [PodPoint { x: 1.0, y: 2.0 }, PodPoint { x: 3.0, y: 4.0 }, PodPoint { x: 5.0, y: 6.0 }],
+    };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<WithByrefPodPointArray>();
+    assert_eq!(*reader.tag, 7);
+    assert!((reader.points[0].x - 1.0).abs() < 1e-6);
+    assert!((reader.points[2].y - 6.0).abs() < 1e-6);
+    let w2: WithByrefPodPointArray = r.read::<WithByrefPodPointArray>().into();
+    assert_eq!(w2, w);
+}
+
+#[derive(MmapStruct, Debug, PartialEq)]
+enum EnumWithByrefArray {
+    Alpha {
+        #[mmap(byref)]
+        arr: [u32; 4],
+        id: u32,
+    },
+    Beta {
+        val: u64,
+    },
+}
+
+#[test]
+fn test_fixed_array_byref_enum_alpha() {
+    let w = EnumWithByrefArray::Alpha {
+        arr: [1, 2, 3, 4],
+        id: 99,
+    };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<EnumWithByrefArray>();
+    match reader {
+        EnumWithByrefArrayReader::Alpha { arr, id } => {
+            assert_eq!(*id, 99);
+            assert_eq!(arr[0], 1);
+            assert_eq!(arr[3], 4);
+        }
+        _ => panic!("expected Alpha"),
+    }
+    let w2: EnumWithByrefArray = r.read::<EnumWithByrefArray>().into();
+    assert_eq!(w2, w);
+}
+
+#[test]
+fn test_fixed_array_byref_enum_beta() {
+    let w = EnumWithByrefArray::Beta { val: 42 };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<EnumWithByrefArray>();
+    match reader {
+        EnumWithByrefArrayReader::Beta { val } => assert_eq!(*val, 42),
+        _ => panic!("expected Beta"),
+    }
+    let w2: EnumWithByrefArray = r.read::<EnumWithByrefArray>().into();
+    assert_eq!(w2, w);
+}
+
+// ---------------------------------------------------------------------------
+// Dyn schema tests for fixed arrays
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_dyn_fixed_array_top_level() {
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+
+    let w = TopLevelArray { arr: [1, 2, 3, 4] };
+    let buf = write_to_buf_raw(&w);
+    let ctx = SchemaCtx::new(&buf);
+
+    let schema = <TopLevelArray as GetSchema>::get_struct_schema();
+    assert_eq!(schema.name, "TopLevelArray");
+    assert_eq!(schema.fields.len(), 1);
+
+    let root = <TopLevelArray as GetSchema>::root_value(schema.header_size);
+    let arr_val = ctx.field_get(&root, "arr").unwrap();
+    assert_eq!(ctx.array_len(&arr_val), 4);
+    let v0 = ctx.array_get(&arr_val, 0).unwrap();
+    assert_eq!(ctx.read_u32(&v0), 1);
+    let v3 = ctx.array_get(&arr_val, 3).unwrap();
+    assert_eq!(ctx.read_u32(&v3), 4);
+}
+
+// ---------------------------------------------------------------------------
+// Dyn schema tests for Vec<[T; N]>
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_dyn_vec_fixed_array_pod() {
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+
+    #[derive(MmapStruct, Debug, PartialEq)]
+    struct VecOfFixedArrays {
+        #[pod]
+        rows: Vec<[u32; 4]>,
+        label: String,
+    }
+
+    let w = VecOfFixedArrays {
+        rows: vec![[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]],
+        label: "test".into(),
+    };
+    let buf = write_to_buf_raw(&w);
+    let ctx = SchemaCtx::new(&buf);
+
+    let schema = <VecOfFixedArrays as GetSchema>::get_struct_schema();
+    let root = <VecOfFixedArrays as GetSchema>::root_value(schema.header_size);
+
+    let rows_val = ctx.field_get(&root, "rows").unwrap();
+    assert_eq!(ctx.array_len(&rows_val), 3);
+
+    let row0 = ctx.array_get(&rows_val, 0).unwrap();
+    assert_eq!(ctx.array_len(&row0), 4);
+    let r0c0 = ctx.array_get(&row0, 0).unwrap();
+    assert_eq!(ctx.read_u32(&r0c0), 1);
+    let r0c3 = ctx.array_get(&row0, 3).unwrap();
+    assert_eq!(ctx.read_u32(&r0c3), 4);
+
+    let row2 = ctx.array_get(&rows_val, 2).unwrap();
+    assert_eq!(ctx.array_len(&row2), 4);
+    let r2c0 = ctx.array_get(&row2, 0).unwrap();
+    assert_eq!(ctx.read_u32(&r2c0), 9);
+    let r2c2 = ctx.array_get(&row2, 2).unwrap();
+    assert_eq!(ctx.read_u32(&r2c2), 11);
+
+    let label_val = ctx.field_get(&root, "label").unwrap();
+    assert_eq!(ctx.read_str(&label_val), "test");
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+#[cfg(feature = "dyn")]
+#[test]
+fn test_dyn_vec_fixed_array_fixed() {
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+
+    #[derive(MmapStruct, Debug, PartialEq)]
+    struct TestFixedArr {
+        id: u64,
+        label: String,
+    }
+
+    #[derive(MmapStruct, Debug, PartialEq)]
+    struct VecOfFixedArr {
+        #[fixed]
+        items: Vec<TestFixedArr>,
+    }
+
+    let w = VecOfFixedArr {
+        items: vec![
+            TestFixedArr { id: 1, label: "a".into() },
+            TestFixedArr { id: 2, label: "b".into() },
+        ],
+    };
+    let buf = write_to_buf_raw(&w);
+    let ctx = SchemaCtx::new(&buf);
+
+    let schema = <VecOfFixedArr as GetSchema>::get_struct_schema();
+    let root = <VecOfFixedArr as GetSchema>::root_value(schema.header_size);
+
+    let items_val = ctx.field_get(&root, "items").unwrap();
+    assert_eq!(ctx.array_len(&items_val), 2);
+
+    let item0 = ctx.array_get(&items_val, 0).unwrap();
+    let id0 = ctx.field_get(&item0, "id").unwrap();
+    assert_eq!(ctx.read_u64(&id0), 1);
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_dyn_vec_nested_fixed_array() {
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+
+    #[derive(MmapStruct, Debug, PartialEq)]
+    struct VecOfMatrices {
+        #[pod]
+        mats: Vec<[[u32; 4]; 4]>,
+    }
+
+    let w = VecOfMatrices {
+        mats: vec![
+            [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]],
+            [[0; 4]; 4],
+        ],
+    };
+    let buf = write_to_buf_raw(&w);
+    let ctx = SchemaCtx::new(&buf);
+
+    let schema = <VecOfMatrices as GetSchema>::get_struct_schema();
+    let root = <VecOfMatrices as GetSchema>::root_value(schema.header_size);
+
+    let mats_val = ctx.field_get(&root, "mats").unwrap();
+    assert_eq!(ctx.array_len(&mats_val), 2);
+
+    let mat0 = ctx.array_get(&mats_val, 0).unwrap();
+    assert_eq!(ctx.array_len(&mat0), 4);
+    let row0 = ctx.array_get(&mat0, 0).unwrap();
+    assert_eq!(ctx.array_len(&row0), 4);
+    let e00 = ctx.array_get(&row0, 0).unwrap();
+    assert_eq!(ctx.read_u32(&e00), 1);
+    let e03 = ctx.array_get(&row0, 3).unwrap();
+    assert_eq!(ctx.read_u32(&e03), 4);
+    let row3 = ctx.array_get(&mat0, 3).unwrap();
+    let e33 = ctx.array_get(&row3, 3).unwrap();
+    assert_eq!(ctx.read_u32(&e33), 16);
+}
+
+// ---------------------------------------------------------------------------
+// Roundtrip tests for Vec<[T; N]> (reader/writer, no schema)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_vec_fixed_array_pod() {
+    #[derive(MmapStruct, Debug, PartialEq)]
+    struct SimpleVecArr {
+        #[pod]
+        rows: Vec<[u32; 4]>,
+    }
+
+    let w = SimpleVecArr {
+        rows: vec![[1, 2, 3, 4], [5, 6, 7, 8]],
+    };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<SimpleVecArr>();
+    assert_eq!(reader.rows.len(), 2);
+    assert_eq!(reader.rows[0][0], 1);
+    assert_eq!(reader.rows[0][3], 4);
+    assert_eq!(reader.rows[1][0], 5);
+    assert_eq!(reader.rows[1][3], 8);
+    let restored: SimpleVecArr = reader.into();
+    assert_eq!(restored, w);
+}
+
+#[test]
+fn test_vec_fixed_array_nested_pod() {
+    #[derive(MmapStruct, Debug, PartialEq)]
+    struct SimpleVecMat {
+        #[pod]
+        mats: Vec<[[u32; 4]; 4]>,
+    }
+
+    let w = SimpleVecMat {
+        mats: vec![[[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]]],
+    };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<SimpleVecMat>();
+    assert_eq!(reader.mats.len(), 1);
+    assert_eq!(reader.mats[0][0][0], 1);
+    assert_eq!(reader.mats[0][3][3], 16);
+    let restored: SimpleVecMat = reader.into();
+    assert_eq!(restored, w);
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_dyn_fixed_array_nested() {
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+
+    let mut m = MatrixFile { matrix: [[0u32; 16]; 16] };
+    m.matrix[0][0] = 42;
+    m.matrix[7][8] = 99;
+    m.matrix[15][15] = 77;
+    let buf = write_to_buf_raw(&m);
+    let ctx = SchemaCtx::new(&buf);
+
+    let schema = <MatrixFile as GetSchema>::get_struct_schema();
+    let root = <MatrixFile as GetSchema>::root_value(schema.header_size);
+    let matrix_val = ctx.field_get(&root, "matrix").unwrap();
+    assert_eq!(ctx.array_len(&matrix_val), 16);
+
+    let row0 = ctx.array_get(&matrix_val, 0).unwrap();
+    assert_eq!(ctx.array_len(&row0), 16);
+    let e00 = ctx.array_get(&row0, 0).unwrap();
+    assert_eq!(ctx.read_u32(&e00), 42);
+
+    let row7 = ctx.array_get(&matrix_val, 7).unwrap();
+    let e78 = ctx.array_get(&row7, 8).unwrap();
+    assert_eq!(ctx.read_u32(&e78), 99);
+
+    let row15 = ctx.array_get(&matrix_val, 15).unwrap();
+    let e1515 = ctx.array_get(&row15, 15).unwrap();
+    assert_eq!(ctx.read_u32(&e1515), 77);
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_dyn_fixed_array_podstruct() {
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+
+    let w = WithPodStructArray {
+        points: [
+            PodPoint { x: 1.0, y: 2.0 },
+            PodPoint { x: 3.0, y: 4.0 },
+            PodPoint { x: 5.0, y: 6.0 },
+        ],
+    };
+    let buf = write_to_buf_raw(&w);
+    let ctx = SchemaCtx::new(&buf);
+
+    let schema = <WithPodStructArray as GetSchema>::get_struct_schema();
+    let root = <WithPodStructArray as GetSchema>::root_value(schema.header_size);
+    let points_val = ctx.field_get(&root, "points").unwrap();
+    assert_eq!(ctx.array_len(&points_val), 3);
+
+    let p0 = ctx.array_get(&points_val, 0).unwrap();
+    let x0 = ctx.field_get(&p0, "x").unwrap();
+    assert!((ctx.read_f32(&x0) - 1.0).abs() < 1e-6);
+    let y0 = ctx.field_get(&p0, "y").unwrap();
+    assert!((ctx.read_f32(&y0) - 2.0).abs() < 1e-6);
+
+    let p2 = ctx.array_get(&points_val, 2).unwrap();
+    let x2 = ctx.field_get(&p2, "x").unwrap();
+    assert!((ctx.read_f32(&x2) - 5.0).abs() < 1e-6);
+    let y2 = ctx.field_get(&p2, "y").unwrap();
+    assert!((ctx.read_f32(&y2) - 6.0).abs() < 1e-6);
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_dyn_fixed_array_enum() {
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::schema::Value;
+
+    let w = SimpleEnumWithArray::Alpha {
+        id: 42,
+        arr: [10, 20, 30, 40],
+    };
+    let buf = write_to_buf_raw(&w);
+    let ctx = SchemaCtx::new(&buf);
+
+    let vt = <SimpleEnumWithArray as GetSchema>::root_value_type();
+    let root = Value::new(0, buf.len() as u64, vt);
+
+    let id_val = ctx.field_get(&root, "id").unwrap();
+    assert_eq!(ctx.read_u32(&id_val), 42);
+
+    let arr_val = ctx.field_get(&root, "arr").unwrap();
+    assert_eq!(ctx.array_len(&arr_val), 4);
+    let v0 = ctx.array_get(&arr_val, 0).unwrap();
+    assert_eq!(ctx.read_u32(&v0), 10);
+    let v3 = ctx.array_get(&arr_val, 3).unwrap();
+    assert_eq!(ctx.read_u32(&v3), 40);
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_dyn_fixed_array_enum_beta() {
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::schema::Value;
+
+    let w = SimpleEnumWithArray::Beta { val: 99 };
+    let buf = write_to_buf_raw(&w);
+    let ctx = SchemaCtx::new(&buf);
+
+    let vt = <SimpleEnumWithArray as GetSchema>::root_value_type();
+    let root = Value::new(0, buf.len() as u64, vt);
+
+    let val_val = ctx.field_get(&root, "val").unwrap();
+    assert_eq!(ctx.read_u64(&val_val), 99);
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_dyn_fixed_array_byref() {
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+
+    let w = WithByrefArray {
+        id: 42,
+        arr: [10, 20, 30, 40],
+    };
+    let buf = write_to_buf_raw(&w);
+    let ctx = SchemaCtx::new(&buf);
+
+    let schema = <WithByrefArray as GetSchema>::get_struct_schema();
+    let root = <WithByrefArray as GetSchema>::root_value(schema.header_size);
+    let id_val = ctx.field_get(&root, "id").unwrap();
+    assert_eq!(ctx.read_u32(&id_val), 42);
+
+    let arr_val = ctx.field_get(&root, "arr").unwrap();
+    assert_eq!(ctx.array_len(&arr_val), 4);
+    let v0 = ctx.array_get(&arr_val, 0).unwrap();
+    assert_eq!(ctx.read_u32(&v0), 10);
+    let v3 = ctx.array_get(&arr_val, 3).unwrap();
+    assert_eq!(ctx.read_u32(&v3), 40);
 }

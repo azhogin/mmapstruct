@@ -1,7 +1,7 @@
 //! Shared utility functions for type name resolution and helpers.
 
 use quote::quote;
-use syn::{GenericArgument, PathArguments, Type};
+use syn::{Expr, ExprLit, GenericArgument, Lit, PathArguments, Type};
 
 /// Known primitive pod type names.
 pub(crate) const PRIMITIVE_POD: &[&str] = &[
@@ -64,6 +64,19 @@ pub(crate) fn extract_option_inner(ty: &Type) -> Option<Type> {
     None
 }
 
+pub(crate) fn extract_fixed_array_inner(ty: &Type) -> Option<(Type, usize)> {
+    if let Type::Array(arr) = ty {
+        if let Expr::Lit(ExprLit { lit: Lit::Int(lit), .. }) = &arr.len {
+            let n: usize = lit.base10_parse().ok()?;
+            Some((*arr.elem.clone(), n))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
 pub(crate) fn extract_hashmap_inner(ty: &Type) -> Option<(Type, Type)> {
     if let Type::Path(tp) = ty {
         let seg = tp.path.segments.last()?;
@@ -95,15 +108,34 @@ pub(crate) fn known_primitive_size(ty: &Type) -> Option<usize> {
 pub(crate) fn type_size_expr(ty: &Type) -> proc_macro2::TokenStream {
     if let Some(sz) = known_primitive_size(ty) {
         quote! { #sz }
+    } else if let Some((inner, count)) = extract_fixed_array_inner(ty) {
+        let inner_sz = type_size_expr(&inner);
+        quote! { #inner_sz * #count }
     } else {
         quote! { ::std::mem::size_of::<#ty>() }
     }
+}
+
+/// Compute the total byte size of a type during proc-macro expansion when possible.
+/// Returns `None` for types whose size cannot be determined at proc-macro time.
+pub(crate) fn eval_type_size(ty: &Type) -> Option<usize> {
+    if let Some(sz) = known_primitive_size(ty) {
+        return Some(sz);
+    }
+    if let Some((inner, count)) = extract_fixed_array_inner(ty) {
+        if let Some(inner_sz) = eval_type_size(&inner) {
+            return Some(inner_sz * count);
+        }
+    }
+    None
 }
 
 pub(crate) fn type_align_expr(ty: &Type) -> proc_macro2::TokenStream {
     if let Some(sz) = known_primitive_size(ty) {
         let align = sz.min(8).max(1);
         quote! { #align }
+    } else if let Some((inner, _)) = extract_fixed_array_inner(ty) {
+        type_align_expr(&inner)
     } else {
         quote! { { let a = ::std::mem::align_of::<#ty>(); if a > 8 { 8usize } else if a == 0 { 1usize } else { a } } }
     }

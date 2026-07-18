@@ -38,6 +38,7 @@ fn fields_field_offset(
     let fo_name = format_ident!("__MMAP_FO_{}", name);
     if is_pod_field(&fi.category)
         || is_inline_string_field(&fi.category)
+        || is_fixed_array_field(&fi.category)
         || (fi.is_fixed_byref())
     {
         let idx = fixed_section_index(fields, fi.name.as_str());
@@ -71,6 +72,28 @@ fn field_value_type(
                 vec![resolver],
             )
         }
+        FieldCategory::FixedArray { inner_type, count } => {
+            // Fixed-size array with known count — uses FixedPod layout.
+            // e.g. [[u32; 4]; 4] → Array(FixedPod, stride=4, count=4) → u32.
+            // The outer count is in the FixedPod; the inner is reported by the
+            // recursively generated Array entry for [u32; 4].
+            let arr_name = format_ident!("__mmap_ARR_{}_{}", struct_name, field_ident);
+            let stride = type_size_expr(inner_type);
+            let (elem_ref, extra) =
+                inner_dyn_value_type(struct_name, field_ident, inner_type);
+            let arr_static = quote! {
+                #[allow(non_upper_case_globals)]
+                static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
+                    count_offset: 0u64,
+                    elem_type: #elem_ref,
+                    layout: ::mmapstruct::schema::ArrayLayout::FixedPod { stride: (#stride) as u64, count: #count as u64 },
+                };
+            };
+            let vt_expr = quote! { ::mmapstruct::schema::DynValueType::Array(&#arr_name) };
+            let mut all = extra;
+            all.push(arr_static);
+            (vt_expr, all)
+        }
         FieldCategory::DynamicString => (
             quote! { ::mmapstruct::schema::DynValueType::Str(None) },
             Vec::new(),
@@ -88,81 +111,36 @@ fn field_value_type(
             elem_fixed,
         } => {
             let arr_name = format_ident!("__mmap_ARR_{}_{}", struct_name, field_ident);
-            let elem_vt_name = format_ident!("__mmap_VT_{}_{}_elem", struct_name, field_ident);
 
             let layout_tok = if *elem_is_pod {
                 let stride_expr = type_size_expr(inner);
-                quote! { ::mmapstruct::schema::ArrayLayout::Pod { stride: #stride_expr as u64 } }
+                quote! { ::mmapstruct::schema::ArrayLayout::Pod { stride: (#stride_expr) as u64 } }
             } else if *elem_fixed {
-                // Fixed array stride = element's binary fixed-section size,
-                // NOT size_of::<T>() (which includes Rust overhead like String ptr/cap/len).
-                let inner_name = type_ident_name(inner).expect("fixed array element must have a type name");
-                let fs_ident = format_ident!("__MMAP_FS_{}", inner_name);
-                quote! { ::mmapstruct::schema::ArrayLayout::Fixed { stride: #fs_ident as u64 } }
+                let stride_expr = if let Some(name) = type_ident_name(inner) {
+                    let fs_ident = format_ident!("__MMAP_FS_{}", name);
+                    quote! { #fs_ident as u64 }
+                } else {
+                    let s = type_size_expr(inner);
+                    quote! { (#s) as u64 }
+                };
+                quote! { ::mmapstruct::schema::ArrayLayout::Fixed { stride: #stride_expr } }
             } else {
                 quote! { ::mmapstruct::schema::ArrayLayout::Indexed }
             };
 
-            let ty_str = type_ident_name(inner).unwrap_or_default();
-            if let Some(canonical) = primitive_vt_ref(&ty_str) {
-                let arr_static = quote! {
-                    #[allow(non_upper_case_globals)]
-                    static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
-                        count_offset: 0u64,
-                        elem_type: #canonical,
-                        layout: #layout_tok,
-                    };
-                };
-                let vt_expr = quote! { ::mmapstruct::schema::DynValueType::Array(&#arr_name) };
-                return (vt_expr, vec![arr_static]);
-            }
-
-            let (elem_vt_expr, resolver_fns) = if is_string_type(inner) {
-                (
-                    quote! { ::mmapstruct::schema::DynValueType::Str(None) },
-                    Vec::new(),
-                )
-            } else if *elem_is_pod {
-                let resolve_name =
-                    format_ident!("__mmap_resolve_{}_{}_elem", struct_name, field_ident);
-                let resolver = quote! {
-                    #[allow(non_snake_case)]
-                    fn #resolve_name() -> &'static ::mmapstruct::schema::StructSchema {
-                        <#inner as ::mmapstruct::schema::GetSchema>::get_struct_schema()
-                    }
-                };
-                (
-                    quote! { ::mmapstruct::schema::DynValueType::Struct(#resolve_name) },
-                    vec![resolver],
-                )
-            } else {
-                let resolve_name =
-                    format_ident!("__mmap_resolve_{}_{}_elem", struct_name, field_ident);
-                let resolver = quote! {
-                    #[allow(non_snake_case)]
-                    fn #resolve_name() -> &'static ::mmapstruct::schema::DynValueType {
-                        <#inner as ::mmapstruct::schema::GetSchema>::root_value_type()
-                    }
-                };
-                (
-                    quote! { ::mmapstruct::schema::DynValueType::Lazy(#resolve_name) },
-                    vec![resolver],
-                )
-            };
+            let (elem_ref, extra) = inner_dyn_value_type(struct_name, field_ident, inner);
 
             let arr_static = quote! {
                 #[allow(non_upper_case_globals)]
-                static #elem_vt_name: ::mmapstruct::schema::DynValueType = #elem_vt_expr;
-                #[allow(non_upper_case_globals)]
                 static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
                     count_offset: 0u64,
-                    elem_type: &#elem_vt_name,
+                    elem_type: #elem_ref,
                     layout: #layout_tok,
                 };
             };
 
             let vt_expr = quote! { ::mmapstruct::schema::DynValueType::Array(&#arr_name) };
-            let mut all = resolver_fns;
+            let mut all = extra;
             all.push(arr_static);
             (vt_expr, all)
         }
@@ -261,6 +239,30 @@ fn inner_dyn_value_type(
     if is_string_type(inner_ty) {
         return (quote! { &::mmapstruct::schema::VT_STR_DYNAMIC }, Vec::new());
     }
+    if let Some((inner_inner, count)) = extract_fixed_array_inner(inner_ty) {
+        let arr_name = format_ident!("__mmap_ARR_{}_{}_inner", struct_name, field_ident);
+        let (elem_ref, extra) =
+            inner_dyn_value_type(struct_name, &format_ident!("{}_{}_inner", field_ident, ""), &inner_inner);
+        let stride = type_size_expr(&inner_inner);
+        let arr_static = quote! {
+            #[allow(non_upper_case_globals)]
+            static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
+                count_offset: 0u64,
+                elem_type: #elem_ref,
+                layout: ::mmapstruct::schema::ArrayLayout::FixedPod { stride: (#stride) as u64, count: #count as u64 },
+            };
+        };
+        let vt_name = format_ident!("__mmap_VT_{}_{}_inner", struct_name, field_ident);
+        let vt_static = quote! {
+            #[allow(non_upper_case_globals)]
+            static #vt_name: ::mmapstruct::schema::DynValueType =
+                ::mmapstruct::schema::DynValueType::Array(&#arr_name);
+        };
+        let mut all = extra;
+        all.push(arr_static);
+        all.push(vt_static);
+        return (quote! { &#vt_name }, all);
+    }
     let resolve_name = format_ident!("__mmap_resolve_{}_{}_inner", struct_name, field_ident);
     let vt_name = format_ident!("__mmap_VT_{}_{}_inner", struct_name, field_ident);
     let resolver = quote! {
@@ -298,6 +300,7 @@ fn build_field_schema(
         .map(|fi| {
             if is_pod_field(&fi.category)
                 || is_inline_string_field(&fi.category)
+                || is_fixed_array_field(&fi.category)
                 || (fi.is_fixed_byref())
             {
                 None
@@ -460,6 +463,7 @@ fn variant_field_offset(fields: &[FieldInfo], fi: &FieldInfo) -> proc_macro2::To
     fn is_fixed(f: &FieldInfo) -> bool {
         is_pod_field(&f.category)
             || is_inline_string_field(&f.category)
+            || is_fixed_array_field(&f.category)
             || f.is_fixed_byref()
     }
     if !is_fixed(fi) {
@@ -481,6 +485,19 @@ fn variant_field_offset(fields: &[FieldInfo], fi: &FieldInfo) -> proc_macro2::To
         } else if is_inline_string_field(&f.category) {
             if let FieldCategory::InlineString { size } = &f.category {
                 offset += size;
+            }
+        } else if f.has_byref_attr {
+            offset = align_offset(offset, 4);
+            offset += 8;
+        } else if is_fixed_array_field(&f.category) {
+            if let FieldCategory::FixedArray { inner_type, count } = &f.category {
+                let elem_sz = known_primitive_size(inner_type)
+                    .or_else(|| eval_type_size(inner_type))
+                    .unwrap_or(8);
+                let total_sz = elem_sz * count;
+                let al = if elem_sz == 1 { 1 } else { elem_sz.min(8).max(1) };
+                offset = align_offset(offset, al);
+                offset += total_sz;
             }
         } else if f.has_byref_attr {
             offset = align_offset(offset, 4);
@@ -555,6 +572,16 @@ pub(crate) fn generate_enum_schema_impl(
             {
                 fixed_offset = align_offset(fixed_offset, 4);
                 fixed_offset += 8;
+            } else if is_fixed_array_field(&fi.category) {
+                if let FieldCategory::FixedArray { inner_type, count } = &fi.category {
+                    let elem_sz = known_primitive_size(inner_type)
+                        .or_else(|| eval_type_size(inner_type))
+                        .unwrap_or(8);
+                    let total_sz = elem_sz * count;
+                    let al = if elem_sz == 1 { 1 } else { elem_sz.min(8).max(1) };
+                    fixed_offset = align_offset(fixed_offset, al);
+                    fixed_offset += total_sz;
+                }
             }
         }
         fixed_offset = align_offset(fixed_offset, 8);

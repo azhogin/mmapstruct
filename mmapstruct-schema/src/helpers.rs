@@ -1,6 +1,6 @@
 //! Helper traits and utilities for working with schema type definitions.
 
-use crate::schema::TypeDefReader;
+use crate::schema::{ArrayLayoutDefReader, TypeDefReader};
 
 #[inline(always)]
 pub(crate) const fn align_up(offset: usize, align: usize) -> usize {
@@ -21,6 +21,7 @@ impl TypeDefReaderExt for TypeDefReader<'_> {
             TypeDefReader::Primitive(_) => true,
             TypeDefReader::PodStruct { .. } => true,
             TypeDefReader::Str { size } => size.is_some(),
+            TypeDefReader::Array { layout, .. } => matches!(layout, ArrayLayoutDefReader::FixedPod { .. }),
             _ => false,
         }
     }

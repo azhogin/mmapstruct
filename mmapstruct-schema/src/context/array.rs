@@ -16,6 +16,9 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                     }
                     (arr_range.len() / sz) as u64
                 }
+                ArrayLayoutDefReader::FixedPod { count, .. } => {
+                    **count
+                }
                 ArrayLayoutDefReader::Indexed => {
                     if arr_range.len() < 8 {
                         return 0;
@@ -42,7 +45,7 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
         if let TypeDefReader::Array { elem_type, layout } = t {
             let arr_range = val.mmap_begin as usize..val.mmap_end as usize;
             let (elem_off, elem_limit) = match layout {
-                ArrayLayoutDefReader::Pod { stride } => {
+                ArrayLayoutDefReader::Pod { stride } | ArrayLayoutDefReader::FixedPod { stride, .. } => {
                     let sz = **stride as usize;
                     let off = arr_range.start + index as usize * sz;
                     let limit = off + sz;

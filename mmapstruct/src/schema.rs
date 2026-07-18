@@ -194,6 +194,11 @@ pub enum ArrayLayout {
         /// Byte stride of a single element.
         stride: u64,
     },
+    /// Fixed-size pod array (`[T; N]`): known count at compile time.
+    FixedPod {
+        stride: u64,
+        count: u64,
+    },
     /// Indexed array (default `Vec<T>`): `[count: u64, offsets: [u64; count], values...]`.
     Indexed,
     /// Fixed array (`#[fixed]` on `Vec<T>`): `[count: u64, total_size: u64, elements...]`.
@@ -485,6 +490,7 @@ impl<'a> SchemaCtx<'a> {
                 // Pod arrays store elements contiguously without a count header.
                 (dv.limit - dv.offset) as usize / *stride as usize
             }
+            ArrayLayout::FixedPod { count, .. } => *count as usize,
             ArrayLayout::Indexed | ArrayLayout::Fixed { .. } => {
                 let count_off = (dv.offset + array_schema.count_offset) as usize;
                 (unsafe { mmap_read_pod::<u64>(&self.data[count_off..count_off + 8]) }) as usize
@@ -505,7 +511,7 @@ impl<'a> SchemaCtx<'a> {
         }
 
         let (elem_off, elem_limit) = match &array_schema.layout {
-            ArrayLayout::Pod { stride } => {
+            ArrayLayout::Pod { stride } | ArrayLayout::FixedPod { stride, .. } => {
                 let off = dv.offset + index as u64 * stride;
                 (off, off + stride)
             }

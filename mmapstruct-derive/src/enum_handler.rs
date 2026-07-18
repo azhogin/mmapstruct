@@ -294,6 +294,15 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                 fixed_offset = align_offset(fixed_offset, 4);
                 byref_layout.push((fi.name.clone(), fixed_offset));
                 fixed_offset += 8;
+            } else if let FieldCategory::FixedArray { inner_type, count } = &fi.category {
+                let elem_sz = known_primitive_size(inner_type)
+                    .or_else(|| eval_type_size(inner_type))
+                    .unwrap_or(8);
+                let total_sz = elem_sz * count;
+                let al = if elem_sz == 1 { 1 } else { elem_sz.min(8).max(1) };
+                fixed_offset = align_offset(fixed_offset, al);
+                pod_layout.push((fi.name.clone(), fixed_offset, total_sz));
+                fixed_offset += total_sz;
             }
         }
         fixed_offset = align_offset(fixed_offset, 8);
@@ -325,12 +334,13 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                 FieldCategory::PodPrimitive | FieldCategory::PodCustom
             );
             let is_inline_string = matches!(fi.category, FieldCategory::InlineString { .. });
+            let is_fixed_arr = matches!(fi.category, FieldCategory::FixedArray { .. });
             if is_pod {
                 let off = pod_layout
                     .iter()
                     .find(|(n, _, _)| *n == fi.name)
                     .map(|(_, o, _)| *o)
-                    .unwrap();
+                    .expect("pod not in pod_layout");
                 let ty = &fi.ty;
                 let expr = quote! { ::mmapstruct::bytemuck::from_bytes(&data[#rs + #off .. #rs + #off + std::mem::size_of::<#ty>()]) };
                 if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
@@ -339,7 +349,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     .iter()
                     .find(|(n, _, _)| *n == fi.name)
                     .map(|(_, o, sz)| (*o, *sz))
-                    .unwrap();
+                    .expect("inline_str not in pod_layout");
                 let expr = quote! { <String as ::mmapstruct::traits::MmapRead>::read(data, #rs + #off_val .. #rs + #off_val + #sz) };
                 if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
             } else if fi.has_byref_attr {
@@ -347,7 +357,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     .iter()
                     .find(|(n, _)| *n == fi.name)
                     .map(|(_, o)| *o)
-                    .unwrap();
+                    .expect("byref not in byref_layout");
                 match &fi.category {
                     FieldCategory::DynamicOption { inner } => {
                         let expr = quote! {{
@@ -367,11 +377,24 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                         if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                     }
                 }
+            } else if is_fixed_arr {
+                let off = pod_layout
+                    .iter()
+                    .find(|(n, _, _)| *n == fi.name)
+                    .map(|(_, o, _)| *o)
+                    .expect("fixed_arr not in pod_layout");
+                let ty = &fi.ty;
+                let expr = quote! {
+                    unsafe {
+                        &*(data.as_ptr().add(#rs + #off) as *const #ty)
+                    }
+                };
+                if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
             } else {
                 let di = inline_dyn_indices
                     .iter()
                     .position(|&i| all_fields[i].name == fi.name)
-                    .unwrap();
+                    .expect("field not found in inline_dyn_indices (else branch)");
                 let rc = quote! {{
                     let ot_start = #rs + #fixed_sz;
                     let vs = #rs + #hdr_sz;
@@ -457,7 +480,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             .map(|fi| {
                 let id = &fi.ident;
                 let expr = match &fi.category {
-                    FieldCategory::PodPrimitive | FieldCategory::PodCustom => {
+                    FieldCategory::PodPrimitive | FieldCategory::PodCustom | FieldCategory::FixedArray { .. } => {
                         quote! { *#id }
                     }
                     FieldCategory::DynamicOption { inner } => {

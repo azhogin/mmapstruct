@@ -423,3 +423,47 @@ fn test_build_hash_map() {
         status_entry.display_text
     );
 }
+
+// ── FixedArray display ──
+
+#[derive(MmapStruct, Debug)]
+struct MatrixDemo {
+    id: u32,
+    matrix: [[u32; 4]; 4],
+}
+
+#[test]
+fn test_fixed_array_display() {
+    use mmapstruct_schema::write_to_file_with_embedded_schema;
+    let demo = MatrixDemo {
+        id: 1,
+        matrix: [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]],
+    };
+    let buf = write_to_file_with_embedded_schema(&demo, false);
+    let loaded = mmapview_tui::schema::load_schema(&buf, None).unwrap();
+    let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
+    let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
+    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
+        Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes)));
+    let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
+        schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+    let root = mmapstruct_schema::SchemaValue::new(
+        loaded.payload_range.start as u64,
+        loaded.payload_range.end as u64,
+        root_type,
+    );
+    let scanner = mmapview_tui::scanner::Scanner::new(ctx, root, 200);
+    let os = mmapview_tui::overscan::Overscan::build(scanner, |_| true);
+    let texts: Vec<&str> = os.nodes.iter().map(|n| n.display_text.as_str()).collect();
+    let joined = texts.join("\n");
+    println!("=== MatrixDemo ===\n{joined}\n=================");
+
+    assert!(texts.iter().any(|t| t.contains("matrix")), "matrix field missing");
+    let array_nodes: Vec<&&str> = texts.iter().filter(|t| t.starts_with('[')).collect();
+    assert!(array_nodes.len() >= 4, "expected at least 4 array elements, got {}:\n{joined}", array_nodes.len());
+    assert!(texts.iter().any(|t| t.contains("= 6")), "value 6 missing");
+    assert!(texts.iter().any(|t| t.contains("= 16")), "value 16 missing");
+}

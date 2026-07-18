@@ -164,6 +164,11 @@ impl_layout_hash_primitive!(bool, b"bool");
 impl_layout_hash_primitive!(usize, b"usize");
 impl_layout_hash_primitive!(isize, b"isize");
 
+// -- [T; N] fixed-size array (base hash, encoding added by parent struct's derive) --
+impl<T: LayoutHash, const N: usize> LayoutHash for [T; N] {
+    const HASH: u64 = combine_hashes(&[fnv1a(b"Array"), T::HASH, N as u64]);
+}
+
 // -- Vec<T> (base hash, encoding added by parent struct's derive) --
 impl<T: LayoutHash> LayoutHash for Vec<T> {
     const HASH: u64 = combine_hashes(&[fnv1a(b"Vec"), T::HASH]);
@@ -186,6 +191,7 @@ pub const ENC_POD_VEC: u64 = fnv1a(b"POD_VEC");
 pub const ENC_FIXED_VEC: u64 = fnv1a(b"FIXED_VEC");
 pub const ENC_BYREF_VEC: u64 = fnv1a(b"BYREF_VEC");
 pub const ENC_HASHMAP: u64 = fnv1a(b"HASHMAP");
+pub const ENC_FIXED_ARRAY: u64 = fnv1a(b"FIXED_ARRAY");
 
 // ---------------------------------------------------------------------------
 // Pod I/O
@@ -279,6 +285,8 @@ impl FileRange {
 
 /// Marker trait for Pod types that can be read/written directly as bytes.
 pub trait MmapPod: Pod + Copy + 'static {}
+
+impl<T: MmapPod, const N: usize> MmapPod for [T; N] {}
 
 impl<T: MmapPod> MmapRead for T {
     type Reader<'a> = &'a T;

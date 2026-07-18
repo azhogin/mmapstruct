@@ -79,6 +79,7 @@ impl Builder {
                 let elem_idx = self.visit(arr.elem_type);
                 let layout = match &arr.layout {
                     ArrayLayout::Pod { stride } => schema::ArrayLayoutDef::Pod { stride: *stride },
+                    ArrayLayout::FixedPod { stride, count } => schema::ArrayLayoutDef::FixedPod { stride: *stride, count: *count },
                     ArrayLayout::Indexed => schema::ArrayLayoutDef::Indexed,
                     ArrayLayout::Fixed { stride } => schema::ArrayLayoutDef::Fixed { stride: *stride },
                 };

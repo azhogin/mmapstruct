@@ -16,6 +16,7 @@ pub(crate) fn compute_layout(fields: &[FieldInfo]) -> StructLayout {
         .filter(|f| {
             !is_pod_field(&f.category)
                 && !is_inline_string_field(&f.category)
+                && !is_fixed_array_field(&f.category)
                 && !(f.is_fixed_byref())
         })
         .count();
@@ -29,6 +30,7 @@ pub(crate) fn collect_inline_dyn_indices(fields: &[FieldInfo]) -> Vec<usize> {
         .filter(|(_, f)| {
             !is_pod_field(&f.category)
                 && !is_inline_string_field(&f.category)
+                && !is_fixed_array_field(&f.category)
                 && !(f.is_fixed_byref())
         })
         .map(|(i, _)| i)
@@ -38,7 +40,12 @@ pub(crate) fn collect_inline_dyn_indices(fields: &[FieldInfo]) -> Vec<usize> {
 pub(crate) fn fixed_section_index(fields: &[FieldInfo], field_name: &str) -> usize {
     fields
         .iter()
-        .filter(|f| is_pod_field(&f.category) || is_inline_string_field(&f.category) || f.has_byref_attr)
+        .filter(|f| {
+            is_pod_field(&f.category)
+                || is_inline_string_field(&f.category)
+                || is_fixed_array_field(&f.category)
+                || f.has_byref_attr
+        })
         .position(|f| f.name == field_name)
         .expect("field not in fixed section")
 }
@@ -63,6 +70,7 @@ pub(crate) fn generate_fixed_layout_consts(
         .filter(|f| {
             is_pod_field(&f.category)
                 || is_inline_string_field(&f.category)
+                || is_fixed_array_field(&f.category)
                 || (f.is_fixed_byref())
         })
         .collect();
@@ -115,6 +123,14 @@ pub(crate) fn generate_fixed_layout_consts(
             fo_stmts.push(quote! { __fo[#i] = __off; });
             fo_stmts.push(quote! { __off += 8; });
             fs_stmts.push(quote! { __off += 8; });
+        } else if is_fixed_array_field(&ff.category) {
+            let align = type_align_expr(&ff.ty);
+            let size = type_size_expr(&ff.ty);
+            fo_stmts.push(quote! { __off = (__off + #align - 1) & !(#align - 1); });
+            fs_stmts.push(quote! { __off = (__off + #align - 1) & !(#align - 1); });
+            fo_stmts.push(quote! { __fo[#i] = __off; });
+            fo_stmts.push(quote! { __off += #size; });
+            fs_stmts.push(quote! { __off += #size; });
         }
     }
 

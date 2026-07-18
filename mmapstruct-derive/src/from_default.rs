@@ -18,7 +18,7 @@ pub(crate) fn generate_from_impl(
         .map(|fi| {
             let member = field_member(fi, is_tuple);
             let expr = match &fi.category {
-                FieldCategory::PodPrimitive | FieldCategory::PodCustom => {
+                FieldCategory::PodPrimitive | FieldCategory::PodCustom | FieldCategory::FixedArray { .. } => {
                     quote! { *r.#member }
                 }
                 FieldCategory::DynamicOption { inner } => {

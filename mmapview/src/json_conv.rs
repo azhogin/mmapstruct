@@ -183,6 +183,7 @@ fn fields_to_json(s: &StructSchema) -> serde_json::Value {
 fn array_layout_to_json(layout: &ArrayLayout) -> serde_json::Value {
     match layout {
         ArrayLayout::Pod { stride } => serde_json::json!({"kind": "pod", "stride": stride}),
+        ArrayLayout::FixedPod { stride, count } => serde_json::json!({"kind": "fixedpod", "stride": stride, "count": count}),
         ArrayLayout::Indexed => serde_json::json!({"kind": "indexed"}),
         ArrayLayout::Fixed { stride } => serde_json::json!({"kind": "fixed", "stride": stride}),
     }

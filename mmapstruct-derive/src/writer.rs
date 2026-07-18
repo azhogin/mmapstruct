@@ -32,6 +32,8 @@ pub(crate) fn compute_max_field_align(fields: &[FieldInfo]) -> usize {
             if 4 > align {
                 align = 4;
             }
+        } else if is_fixed_array_field(&fi.category) {
+            // Use the type's align_of at runtime
         }
     }
     align

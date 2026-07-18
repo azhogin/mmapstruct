@@ -108,6 +108,7 @@ pub struct FieldDef {
 #[derive(MmapStruct, Debug, PartialEq)]
 pub enum ArrayLayoutDef {
     Pod { stride: u64 },
+    FixedPod { stride: u64, count: u64 },
     Indexed,
     Fixed { stride: u64 },
 }

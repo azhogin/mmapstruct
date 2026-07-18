@@ -180,13 +180,14 @@ pub fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
                 let len = ctx.array_len(val);
                 let layout_label = match layout {
                     ArrayLayoutDefReader::Pod { .. } => "pod",
+                    ArrayLayoutDefReader::FixedPod { .. } => "fixedpod",
                     ArrayLayoutDefReader::Indexed => "indexed",
                     ArrayLayoutDefReader::Fixed { .. } => "fixed",
                 };
                 let mut s = format!("[{} {} (#{})]", len, layout_label, val.type_idx);
                 // Pod arrays with ≤ 5 elements show inline values
                 if len <= 5 {
-                    if let ArrayLayoutDefReader::Pod { .. } = layout {
+                    if let ArrayLayoutDefReader::Pod { .. } | ArrayLayoutDefReader::FixedPod { .. } = layout {
                         s.push_str(" = [");
                         for i in 0..len {
                             if i > 0 { s.push_str(", "); }

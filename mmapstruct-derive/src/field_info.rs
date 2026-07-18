@@ -28,7 +28,7 @@ impl FieldInfo {
 
 pub(crate) fn reader_type(fi: &FieldInfo) -> proc_macro2::TokenStream {
     match &fi.category {
-        FieldCategory::PodPrimitive | FieldCategory::PodCustom => {
+        FieldCategory::PodPrimitive | FieldCategory::PodCustom | FieldCategory::FixedArray { .. } => {
             let ty = &fi.ty;
             quote! { &'a #ty }
         }

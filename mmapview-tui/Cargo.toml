@@ -9,7 +9,7 @@ crossterm = "0.28"
 mmapstruct = { path = "../mmapstruct", features = ["dyn"] }
 mmapstruct-schema = { path = "../mmapstruct-schema" }
 mmapview = { path = "../mmapview" }
-bytemuck = { version = "1", features = ["derive"] }
+bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
 
 [[bin]]
 name = "mmapview-tui"
