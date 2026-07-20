@@ -1,6 +1,6 @@
 use crate::navigate::navigate_path_segments;
 use crate::path::{Path, PathSegment, PathShift};
-use crate::print::{inline_value_text, preview_text, type_annotation};
+use crate::print::{format_size, inline_value_text, preview_text, type_annotation};
 use mmapstruct_schema::context::RuntimeSchemaCtx;
 use mmapstruct_schema::schema::TypeDefReader;
 use mmapstruct_schema::SchemaValue;
@@ -465,12 +465,22 @@ impl Scanner {
                 } else {
                     inline_value_text(self.ctx, val)
                 };
-                return format!("[{}] = {}", idx, inline);
+                let text = format!("[{}] = {}", idx, inline);
+                if self.child_count(val) > 0 {
+                    let bytes = val.mmap_end - val.mmap_begin;
+                    return format!("{}  ({})", text, format_size(bytes));
+                }
+                return text;
             }
             if let Some(prefix) = self.hashmap_prefix(p) {
                 let name = self.field_name(p, idx).unwrap_or_default();
                 let inline = inline_value_text(self.ctx, val);
-                return format!("{}{}: {}", prefix, name, inline);
+                let text = format!("{}{}: {}", prefix, name, inline);
+                if self.child_count(val) > 0 {
+                    let bytes = val.mmap_end - val.mmap_begin;
+                    return format!("{}  ({})", text, format_size(bytes));
+                }
+                return text;
             }
         }
         let name = parent
@@ -484,10 +494,16 @@ impl Scanner {
         } else {
             inline_value_text(self.ctx, val)
         };
-        if name.is_empty() {
+        let text = if name.is_empty() {
             format!("type={}{} = {}", val.type_idx, type_ann, inline)
         } else {
             format!("{}{} = {}", name, type_ann, inline)
+        };
+        if self.child_count(val) > 0 {
+            let bytes = val.mmap_end - val.mmap_begin;
+            format!("{}  ({})", text, format_size(bytes))
+        } else {
+            text
         }
     }
 

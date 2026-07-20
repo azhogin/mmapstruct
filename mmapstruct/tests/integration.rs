@@ -2727,3 +2727,47 @@ fn test_dyn_fixed_array_byref() {
     let v3 = ctx.array_get(&arr_val, 3).unwrap();
     assert_eq!(ctx.read_u32(&v3), 40);
 }
+
+// ---------------------------------------------------------------------------
+// #[repr(u8)] pod enum with #[pod] Vec
+// ---------------------------------------------------------------------------
+
+#[derive(MmapStruct, Debug, PartialEq, Clone, Copy)]
+#[repr(u8)]
+enum MlpLayerType {
+    Dense,
+    Sparse,
+    Conv2d,
+    Pool,
+}
+
+#[derive(MmapStruct, Debug, PartialEq)]
+struct PodLayers {
+    #[pod]
+    layers: Vec<MlpLayerType>,
+}
+
+#[test]
+fn test_pod_enum_repr_u8() {
+    assert_eq!(std::mem::size_of::<MlpLayerType>(), 1);
+
+    let layers: Vec<MlpLayerType> = (0..1000)
+        .map(|i| match i % 4 {
+            0 => MlpLayerType::Dense,
+            1 => MlpLayerType::Sparse,
+            2 => MlpLayerType::Conv2d,
+            _ => MlpLayerType::Pool,
+        })
+        .collect();
+
+    let w = PodLayers { layers };
+    let n = w.layers.len();
+    let buf = write_to_buf(&w, false);
+
+    eprintln!("PodLayers({} elem): {} bytes total", n, buf.len());
+
+    let r = BufReader::new(buf);
+    let reader = r.read::<PodLayers>();
+    let restored: PodLayers = reader.into();
+    assert_eq!(restored, w);
+}

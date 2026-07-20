@@ -130,6 +130,21 @@ where
     Some(out)
 }
 
+pub fn format_size(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut size = bytes as f64;
+    let mut unit_idx = 0;
+    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_idx += 1;
+    }
+    if unit_idx == 0 {
+        format!("{} {}", bytes, UNITS[unit_idx])
+    } else {
+        format!("{:.2} {}", size, UNITS[unit_idx])
+    }
+}
+
 pub fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
     let t = ctx.type_reader(val.type_idx);
     match t {

@@ -162,8 +162,16 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
     let name = &input.ident;
 
     // Fast path: #[repr(u32)] enum with all unit variants → MmapPod.
-    if de.variants.iter().all(|v| v.fields.is_empty()) && has_repr_int(&input.attrs) {
-        return handle_pod_enum(input, de);
+    if de.variants.iter().all(|v| v.fields.is_empty()) {
+        if has_repr_int(&input.attrs) {
+            return handle_pod_enum(input, de);
+        }
+        panic!(
+            "MmapStruct: enum `{}` has only unit (fieldless) variants and must have \
+             a #[repr(Int)] attribute (e.g. `#[repr(u32)]`) to define its binary \
+             discriminant size. Supported repr types: u8, u16, u32, u64, i8, i16, i32, i64.",
+            name,
+        );
     }
 
     let reader_name = format_ident!("{}Reader", name);
