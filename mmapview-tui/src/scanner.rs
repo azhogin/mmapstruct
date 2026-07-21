@@ -460,12 +460,9 @@ impl Scanner {
     pub(crate) fn format_display_text(&self, val: &SchemaValue, parent: Option<(SchemaValue, usize)>) -> String {
         if let Some((ref p, idx)) = parent {
             if matches!(self.ctx.type_reader(p.type_idx), TypeDefReader::Array { .. }) {
-                let inline = if self.ctx.is_str_type(val.type_idx) {
-                    inline_value_text(self.ctx, val)
-                } else {
-                    inline_value_text(self.ctx, val)
-                };
-                let text = format!("[{}] = {}", idx, inline);
+                let inline = inline_value_text(self.ctx, val);
+                let type_ann = type_annotation(self.ctx.type_reader(val.type_idx));
+                let text = format!("[{}]{} = {}", idx, type_ann, inline);
                 if self.child_count(val) > 0 {
                     let bytes = val.mmap_end - val.mmap_begin;
                     return format!("{}  ({})", text, format_size(bytes));

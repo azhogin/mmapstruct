@@ -190,7 +190,7 @@ pub fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
                 "<enum>".to_string()
             }
         }
-        TypeDefReader::Array { elem_type: _, layout } => {
+        TypeDefReader::Array { elem_type, layout } => {
             if val.mmap_end as usize <= ctx.data().len() {
                 let len = ctx.array_len(val);
                 let layout_label = match layout {
@@ -199,7 +199,8 @@ pub fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
                     ArrayLayoutDefReader::Indexed => "indexed",
                     ArrayLayoutDefReader::Fixed { .. } => "fixed",
                 };
-                let mut s = format!("[{} {} (#{})]", len, layout_label, val.type_idx);
+                let elem_ann = type_annotation(ctx.type_reader(**elem_type));
+                let mut s = format!("[{} {} (#{}{})]", len, layout_label, val.type_idx, elem_ann);
                 // Pod arrays with ≤ 5 elements show inline values
                 if len <= 5 {
                     if let ArrayLayoutDefReader::Pod { .. } | ArrayLayoutDefReader::FixedPod { .. } = layout {
