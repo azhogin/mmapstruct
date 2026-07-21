@@ -192,7 +192,21 @@ impl Overscan {
             if i >= self.nodes.len() { None } else { Some(i) }
         } else {
             let i = idx + 1;
-            if i >= self.nodes.len() { None } else { Some(i) }
+            if i >= self.nodes.len() {
+                None
+            } else {
+                // If advancing would escape an expanded container that has
+                // a virtual_end (more children not yet loaded), stop here
+                // so the caller can load the next segment via effective_end().
+                if self.nodes[i].depth < self.nodes[idx].depth {
+                    if let Some(parent) = self.parent_of(idx) {
+                        if self.nodes[parent].virtual_end.is_some() {
+                            return None;
+                        }
+                    }
+                }
+                Some(i)
+            }
         }
     }
 
