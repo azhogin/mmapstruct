@@ -62,15 +62,12 @@ fn field_value_type(
             let resolve_name = format_ident!("__mmap_resolve_{}_{}", struct_name, field_ident);
             let resolver = quote! {
                 #[allow(non_snake_case)]
-                fn #resolve_name() -> &'static ::mmapstruct::schema::StructSchema {
-                    <#ty as ::mmapstruct::schema::GetSchema>::get_struct_schema()
+                fn #resolve_name() -> &'static ::mmapstruct::schema::DynValueType {
+                    <#ty as ::mmapstruct::schema::GetSchema>::root_value_type()
                 }
             };
-
-            (
-                quote! { ::mmapstruct::schema::DynValueType::Struct(#resolve_name) },
-                vec![resolver],
-            )
+            let vt_expr = quote! { ::mmapstruct::schema::DynValueType::Lazy(#resolve_name) };
+            (vt_expr, vec![resolver])
         }
         FieldCategory::FixedArray { inner_type, count } => {
             // Fixed-size array with known count — uses FixedPod layout.

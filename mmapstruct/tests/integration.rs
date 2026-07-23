@@ -2821,3 +2821,39 @@ fn test_pod_vec_of_struct_with_enum() {
     assert_eq!(restored.items[0].kind, ItemKind::Alpha);
     assert_eq!(restored.items[1].kind, ItemKind::Beta);
 }
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_dyn_pod_vec_of_struct_with_enum() {
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+
+    let w = ComplexContainer {
+        items: vec![
+            ComplexItem { id: 1, value: 3.14, kind: ItemKind::Alpha },
+            ComplexItem { id: 2, value: 2.71, kind: ItemKind::Beta },
+        ],
+    };
+    let buf = write_to_buf_raw(&w);
+    let ctx = SchemaCtx::new(&buf);
+
+    let schema = <ComplexContainer as GetSchema>::get_struct_schema();
+    assert_eq!(schema.name, "ComplexContainer");
+
+    let root = <ComplexContainer as GetSchema>::root_value(schema.header_size);
+    let items = ctx.field_get(&root, "items").unwrap();
+    assert_eq!(ctx.array_len(&items), 2);
+
+    let item0 = ctx.array_get(&items, 0).unwrap();
+    let id0 = ctx.field_get(&item0, "id").unwrap();
+    assert_eq!(ctx.read_u32(&id0), 1);
+    let val0 = ctx.field_get(&item0, "value").unwrap();
+    assert!((ctx.read_f32(&val0) - 3.14).abs() < 1e-6);
+    let kind0 = ctx.field_get(&item0, "kind").unwrap();
+    assert_eq!(ctx.read_u32(&kind0), 0);
+
+    let item1 = ctx.array_get(&items, 1).unwrap();
+    let id1 = ctx.field_get(&item1, "id").unwrap();
+    assert_eq!(ctx.read_u32(&id1), 2);
+    let kind1 = ctx.field_get(&item1, "kind").unwrap();
+    assert_eq!(ctx.read_u32(&kind1), 1);
+}
