@@ -2771,3 +2771,53 @@ fn test_pod_enum_repr_u8() {
     let restored: PodLayers = reader.into();
     assert_eq!(restored, w);
 }
+
+// ---------------------------------------------------------------------------
+// #[pod] Vec<StructWithEnum> — struct with u32/f32 + #[repr(u8)] enum
+// ---------------------------------------------------------------------------
+
+#[derive(MmapStruct, Debug, PartialEq, Clone, Copy)]
+#[repr(u32)]
+enum ItemKind {
+    Alpha,
+    Beta,
+}
+
+#[derive(MmapStruct, Debug, PartialEq, Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct ComplexItem {
+    id: u32,
+    value: f32,
+    #[pod]
+    kind: ItemKind,
+}
+
+#[derive(MmapStruct, Debug, PartialEq)]
+struct ComplexContainer {
+    #[pod]
+    items: Vec<ComplexItem>,
+}
+
+#[test]
+fn test_pod_vec_of_struct_with_enum() {
+    assert_eq!(std::mem::size_of::<ItemKind>(), 4);
+    assert_eq!(std::mem::size_of::<ComplexItem>(), 12);
+
+    let w = ComplexContainer {
+        items: vec![
+            ComplexItem { id: 1, value: 3.14, kind: ItemKind::Alpha },
+            ComplexItem { id: 2, value: 2.71, kind: ItemKind::Beta },
+        ],
+    };
+    let n = w.items.len();
+    let buf = write_to_buf(&w, false);
+
+    eprintln!("ComplexContainer({} items): {} bytes total", n, buf.len());
+
+    let r = BufReader::new(buf);
+    let reader = r.read::<ComplexContainer>();
+    let restored: ComplexContainer = reader.into();
+    assert_eq!(restored, w);
+    assert_eq!(restored.items[0].kind, ItemKind::Alpha);
+    assert_eq!(restored.items[1].kind, ItemKind::Beta);
+}
