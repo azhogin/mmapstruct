@@ -192,6 +192,7 @@ impl Builder {
             name: es.name.to_string(),
             variants,
             variant_type_indices,
+            disc_size: es.disc_size,
         }
     }
 }
@@ -238,6 +239,7 @@ fn type_placeholder(vt: &DynValueType) -> schema::TypeDef {
             name: String::new(),
             variants: Vec::new(),
             variant_type_indices: Vec::new(),
+            disc_size: 0,
         },
         DynValueType::Lazy(resolve) => type_placeholder(resolve()),
     }

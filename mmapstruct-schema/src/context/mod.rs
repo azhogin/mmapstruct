@@ -210,7 +210,8 @@ impl<'a> RuntimeSchemaCtx<'a> {
                 }
                 _ => None,
             },
-            // Struct, Enum, HashMap, Option, ByRef — not fixed-size;
+            TypeDefReader::Enum { disc_size, .. } => Some(**disc_size),
+            // Struct, HashMap, Option, ByRef — not fixed-size;
             // their extent depends on offset tables, variant discriminants, or
             // dynamic content.  Callers that need the full range for these types
             // must resolve via offset tables or child fields instead.

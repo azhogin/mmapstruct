@@ -22,6 +22,7 @@ impl TypeDefReaderExt for TypeDefReader<'_> {
             TypeDefReader::PodStruct { .. } => true,
             TypeDefReader::Str { size } => size.is_some(),
             TypeDefReader::Array { layout, .. } => matches!(layout, ArrayLayoutDefReader::FixedPod { .. }),
+            TypeDefReader::Enum { .. } => true,
             _ => false,
         }
     }

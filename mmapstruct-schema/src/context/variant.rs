@@ -13,6 +13,7 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
             name: _,
             variants,
             variant_type_indices,
+            disc_size: _,
         } = t
         {
             let val_size = root.mmap_end - root.mmap_begin;

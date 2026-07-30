@@ -64,6 +64,7 @@ pub enum TypeDef {
         name: String,
         variants: Vec<VariantDef>,
         variant_type_indices: Vec<u32>,
+        disc_size: u64,
     },
     Array {
         elem_type: u32,

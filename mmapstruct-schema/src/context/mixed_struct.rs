@@ -78,7 +78,7 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                 header_size: _,
                 inline_dyn_count: _,
             } => self.resolve_field_value(root, fields, name),
-            TypeDefReader::Enum { name: _, variants: _, variant_type_indices: _ } => {
+            TypeDefReader::Enum { name: _, variants: _, variant_type_indices: _, disc_size: _ } => {
                 let (variant, data_off) = self.enum_variant(root)?;
                 let variant_type = self.type_reader(variant);
                 if let TypeDefReader::Struct {
