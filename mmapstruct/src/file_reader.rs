@@ -1,6 +1,7 @@
 use crate::traits::{
     compute_crc64, mmap_read_pod, FileHeader, LayoutHash, MmapRead, HEADER_FLAG_HASH_PRESENT,
-    HEADER_FLAG_HAS_SCHEMA, HEADER_SIZE, HEADER_VER_1, HEADER_VER_2, MMAP_MAGIC,
+    HEADER_FLAG_HAS_SCHEMA, HEADER_FLAG_PAYLOAD_ALIGNED, HEADER_SIZE, HEADER_VER_1, HEADER_VER_2,
+    MMAP_MAGIC,
 };
 use memmap2::Mmap;
 use std::fs::File;
@@ -53,7 +54,11 @@ pub fn parse_header<'a>(data: &'a [u8]) -> (&'a [u8], Option<(usize, usize)>, Op
                 let schema_size = read_u32_le(&data[pos..pos + 4]) as usize;
                 let padded = (schema_size + 7) & !7;
                 let schema = (pos + 4, pos + 4 + schema_size);
-                let payload_start = pos + 4 + padded;
+                let mut payload_start = pos + 4 + padded;
+                if header.flags & HEADER_FLAG_PAYLOAD_ALIGNED != 0 {
+                    let align = 8usize;
+                    payload_start += (align - (payload_start % align)) % align;
+                }
                 (&data[payload_start..], Some(schema), hash, crc)
             } else {
                 (&data[HEADER_SIZE..], None, hash, crc)

@@ -104,9 +104,13 @@ pub fn write_to_buf_with_schema<T: traits::MmapWrite + LayoutHash + crate::schem
     value.write(&mut ctx);
     let buf = ctx.finish();
 
-    let header = FileHeader::with_schema::<T>();
     let padded_schema = (schema_bytes.len() + 7) & !7;
-    let ext_header_size = HEADER_SIZE + 4 + padded_schema;
+    let header_before_align = HEADER_SIZE + 4 + padded_schema;
+    let align = 8usize;
+    let align_padding = (align - (header_before_align % align)) % align;
+
+    let header = FileHeader::with_schema_aligned::<T>();
+    let ext_header_size = header_before_align + align_padding;
     let mut result = Vec::with_capacity(ext_header_size + buf.len());
 
     result.extend_from_slice(bytemuck::bytes_of(&header));
@@ -116,6 +120,10 @@ pub fn write_to_buf_with_schema<T: traits::MmapWrite + LayoutHash + crate::schem
     let pad = padded_schema - schema_bytes.len();
     if pad > 0 {
         result.extend(std::iter::repeat(0u8).take(pad));
+    }
+    // Zero-pad header to 8-byte payload alignment
+    if align_padding > 0 {
+        result.extend(std::iter::repeat(0u8).take(align_padding));
     }
     result.extend_from_slice(&buf);
 

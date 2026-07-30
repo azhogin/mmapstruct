@@ -8,6 +8,7 @@ pub const HEADER_VER_1: u16 = 1;
 pub const HEADER_VER_2: u16 = 2;
 pub const HEADER_FLAG_HASH_PRESENT: u16 = 1 << 0;
 pub const HEADER_FLAG_HAS_SCHEMA: u16 = 1 << 1;
+pub const HEADER_FLAG_PAYLOAD_ALIGNED: u16 = 1 << 2;
 
 /// 24-byte file header.
 ///
@@ -19,7 +20,9 @@ pub const HEADER_FLAG_HAS_SCHEMA: u16 = 1 << 1;
 /// v2 Layout (when `flags & HEADER_FLAG_HAS_SCHEMA`):
 /// ```text
 /// [magic: u32, hdr_ver=2: u16, flags: u16, layout_hash: u64, crc64: u64]
-/// [schema_size: u32le][schema bytes (padded to 8)][payload...]
+/// [schema_size: u32le][schema bytes (padded to 8)]
+/// [optional alignment padding when PAYLOAD_ALIGNED is set]
+/// [payload...]
 /// ```
 /// CRC covers the payload only (for backward compatibility).
 ///
@@ -54,13 +57,30 @@ impl FileHeader {
         }
     }
 
-    /// Total size of the extended header (base header + schema prefix).
+    pub fn with_schema_aligned<T: LayoutHash>() -> Self {
+        Self {
+            magic: MMAP_MAGIC,
+            hdr_ver: HEADER_VER_2,
+            flags: HEADER_FLAG_HASH_PRESENT | HEADER_FLAG_HAS_SCHEMA | HEADER_FLAG_PAYLOAD_ALIGNED,
+            layout_hash: T::HASH,
+            crc64: 0,
+        }
+    }
+
+    /// Total size of the extended header (base header + schema prefix + alignment).
     /// Without schema, returns `HEADER_SIZE`.
-    /// With schema, returns `HEADER_SIZE + 4 + padded_schema_size`.
+    /// With schema, returns `HEADER_SIZE + 4 + padded_schema_size`, potentially
+    /// plus alignment padding when `HEADER_FLAG_PAYLOAD_ALIGNED` is set.
     pub fn total_header_size(&self, schema_bytes: &[u8]) -> usize {
         if self.flags & HEADER_FLAG_HAS_SCHEMA != 0 {
             let padded = (schema_bytes.len() + 7) & !7;
-            HEADER_SIZE + 4 + padded
+            let h = HEADER_SIZE + 4 + padded;
+            if self.flags & HEADER_FLAG_PAYLOAD_ALIGNED != 0 {
+                let align = 8usize;
+                h + (align - (h % align)) % align
+            } else {
+                h
+            }
         } else {
             HEADER_SIZE
         }
