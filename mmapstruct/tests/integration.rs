@@ -2471,8 +2471,6 @@ fn test_dyn_vec_fixed_array_pod() {
 
 #[cfg(feature = "dyn")]
 #[test]
-#[cfg(feature = "dyn")]
-#[test]
 fn test_dyn_vec_fixed_array_fixed() {
     use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
 
