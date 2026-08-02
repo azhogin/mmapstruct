@@ -258,7 +258,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         }
 
         let inline_dyn_indices = collect_inline_dyn_indices(&all_fields);
-        let has_dynamic = all_fields.iter().any(|f| !is_pod_field(&f.category));
+        let has_dynamic = all_fields.iter().any(|f| !is_pod_field(&f.category) || f.is_fixed_byref());
 
         let mut variant_data_align = 1usize;
         for fi in &all_fields {
@@ -302,7 +302,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                 fixed_offset = align_offset(fixed_offset, 4);
                 byref_layout.push((fi.name.clone(), fixed_offset));
                 fixed_offset += 8;
-            } else if let FieldCategory::FixedArray { inner_type, count } = &fi.category {
+            } else if let FieldCategory::FixedArray { inner_type, count, .. } = &fi.category {
                 let elem_sz = known_primitive_size(inner_type)
                     .or_else(|| eval_type_size(inner_type))
                     .unwrap_or(8);

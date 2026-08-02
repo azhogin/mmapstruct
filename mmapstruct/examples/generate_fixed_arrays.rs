@@ -2,9 +2,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use mmapstruct::MmapStruct;
+use bytemuck::{Pod, Zeroable};
 
 /// Nested fixed array: 16×16 matrix of u32 — all data in fixed section.
-#[derive(MmapStruct, Debug, PartialEq)]
+#[derive(MmapStruct, Debug, PartialEq, Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
 struct MatrixFile {
     matrix: [[u32; 16]; 16],
 }

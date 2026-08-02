@@ -13,6 +13,14 @@ pub(crate) enum HashMapLayout {
 }
 
 pub(crate) fn has_struct_scope_attr(attrs: &[syn::Attribute]) -> bool {
+    has_struct_mmap_ident(attrs, "scope")
+}
+
+pub(crate) fn has_struct_skip_default_attr(attrs: &[syn::Attribute]) -> bool {
+    has_struct_mmap_ident(attrs, "skip_default")
+}
+
+fn has_struct_mmap_ident(attrs: &[syn::Attribute], ident: &str) -> bool {
     for attr in attrs {
         if !attr.path().is_ident("mmap") {
             continue;
@@ -22,14 +30,14 @@ pub(crate) fn has_struct_scope_attr(attrs: &[syn::Attribute]) -> bool {
         {
             for meta in &metas {
                 if let Meta::Path(p) = &meta {
-                    if p.is_ident("scope") {
+                    if p.is_ident(ident) {
                         return true;
                     }
                 }
             }
         } else if let Ok(m) = attr.parse_args::<Meta>() {
             if let Meta::Path(p) = &m {
-                if p.is_ident("scope") {
+                if p.is_ident(ident) {
                     return true;
                 }
             }

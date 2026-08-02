@@ -59,17 +59,11 @@ fn field_value_type(
         FieldCategory::PodPrimitive => unreachable!(),
         FieldCategory::PodCustom => {
             let ty = &fi.ty;
-            let resolve_name = format_ident!("__mmap_resolve_{}_{}", struct_name, field_ident);
-            let resolver = quote! {
-                #[allow(non_snake_case)]
-                fn #resolve_name() -> &'static ::mmapstruct::schema::DynValueType {
-                    <#ty as ::mmapstruct::schema::GetSchema>::root_value_type()
-                }
-            };
-            let vt_expr = quote! { ::mmapstruct::schema::DynValueType::Lazy(#resolve_name) };
-            (vt_expr, vec![resolver])
+            let size = type_size_expr(ty);
+            let vt_expr = quote! { ::mmapstruct::schema::DynValueType::PodStruct { size: (#size) as u64 } };
+            (vt_expr, Vec::new())
         }
-        FieldCategory::FixedArray { inner_type, count } => {
+        FieldCategory::FixedArray { inner_type, count, .. } => {
             // Fixed-size array with known count — uses FixedPod layout.
             // e.g. [[u32; 4]; 4] → Array(FixedPod, stride=4, count=4) → u32.
             // The outer count is in the FixedPod; the inner is reported by the
@@ -474,20 +468,15 @@ fn variant_field_offset(fields: &[FieldInfo], fi: &FieldInfo) -> proc_macro2::To
         if !is_fixed(f) {
             continue;
         }
-        if is_pod_field(&f.category) {
-            let sz = known_primitive_size(&f.ty).unwrap_or(8);
-            let al = if sz == 1 { 1 } else { sz.min(8).max(1) };
-            offset = align_offset(offset, al);
-            offset += sz;
+        if f.has_byref_attr {
+            offset = align_offset(offset, 4);
+            offset += 8;
         } else if is_inline_string_field(&f.category) {
             if let FieldCategory::InlineString { size } = &f.category {
                 offset += size;
             }
-        } else if f.has_byref_attr {
-            offset = align_offset(offset, 4);
-            offset += 8;
         } else if is_fixed_array_field(&f.category) {
-            if let FieldCategory::FixedArray { inner_type, count } = &f.category {
+            if let FieldCategory::FixedArray { inner_type, count, .. } = &f.category {
                 let elem_sz = known_primitive_size(inner_type)
                     .or_else(|| eval_type_size(inner_type))
                     .unwrap_or(8);
@@ -496,6 +485,11 @@ fn variant_field_offset(fields: &[FieldInfo], fi: &FieldInfo) -> proc_macro2::To
                 offset = align_offset(offset, al);
                 offset += total_sz;
             }
+        } else if is_pod_field(&f.category) {
+            let sz = known_primitive_size(&f.ty).unwrap_or(8);
+            let al = if sz == 1 { 1 } else { sz.min(8).max(1) };
+            offset = align_offset(offset, al);
+            offset += sz;
         } else if f.has_byref_attr {
             offset = align_offset(offset, 4);
             offset += 8;
@@ -556,21 +550,15 @@ pub(crate) fn generate_enum_schema_impl(
 
         let mut fixed_offset = 0usize;
         for fi in fields {
-            if is_pod_field(&fi.category) {
-                let sz = known_primitive_size(&fi.ty).unwrap_or(8);
-                let al = if sz == 1 { 1 } else { sz.min(8).max(1) };
-                fixed_offset = align_offset(fixed_offset, al);
-                fixed_offset += sz;
+            if fi.is_fixed_byref() {
+                fixed_offset = align_offset(fixed_offset, 4);
+                fixed_offset += 8;
             } else if is_inline_string_field(&fi.category) {
                 if let FieldCategory::InlineString { size } = &fi.category {
                     fixed_offset += size;
                 }
-            } else if fi.is_fixed_byref()
-            {
-                fixed_offset = align_offset(fixed_offset, 4);
-                fixed_offset += 8;
             } else if is_fixed_array_field(&fi.category) {
-                if let FieldCategory::FixedArray { inner_type, count } = &fi.category {
+                if let FieldCategory::FixedArray { inner_type, count, .. } = &fi.category {
                     let elem_sz = known_primitive_size(inner_type)
                         .or_else(|| eval_type_size(inner_type))
                         .unwrap_or(8);
@@ -579,6 +567,11 @@ pub(crate) fn generate_enum_schema_impl(
                     fixed_offset = align_offset(fixed_offset, al);
                     fixed_offset += total_sz;
                 }
+            } else if is_pod_field(&fi.category) {
+                let sz = known_primitive_size(&fi.ty).unwrap_or(8);
+                let al = if sz == 1 { 1 } else { sz.min(8).max(1) };
+                fixed_offset = align_offset(fixed_offset, al);
+                fixed_offset += sz;
             }
         }
         fixed_offset = align_offset(fixed_offset, 8);

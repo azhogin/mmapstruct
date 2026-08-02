@@ -22,18 +22,18 @@ fn ident_member(id: &proc_macro2::Ident, is_tuple: bool) -> syn::Member {
 pub(crate) fn compute_max_field_align(fields: &[FieldInfo]) -> usize {
     let mut align = 1usize;
     for fi in fields {
-        if is_pod_field(&fi.category) {
-            let sz = known_primitive_size(&fi.ty).unwrap_or(8);
-            let al = if sz <= 1 { 1 } else { sz.min(8) };
-            if al > align {
-                align = al;
-            }
-        } else if fi.is_fixed_byref() {
+        if fi.is_fixed_byref() {
             if 4 > align {
                 align = 4;
             }
         } else if is_fixed_array_field(&fi.category) {
             // Use the type's align_of at runtime
+        } else if is_pod_field(&fi.category) {
+            let sz = known_primitive_size(&fi.ty).unwrap_or(8);
+            let al = if sz <= 1 { 1 } else { sz.min(8) };
+            if al > align {
+                align = al;
+            }
         }
     }
     align

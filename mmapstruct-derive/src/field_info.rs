@@ -109,7 +109,7 @@ fn analyze_named_fields(fields: &syn::Fields) -> FieldAnalysis {
         });
     }
 
-    let has_dynamic = all_fields.iter().any(|f| !is_pod_field(&f.category));
+    let has_dynamic = all_fields.iter().any(|f| !is_pod_field(&f.category) || f.is_fixed_byref());
     FieldAnalysis {
         fields: all_fields,
         has_dynamic,
@@ -150,7 +150,7 @@ fn analyze_unnamed_fields(fields: &syn::Fields) -> FieldAnalysis {
         });
     }
 
-    let has_dynamic = all_fields.iter().any(|f| !is_pod_field(&f.category));
+    let has_dynamic = all_fields.iter().any(|f| !is_pod_field(&f.category) || f.is_fixed_byref());
     FieldAnalysis {
         fields: all_fields,
         has_dynamic,

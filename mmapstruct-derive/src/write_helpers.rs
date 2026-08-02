@@ -33,13 +33,7 @@ where
         let fi = &fields[fixed_idx];
         let fident = &fi.ident;
         let field = field_ref(fident);
-        if is_pod_field(&fi.category) {
-            let ty = &fi.ty;
-            quote! {
-                ctx.align_from(start, std::mem::align_of::<#ty>());
-                ctx.write_pod(#field);
-            }
-        } else if is_inline_string_field(&fi.category) {
+        if is_inline_string_field(&fi.category) {
             if let FieldCategory::InlineString { size } = &fi.category {
                 quote! {
                     ctx.write_inline_string(#field, #size);
@@ -74,6 +68,12 @@ where
                     let bytes = std::slice::from_raw_parts((#field as *const #ty).cast::<u8>(), std::mem::size_of::<#ty>());
                     ctx.write_raw(bytes);
                 }
+            }
+        } else if is_pod_field(&fi.category) {
+            let ty = &fi.ty;
+            quote! {
+                ctx.align_from(start, std::mem::align_of::<#ty>());
+                ctx.write_pod(#field);
             }
         } else {
             quote! {}

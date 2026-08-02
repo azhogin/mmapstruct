@@ -103,7 +103,19 @@ pub(crate) fn generate_fixed_layout_consts(
     let mut fs_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
 
     for (i, ff) in fixed.iter().enumerate() {
-        if is_pod_field(&ff.category) {
+        if ff.has_byref_attr {
+            fo_stmts.push(quote! { __off = (__off + 3) & !3; });
+            fs_stmts.push(quote! { __off = (__off + 3) & !3; });
+            fo_stmts.push(quote! { __fo[#i] = __off; });
+            fo_stmts.push(quote! { __off += 8; });
+            fs_stmts.push(quote! { __off += 8; });
+        } else if is_inline_string_field(&ff.category) {
+            if let FieldCategory::InlineString { size } = &ff.category {
+                fo_stmts.push(quote! { __fo[#i] = __off; });
+                fo_stmts.push(quote! { __off += #size; });
+                fs_stmts.push(quote! { __off += #size; });
+            }
+        } else if is_fixed_array_field(&ff.category) {
             let align = type_align_expr(&ff.ty);
             let size = type_size_expr(&ff.ty);
             fo_stmts.push(quote! { __off = (__off + #align - 1) & !(#align - 1); });
@@ -111,19 +123,7 @@ pub(crate) fn generate_fixed_layout_consts(
             fo_stmts.push(quote! { __fo[#i] = __off; });
             fo_stmts.push(quote! { __off += #size; });
             fs_stmts.push(quote! { __off += #size; });
-        } else if is_inline_string_field(&ff.category) {
-            if let FieldCategory::InlineString { size } = &ff.category {
-                fo_stmts.push(quote! { __fo[#i] = __off; });
-                fo_stmts.push(quote! { __off += #size; });
-                fs_stmts.push(quote! { __off += #size; });
-            }
-        } else if ff.has_byref_attr {
-            fo_stmts.push(quote! { __off = (__off + 3) & !3; });
-            fs_stmts.push(quote! { __off = (__off + 3) & !3; });
-            fo_stmts.push(quote! { __fo[#i] = __off; });
-            fo_stmts.push(quote! { __off += 8; });
-            fs_stmts.push(quote! { __off += 8; });
-        } else if is_fixed_array_field(&ff.category) {
+        } else if is_pod_field(&ff.category) {
             let align = type_align_expr(&ff.ty);
             let size = type_size_expr(&ff.ty);
             fo_stmts.push(quote! { __off = (__off + #align - 1) & !(#align - 1); });

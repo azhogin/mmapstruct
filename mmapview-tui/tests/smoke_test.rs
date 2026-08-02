@@ -426,7 +426,8 @@ fn test_build_hash_map() {
 
 // ── FixedArray display ──
 
-#[derive(MmapStruct, Debug)]
+#[derive(MmapStruct, Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
 struct MatrixDemo {
     id: u32,
     matrix: [[u32; 4]; 4],

@@ -64,6 +64,17 @@ pub(crate) fn extract_option_inner(ty: &Type) -> Option<Type> {
     None
 }
 
+/// Check if a type is all-pod (primitive or fixed array of primitives, recursively).
+pub(crate) fn is_pod_type(ty: &Type) -> bool {
+    if is_primitive_pod(ty) {
+        return true;
+    }
+    if let Some((inner, _)) = extract_fixed_array_inner(ty) {
+        return is_pod_type(&inner);
+    }
+    false
+}
+
 pub(crate) fn extract_fixed_array_inner(ty: &Type) -> Option<(Type, usize)> {
     if let Type::Array(arr) = ty {
         if let Expr::Lit(ExprLit { lit: Lit::Int(lit), .. }) = &arr.len {

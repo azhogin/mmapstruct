@@ -2072,7 +2072,7 @@ fn test_empty_tuple_struct() {
 
 // ── FixedArray ([[u32; 16]; 16]) tests ──
 
-#[derive(MmapStruct, Debug, Clone, Copy, PartialEq)]
+#[derive(MmapStruct, Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 #[repr(C)]
 struct MatrixFile {
     matrix: [[u32; 16]; 16],
@@ -2085,14 +2085,15 @@ fn test_fixed_array_pod() {
     m.matrix[7][8] = 99;
     let buf = mmapstruct::write_to_buf(&m, false);
     let r = mmapstruct::BufReader::new(buf);
-    let reader = r.read::<MatrixFile>();
+    let reader: &MatrixFile = r.read::<MatrixFile>();
     assert_eq!(reader.matrix[0][0], 42);
     assert_eq!(reader.matrix[7][8], 99);
-    let restored: MatrixFile = reader.into();
+    let restored: MatrixFile = *reader;
     assert_eq!(restored, m);
 }
 
-#[derive(MmapStruct, Debug)]
+#[derive(MmapStruct, Debug, Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
 struct SimpleWithArray {
     id: u32,
     matrix: [[u32; 4]; 4],
@@ -2111,12 +2112,12 @@ fn test_fixed_array_mixed() {
     };
     let buf = mmapstruct::write_to_buf(&m, false);
     let r = mmapstruct::BufReader::new(buf);
-    let reader = r.read::<SimpleWithArray>();
-    assert_eq!(*reader.id, 7);
+    let reader: &SimpleWithArray = r.read::<SimpleWithArray>();
+    assert_eq!(reader.id, 7);
     assert_eq!(reader.matrix[0][3], 4);
     assert_eq!(reader.matrix[3][0], 13);
     assert_eq!(reader.matrix[3][3], 16);
-    let restored: SimpleWithArray = reader.into();
+    let restored: SimpleWithArray = *reader;
     assert_eq!(restored.id, m.id);
     assert_eq!(restored.matrix, m.matrix);
 }
@@ -2208,7 +2209,8 @@ fn test_fixed_array_enum_beta() {
     assert_eq!(w2, w);
 }
 
-#[derive(MmapStruct, Debug, PartialEq)]
+#[derive(MmapStruct, Debug, PartialEq, Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
 struct TopLevelArray {
     arr: [u32; 4],
 }
@@ -2218,10 +2220,10 @@ fn test_fixed_array_top_level() {
     let w = TopLevelArray { arr: [1, 2, 3, 4] };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
-    let reader = r.read::<TopLevelArray>();
+    let reader: &TopLevelArray = r.read::<TopLevelArray>();
     assert_eq!(reader.arr[0], 1);
     assert_eq!(reader.arr[3], 4);
-    let w2: TopLevelArray = r.read::<TopLevelArray>().into();
+    let w2: TopLevelArray = *r.read::<TopLevelArray>();
     assert_eq!(w2, w);
 }
 

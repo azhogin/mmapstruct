@@ -18,6 +18,7 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
     let name = &input.ident;
     let reader_name = format_ident!("{}Reader", name);
     let is_scoped = has_struct_scope_attr(&input.attrs);
+    let skip_default = has_struct_skip_default_attr(&input.attrs);
 
     let analysis = analyze_fields(&ds.fields);
     let all_fields = &analysis.fields;
@@ -109,7 +110,11 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
     let from_impl = generate_from_impl(name, &reader_name, &all_fields, is_tuple);
     let reader_owned_impl = generate_reader_owned_impl(name, &reader_name, &all_fields, is_tuple);
     let reader_ord_impl = generate_reader_ord_impl(name, &reader_name, &all_fields, is_tuple);
-    let default_impl = generate_default_impl(name, &all_fields, is_tuple);
+    let default_impl = if !skip_default {
+        generate_default_impl(name, &all_fields, is_tuple)
+    } else {
+        quote! {}
+    };
     let layout_hash_impl = generate_layout_hash_impl(name, &all_fields);
 
     let schema_impl = {

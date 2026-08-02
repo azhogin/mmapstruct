@@ -783,8 +783,10 @@ fn test_schema_query_path() {
 fn test_schema_fixed_array() {
     use mmapstruct_schema::RuntimeSchemaCtx;
     use mmapstruct_schema::SchemaValue;
+    use bytemuck::{Pod, Zeroable};
 
-    #[derive(MmapStruct)]
+    #[derive(MmapStruct, Clone, Copy, Pod, Zeroable)]
+    #[repr(C)]
     struct WithArray {
         id: u32,
         mat: [[u32; 4]; 4],
@@ -832,7 +834,10 @@ fn test_schema_fixed_array() {
 
 #[test]
 fn test_schema_fixed_array_top_level() {
-    #[derive(MmapStruct)]
+    use bytemuck::{Pod, Zeroable};
+
+    #[derive(MmapStruct, Clone, Copy, Pod, Zeroable)]
+    #[repr(C)]
     struct SimpleArray {
         arr: [u32; 4],
     }

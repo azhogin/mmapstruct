@@ -16,6 +16,7 @@ pub(crate) enum FieldCategory {
     FixedArray {
         inner_type: Type,
         count: usize,
+        elem_is_pod: bool,
     },
     DynamicVec {
         inner: Type,
@@ -41,7 +42,7 @@ pub(crate) enum FieldCategory {
 pub(crate) fn is_pod_field(category: &FieldCategory) -> bool {
     matches!(
         category,
-        FieldCategory::PodPrimitive | FieldCategory::PodCustom
+        FieldCategory::PodPrimitive | FieldCategory::PodCustom | FieldCategory::FixedArray { elem_is_pod: true, .. }
     )
 }
 
@@ -95,7 +96,8 @@ pub(crate) fn classify_field(field: &syn::Field) -> FieldCategory {
         };
     }
     if let Some((inner, count)) = extract_fixed_array_inner(ty) {
-        return FieldCategory::FixedArray { inner_type: inner, count };
+        let elem_is_pod = is_pod_type(&inner);
+        return FieldCategory::FixedArray { inner_type: inner, count, elem_is_pod };
     }
     if has_pod_attr(&field.attrs) {
         return FieldCategory::PodCustom;
