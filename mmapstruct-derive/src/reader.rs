@@ -147,7 +147,7 @@ pub(crate) fn generate_inline_dyn_reader_init_expr(
             }
         }
         FieldCategory::DynamicVec {
-            inner: _,
+            inner,
             elem_is_pod,
             elem_fixed,
             ..
@@ -155,8 +155,10 @@ pub(crate) fn generate_inline_dyn_reader_init_expr(
             if *elem_is_pod {
                 quote! {
                     {
-                        let (s, e) = #range_calc;
-                        ::mmapstruct::bytemuck::cast_slice(&data[s..e])
+                        let (s, _e) = #range_calc;
+                        let count = u64::from_le_bytes(data[s..s+8].try_into().unwrap()) as usize;
+                        let elem_size = ::std::mem::size_of::<#inner>();
+                        ::mmapstruct::bytemuck::cast_slice(&data[s+8 .. s+8 + count * elem_size])
                     }
                 }
             } else if *elem_fixed {

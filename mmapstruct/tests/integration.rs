@@ -2595,6 +2595,111 @@ fn test_vec_fixed_array_nested_pod() {
     assert_eq!(restored, w);
 }
 
+#[test]
+fn test_pod_vec_consecutive_array_then_primitive() {
+    // Reproduces: Vec<[u32; N]> followed by Vec<u32> reads wrong length.
+    // The bug: alignment padding between pod Vec fields is incorrectly
+    // included in the previous field's data range.
+    #[derive(MmapStruct, Debug, PartialEq)]
+    struct PodVecBug {
+        #[pod]
+        marginals: Vec<[u32; 256]>, // 1 elem = 1024 bytes
+        #[pod]
+        tail_indices: Vec<u32>,     // 2 elems
+        #[pod]
+        head_indices: Vec<u32>,     // 3 elems — buggy: reads back as 4
+    }
+
+    let w = PodVecBug {
+        marginals: vec![[0u32; 256]],
+        tail_indices: vec![1u32, 2],
+        head_indices: vec![3u32, 4, 5],
+    };
+
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<PodVecBug>();
+
+    assert_eq!(reader.marginals.len(), 1);
+    assert_eq!(reader.tail_indices.len(), 2);
+    assert_eq!(reader.head_indices.len(), 3);
+    assert_eq!(reader.head_indices[0], 3);
+    assert_eq!(reader.head_indices[2], 5);
+
+    let restored: PodVecBug = reader.into();
+    assert_eq!(restored, w);
+}
+
+#[test]
+fn test_pod_vec_consecutive_u8_then_array() {
+    // Padding between Vec<u8> (align 1) and Vec<[u32; 4]> (align 4) must
+    // NOT be included in the u8 vec's data range.
+    #[derive(MmapStruct, Debug, PartialEq)]
+    struct U8ThenArray {
+        #[pod]
+        bytes: Vec<u8>,
+        #[pod]
+        arrays: Vec<[u32; 4]>,
+    }
+
+    let w = U8ThenArray {
+        bytes: vec![1, 2, 3],
+        arrays: vec![[10, 20, 30, 40]],
+    };
+
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<U8ThenArray>();
+
+    assert_eq!(reader.bytes.len(), 3);
+    assert_eq!(reader.bytes[0], 1);
+    assert_eq!(reader.bytes[2], 3);
+    assert_eq!(reader.arrays.len(), 1);
+    assert_eq!(reader.arrays[0][0], 10);
+
+    let restored: U8ThenArray = reader.into();
+    assert_eq!(restored, w);
+}
+
+#[test]
+fn test_pod_vec_consecutive_mixed_alignments() {
+    // Multiple pod Vec fields with increasing alignment requirements.
+    #[derive(MmapStruct, Debug, PartialEq)]
+    struct MixedAlign {
+        #[pod]
+        bytes: Vec<u8>,       // align 1
+        #[pod]
+        pairs: Vec<[u16; 2]>, // align 2
+        #[pod]
+        quads: Vec<[u32; 4]>, // align 4
+        #[pod]
+        big: Vec<[u64; 2]>,   // align 8
+    }
+
+    let w = MixedAlign {
+        bytes: vec![10, 20, 30],
+        pairs: vec![[1, 2]],
+        quads: vec![[100, 200, 300, 400]],
+        big: vec![[1, 2]],
+    };
+
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<MixedAlign>();
+
+    assert_eq!(reader.bytes.len(), 3);
+    assert_eq!(reader.pairs.len(), 1);
+    assert_eq!(reader.quads.len(), 1);
+    assert_eq!(reader.big.len(), 1);
+    assert_eq!(reader.bytes[2], 30);
+    assert_eq!(reader.pairs[0][1], 2);
+    assert_eq!(reader.quads[0][3], 400);
+    assert_eq!(reader.big[0][1], 2);
+
+    let restored: MixedAlign = reader.into();
+    assert_eq!(restored, w);
+}
+
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_nested() {

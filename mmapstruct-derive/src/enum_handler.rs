@@ -423,12 +423,20 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                         if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                     }
                     FieldCategory::DynamicVec {
+                        inner,
                         elem_is_pod,
                         elem_fixed,
                         ..
                     } => {
                         if *elem_is_pod {
-                            let expr = quote! { { let (s, e) = #rc; ::mmapstruct::bytemuck::cast_slice(&data[s..e]) } };
+                            let expr = quote! {
+                                {
+                                    let (s, _e) = #rc;
+                                    let count = u64::from_le_bytes(data[s..s+8].try_into().unwrap()) as usize;
+                                    let elem_size = ::std::mem::size_of::<#inner>();
+                                    ::mmapstruct::bytemuck::cast_slice(&data[s+8 .. s+8 + count * elem_size])
+                                }
+                            };
                             if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                         } else if *elem_fixed {
                             let expr = quote! { { let (s, e) = #rc; ::mmapstruct::fixed_array::FixedArrayReader::new(data, ::mmapstruct::traits::FileRange::new(s, e)) } };

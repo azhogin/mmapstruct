@@ -105,7 +105,7 @@ where
                         ctx.align_from(vs, std::mem::align_of::<#inner>());
                         let before = (ctx.current_offset() - vs) as u64;
                         dyn_offsets.push(before);
-                        ::mmapstruct::pod_array::write_pod_array(#field, ctx);
+                        ::mmapstruct::pod_array::write_pod_vec(#field, ctx);
                     }
                 }
             }

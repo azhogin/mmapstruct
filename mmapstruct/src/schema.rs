@@ -486,9 +486,11 @@ impl<'a> SchemaCtx<'a> {
             _ => panic!("SchemaCtx::array_len: value is not an array"),
         };
         match &array_schema.layout {
-            ArrayLayout::Pod { stride } => {
-                // Pod arrays store elements contiguously without a count header.
-                (dv.limit - dv.offset) as usize / *stride as usize
+            ArrayLayout::Pod { .. } => {
+                // Pod arrays now store an 8-byte element count prefix, followed
+                // by the contiguous elements. The count lives at `dv.offset`.
+                let count_off = dv.offset as usize;
+                (unsafe { mmap_read_pod::<u64>(&self.data[count_off..count_off + 8]) }) as usize
             }
             ArrayLayout::FixedPod { count, .. } => *count as usize,
             ArrayLayout::Indexed | ArrayLayout::Fixed { .. } => {
@@ -511,7 +513,12 @@ impl<'a> SchemaCtx<'a> {
         }
 
         let (elem_off, elem_limit) = match &array_schema.layout {
-            ArrayLayout::Pod { stride } | ArrayLayout::FixedPod { stride, .. } => {
+            ArrayLayout::Pod { stride } => {
+                // 8-byte count prefix precedes the element data.
+                let off = dv.offset + 8 + index as u64 * stride;
+                (off, off + stride)
+            }
+            ArrayLayout::FixedPod { stride, .. } => {
                 let off = dv.offset + index as u64 * stride;
                 (off, off + stride)
             }

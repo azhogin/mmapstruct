@@ -14,7 +14,14 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                     if sz == 0 {
                         return 0;
                     }
-                    (arr_range.len() / sz) as u64
+                    if arr_range.len() < 8 {
+                        return 0;
+                    }
+                    // Pod arrays now carry an 8-byte element-count prefix.
+                    let count = unsafe {
+                        mmap_read_pod::<u64>(&self.data[arr_range.start..arr_range.start + 8])
+                    } as u64;
+                    count
                 }
                 ArrayLayoutDefReader::FixedPod { count, .. } => {
                     **count
@@ -45,7 +52,14 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
         if let TypeDefReader::Array { elem_type, layout } = t {
             let arr_range = val.mmap_begin as usize..val.mmap_end as usize;
             let (elem_off, elem_limit) = match layout {
-                ArrayLayoutDefReader::Pod { stride } | ArrayLayoutDefReader::FixedPod { stride, .. } => {
+                ArrayLayoutDefReader::Pod { stride } => {
+                    let sz = **stride as usize;
+                    // Skip the 8-byte element-count prefix.
+                    let off = arr_range.start + 8 + index as usize * sz;
+                    let limit = off + sz;
+                    (off as u64, limit as u64)
+                }
+                ArrayLayoutDefReader::FixedPod { stride, .. } => {
                     let sz = **stride as usize;
                     let off = arr_range.start + index as usize * sz;
                     let limit = off + sz;
