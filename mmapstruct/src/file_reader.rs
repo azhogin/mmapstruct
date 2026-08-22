@@ -75,66 +75,85 @@ pub fn parse_header<'a>(data: &'a [u8]) -> (&'a [u8], Option<(usize, usize)>, Op
     }
 }
 
-fn strip_header_raw<'a>(
-    data: &'a [u8],
-    out_hash: &mut Option<u64>,
-    out_crc: &mut Option<u64>,
-) -> &'a [u8] {
-    let (payload, _schema, hash, crc) = parse_header(data);
-    *out_hash = hash;
-    *out_crc = crc;
-    payload
-}
-
-fn strip_header<'a>(data: &'a [u8]) -> &'a [u8] {
-    strip_header_raw(data, &mut None, &mut None)
-}
-
-fn strip_header_checked<'a, T: LayoutHash>(data: &'a [u8]) -> (&'a [u8], Option<u64>) {
-    let mut hash = None;
-    let mut crc = None;
-    let payload = strip_header_raw(data, &mut hash, &mut crc);
-    if let Some(actual) = hash {
-        let expected = T::HASH;
-        assert_eq!(actual, expected,
-            "layout_hash mismatch: header has 0x{:016x}, struct expects 0x{:016x}. The file was written with a different struct layout.", actual, expected);
-    }
-    (payload, crc)
-}
-
 /// Reader that owns a memory-mapped file and provides typed readers.
 pub struct MmapReader {
     mmap: Mmap,
     embedded_schema: Option<Vec<u8>>,
+    /// Byte range of the payload within `mmap` (after any header).
+    payload_range: Range<usize>,
+    /// Authoritative `layout_hash` from the header source (embedded or sidecar).
+    auth_hash: Option<u64>,
+    /// Authoritative `crc64` from the header source (None when zero/disabled).
+    auth_crc: Option<u64>,
 }
 
 impl MmapReader {
-    /// Memory-map a file at `path`.
+    fn new_internal(
+        mmap: Mmap,
+        payload_range: Range<usize>,
+        auth_hash: Option<u64>,
+        auth_crc: Option<u64>,
+        embedded_schema: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            mmap,
+            embedded_schema,
+            payload_range,
+            auth_hash,
+            auth_crc,
+        }
+    }
+
+    /// Memory-map a file at `path` (standard embedded-header file).
     pub fn from_file(path: impl AsRef<Path>) -> io::Result<Self> {
         let file = File::open(path.as_ref())?;
         let mmap = unsafe { Mmap::map(&file)? };
-        let embedded_schema = match parse_header(&mmap).1 {
-            Some((start, end)) => Some(mmap[start..end].to_vec()),
-            None => None,
-        };
-        Ok(Self { mmap, embedded_schema })
+        let (payload, schema, hash, crc) = parse_header(&mmap);
+        let payload_start = payload.as_ptr() as usize - mmap.as_ptr() as usize;
+        let payload_range = payload_start..payload_start + payload.len();
+        let embedded_schema = schema.map(|(s, e)| mmap[s..e].to_vec());
+        Ok(Self::new_internal(mmap, payload_range, hash, crc, embedded_schema))
+    }
+
+    /// Open a headerless payload file whose mmapstruct header/schema lives in a
+    /// sidecar `<path>.mmshdr`. The data file is treated as pure payload
+    /// (offset 0), so it is directly O_DIRECT-aligned.
+    pub fn from_file_with_sidecar(path: impl AsRef<Path>) -> io::Result<Self> {
+        let path = path.as_ref();
+        let mut sidecar_path = path.to_path_buf();
+        sidecar_path.set_extension("mmshdr");
+        let sidecar = std::fs::read(&sidecar_path)?;
+        let (_sp, schema, hash, crc) = parse_header(&sidecar);
+        let embedded_schema = schema.map(|(s, e)| sidecar[s..e].to_vec());
+        let file = File::open(path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+        let payload_range = 0..mmap.len();
+        Ok(Self::new_internal(mmap, payload_range, hash, crc, embedded_schema))
     }
 
     /// Wrap an existing `Mmap`.
     pub fn new(mmap: Mmap) -> Self {
-        let embedded_schema = match parse_header(&mmap).1 {
-            Some((start, end)) => Some(mmap[start..end].to_vec()),
-            None => None,
-        };
-        Self { mmap, embedded_schema }
+        let (payload, schema, hash, crc) = parse_header(&mmap);
+        let payload_start = payload.as_ptr() as usize - mmap.as_ptr() as usize;
+        let payload_range = payload_start..payload_start + payload.len();
+        let embedded_schema = schema.map(|(s, e)| mmap[s..e].to_vec());
+        Self::new_internal(mmap, payload_range, hash, crc, embedded_schema)
     }
 
-    /// Read the file as type `T`, auto‑skipping the header if present.
-    /// Verifies layout_hash when the header contains one.
-    /// Verifies CRC64 when the header has a non-zero CRC.
+    /// Read the file as type `T`, skipping the header and verifying the
+    /// authoritative `layout_hash` and `crc64` (from the embedded header or the
+    /// sidecar, whichever was used to open the file).
     pub fn read<T: MmapRead + LayoutHash>(&self) -> T::Reader<'_> {
-        let (data, crc) = strip_header_checked::<T>(&self.mmap);
-        if let Some(crc_value) = crc {
+        let data = &self.mmap[self.payload_range.clone()];
+        if let Some(actual) = self.auth_hash {
+            let expected = T::HASH;
+            assert_eq!(
+                actual, expected,
+                "layout_hash mismatch: header has 0x{:016x}, struct expects 0x{:016x}. The file was written with a different struct layout.",
+                actual, expected
+            );
+        }
+        if let Some(crc_value) = self.auth_crc {
             if crc_value != 0 {
                 let actual = compute_crc64(data);
                 assert_eq!(
@@ -150,7 +169,7 @@ impl MmapReader {
 
     /// Return the payload bytes (after stripping the header, no hash check).
     pub fn payload(&self) -> &[u8] {
-        strip_header(&self.mmap)
+        &self.mmap[self.payload_range.clone()]
     }
 
     /// Return the embedded schema bytes, if present.
@@ -168,34 +187,79 @@ impl MmapReader {
 pub struct BufReader {
     buf: Vec<u8>,
     embedded_schema: Option<Vec<u8>>,
+    /// Byte range of the payload within `buf` (after any header).
+    payload_range: Range<usize>,
+    /// Authoritative `layout_hash` from the header source (embedded or sidecar).
+    auth_hash: Option<u64>,
+    /// Authoritative `crc64` from the header source (None when zero/disabled).
+    auth_crc: Option<u64>,
 }
 
 impl BufReader {
-    /// Read file at `path` into memory.
+    fn new_internal(
+        buf: Vec<u8>,
+        payload_range: Range<usize>,
+        auth_hash: Option<u64>,
+        auth_crc: Option<u64>,
+        embedded_schema: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            buf,
+            embedded_schema,
+            payload_range,
+            auth_hash,
+            auth_crc,
+        }
+    }
+
+    /// Read file at `path` into memory (standard embedded-header file).
     pub fn from_file(path: impl AsRef<Path>) -> io::Result<Self> {
         let buf = std::fs::read(path.as_ref())?;
-        let embedded_schema = match parse_header(&buf).1 {
-            Some((start, end)) => Some(buf[start..end].to_vec()),
-            None => None,
-        };
-        Ok(Self { buf, embedded_schema })
+        let (payload, schema, hash, crc) = parse_header(&buf);
+        let payload_start = payload.as_ptr() as usize - buf.as_ptr() as usize;
+        let payload_range = payload_start..payload_start + payload.len();
+        let embedded_schema = schema.map(|(s, e)| buf[s..e].to_vec());
+        Ok(Self::new_internal(buf, payload_range, hash, crc, embedded_schema))
+    }
+
+    /// Open a headerless payload file whose mmapstruct header/schema lives in a
+    /// sidecar `<path>.mmshdr`. The data file is treated as pure payload
+    /// (offset 0), so it is directly O_DIRECT-aligned.
+    pub fn from_file_with_sidecar(path: impl AsRef<Path>) -> io::Result<Self> {
+        let path = path.as_ref();
+        let buf = std::fs::read(path)?;
+        let mut sidecar_path = path.to_path_buf();
+        sidecar_path.set_extension("mmshdr");
+        let sidecar = std::fs::read(&sidecar_path)?;
+        let (_sp, schema, hash, crc) = parse_header(&sidecar);
+        let embedded_schema = schema.map(|(s, e)| sidecar[s..e].to_vec());
+        let payload_range = 0..buf.len();
+        Ok(Self::new_internal(buf, payload_range, hash, crc, embedded_schema))
     }
 
     /// Wrap an existing `Vec<u8>`.
     pub fn new(buf: Vec<u8>) -> Self {
-        let embedded_schema = match parse_header(&buf).1 {
-            Some((start, end)) => Some(buf[start..end].to_vec()),
-            None => None,
-        };
-        Self { embedded_schema, buf }
+        let (payload, schema, hash, crc) = parse_header(&buf);
+        let payload_start = payload.as_ptr() as usize - buf.as_ptr() as usize;
+        let payload_range = payload_start..payload_start + payload.len();
+        let embedded_schema = schema.map(|(s, e)| buf[s..e].to_vec());
+        Self::new_internal(buf, payload_range, hash, crc, embedded_schema)
     }
 
-    /// Read the buffer as type `T`, auto‑skipping the header if present.
-    /// Verifies layout_hash when the header contains one.
-    /// Verifies CRC64 when the header has a non-zero CRC.
+    /// Read the buffer as type `T`, skipping the header and verifying the
+    /// authoritative `layout_hash` and `crc64` (from the embedded header or the
+    /// sidecar, whichever was used to open the file).
     pub fn read<T: MmapRead + LayoutHash>(&self) -> T::Reader<'_> {
-        let (data, crc) = strip_header_checked::<T>(&self.buf);
-        if let Some(crc_value) = crc {
+        let data = &self.buf[self.payload_range.clone()];
+        if let Some(actual) = self.auth_hash {
+            let expected = T::HASH;
+            assert_eq!(
+                actual, expected,
+                "layout_hash mismatch: header has 0x{:016x}, struct expects 0x{:016x}. The file was written with a different struct layout.",
+                actual, expected
+            );
+        }
+        if let Some(crc_value) = self.auth_crc {
             if crc_value != 0 {
                 let actual = compute_crc64(data);
                 assert_eq!(
@@ -211,7 +275,7 @@ impl BufReader {
 
     /// Return the payload bytes (after stripping the header, no hash check).
     pub fn payload(&self) -> &[u8] {
-        strip_header(&self.buf)
+        &self.buf[self.payload_range.clone()]
     }
 
     /// Return the embedded schema bytes, if present.

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use mmapstruct::{
-    write_to_buf_raw, ArrayLayout, DynValueType, GetSchema, MmapWrite, StructSchema,
-    schema::EnumSchema,
+    compute_crc64, write_to_buf_raw, ArrayLayout, DynValueType, FileHeader, GetSchema, HEADER_SIZE,
+    LayoutHash, MmapWrite, StructSchema, schema::EnumSchema,
 };
 
 use crate::schema;
@@ -270,4 +270,75 @@ pub fn write_to_file_with_embedded_schema<T: MmapWrite + GetSchema + mmapstruct:
     let schema = build_serialized_schema::<T>();
     let schema_bytes = write_to_buf_raw(&schema);
     mmapstruct::write_to_buf_with_schema(value, write_crc, &schema_bytes)
+}
+
+/// Serialize `value` into two buffers: a headerless `data` payload and a
+/// sidecar containing the mmapstruct header (plus the embedded schema when
+/// `embed_schema` is true).
+///
+/// The data file is pure payload starting at offset 0, so it is directly
+/// O_DIRECT-aligned (the expert `k` lives at `k * element_size`). The sidecar
+/// mirrors the prefix of an embedded-schema file — a v2 header (with
+/// `HEADER_FLAG_HAS_SCHEMA` when `embed_schema`) followed by the schema bytes —
+/// so concatenating `sidecar` + `data` yields a valid standalone mmapstruct
+/// file. When `embed_schema` is false the sidecar carries only `layout_hash`
+/// (no embedded schema); resolve the schema via the registry keyed by hash.
+pub fn write_split<T: GetSchema + MmapWrite + LayoutHash>(
+    value: &T,
+    embed_schema: bool,
+) -> (Vec<u8>, Vec<u8>) {
+    let data = write_to_buf_raw(value);
+    let sidecar = if embed_schema {
+        let schema = build_serialized_schema::<T>();
+        let schema_bytes = write_to_buf_raw(&schema);
+        let padded = (schema_bytes.len() + 7) & !7;
+        let header = FileHeader::with_schema::<T>();
+        let mut s = Vec::with_capacity(HEADER_SIZE + 4 + padded);
+        s.extend_from_slice(bytemuck::bytes_of(&header));
+        s.extend_from_slice(&(schema_bytes.len() as u32).to_le_bytes());
+        s.extend_from_slice(&schema_bytes);
+        s.resize(HEADER_SIZE + 4 + padded, 0);
+        s
+    } else {
+        let header = FileHeader::new::<T>();
+        let mut s = Vec::with_capacity(HEADER_SIZE);
+        s.extend_from_slice(bytemuck::bytes_of(&header));
+        s
+    };
+    (data, sidecar)
+}
+
+/// Write `value` to `path` as a headerless payload, and write its
+/// header/schema to `<path>.mmshdr`.
+///
+/// If `write_crc` is true the CRC-64 is computed over the payload and stored in
+/// the sidecar header; `MmapReader::from_file_with_sidecar` then verifies it.
+pub fn write_to_file_split<T: GetSchema + MmapWrite + LayoutHash>(
+    path: impl AsRef<std::path::Path>,
+    value: &T,
+    write_crc: bool,
+    embed_schema: bool,
+) -> std::io::Result<()> {
+    let (data, mut sidecar) = write_split(value, embed_schema);
+    if write_crc {
+        let crc = compute_crc64(&data);
+        sidecar[16..24].copy_from_slice(&crc.to_le_bytes());
+    }
+    let mut sidecar_path = path.as_ref().to_path_buf();
+    sidecar_path.set_extension("mmshdr");
+    std::fs::write(path.as_ref(), &data)?;
+    std::fs::write(&sidecar_path, &sidecar)?;
+    Ok(())
+}
+
+/// Serialize `T`'s schema and save it to the registry keyed by `T::HASH`.
+///
+/// This backs the shared-schema mechanism: a sidecar written with
+/// `embed_schema = false` carries only `layout_hash`, and the registry supplies
+/// the actual schema. Failures (e.g. unwritable registry dir) are ignored so
+/// callers can treat this as best-effort.
+pub fn ensure_registry_schema<T: GetSchema + LayoutHash>() {
+    let schema = build_serialized_schema::<T>();
+    let schema_bytes = write_to_buf_raw(&schema);
+    let _ = crate::registry::save_schema(T::HASH, &schema_bytes);
 }

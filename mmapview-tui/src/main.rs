@@ -77,7 +77,7 @@ fn main() {
         }
     };
 
-    let loaded = match schema::load_schema(&data_vec, schema_path.as_deref()) {
+    let loaded = match schema::load_schema(&data_vec, schema_path.as_deref(), Some(&data_path)) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("{}", e);

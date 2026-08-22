@@ -1,7 +1,8 @@
 //! Schema registry: stores/loads serialized schemas by `layout_hash`.
 //!
-//! Schemas are stored in `~/.config/mmapstruct/schemas/<hash_hex>.mms`.
-//! The registry is a fallback for files without embedded schema.
+//! Schemas are stored in `~/.config/mmapstruct/schemas/<hash_hex>.mms` (override
+//! with the `MMAPSTRUCT_SCHEMA_DIR` env var). The registry is a fallback for
+//! files whose sidecar carries only a `layout_hash` (no embedded schema).
 
 use std::path::PathBuf;
 

@@ -483,7 +483,7 @@ mod tests {
         val: &T,
     ) -> (&'static RuntimeSchemaCtx<'static>, SchemaValue) {
         let buf = write_to_file_with_embedded_schema(val, false);
-        let loaded = crate::schema::load_schema(&buf, None).unwrap();
+        let loaded = crate::schema::load_schema(&buf, None, None).unwrap();
         let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
         let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
         let ctx: &'static RuntimeSchemaCtx<'static> = Box::leak(Box::new(

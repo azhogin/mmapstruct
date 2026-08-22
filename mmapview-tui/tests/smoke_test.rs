@@ -37,7 +37,7 @@ fn test_build_tree() {
     let s = Simple { x: 42, y: 99 };
     let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&s, false);
 
-    let loaded = mmapview_tui::schema::load_schema(&buf, None).unwrap();
+    let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
     let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
@@ -74,7 +74,7 @@ fn test_build_enum_tree() {
     let root = MyEnums { shapes };
     let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&root, false);
 
-    let loaded = mmapview_tui::schema::load_schema(&buf, None).unwrap();
+    let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
     let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
@@ -150,7 +150,7 @@ fn test_tuple_display() {
     };
     let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&demo, false);
 
-    let loaded = mmapview_tui::schema::load_schema(&buf, None).unwrap();
+    let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
     let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
@@ -247,7 +247,7 @@ fn test_field_type_display() {
         maybe_count: Some(42),
     };
     let buf1 = write_to_file_with_embedded_schema(&demo1, false);
-    let loaded1 = mmapview_tui::schema::load_schema(&buf1, None).unwrap();
+    let loaded1 = mmapview_tui::schema::load_schema(&buf1, None, None).unwrap();
     let d1: &'static [u8] = Box::leak(buf1.into_boxed_slice());
     let sb1: &'static [u8] = Box::leak(loaded1.schema_bytes.into_boxed_slice());
     let ctx1 = Box::leak(Box::new(
@@ -277,7 +277,7 @@ fn test_field_type_display() {
         tags: vec!["alpha".into(), "beta".into()],
     };
     let buf2 = write_to_file_with_embedded_schema(&demo2, false);
-    let loaded2 = mmapview_tui::schema::load_schema(&buf2, None).unwrap();
+    let loaded2 = mmapview_tui::schema::load_schema(&buf2, None, None).unwrap();
     let d2: &'static [u8] = Box::leak(buf2.into_boxed_slice());
     let sb2: &'static [u8] = Box::leak(loaded2.schema_bytes.into_boxed_slice());
     let ctx2 = Box::leak(Box::new(
@@ -307,7 +307,7 @@ fn test_field_type_display() {
     }
     let demo3 = BoolDemo { enabled: 1 };
     let buf3 = write_to_file_with_embedded_schema(&demo3, false);
-    let loaded3 = mmapview_tui::schema::load_schema(&buf3, None).unwrap();
+    let loaded3 = mmapview_tui::schema::load_schema(&buf3, None, None).unwrap();
     let d3: &'static [u8] = Box::leak(buf3.into_boxed_slice());
     let sb3: &'static [u8] = Box::leak(loaded3.schema_bytes.into_boxed_slice());
     let ctx3 = Box::leak(Box::new(
@@ -342,7 +342,7 @@ fn test_byref_option_scanner_bug() {
     let demo = BugDemo { label: Some("test".into()) };
     let buf = write_to_file_with_embedded_schema(&demo, false);
 
-    let loaded = mmapview_tui::schema::load_schema(&buf, None).unwrap();
+    let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
     let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
@@ -386,7 +386,7 @@ fn test_build_hash_map() {
     let root = MyHashMap { map };
     let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&root, false);
 
-    let loaded = mmapview_tui::schema::load_schema(&buf, None).unwrap();
+    let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
     let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
@@ -441,7 +441,7 @@ fn test_fixed_array_display() {
         matrix: [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]],
     };
     let buf = write_to_file_with_embedded_schema(&demo, false);
-    let loaded = mmapview_tui::schema::load_schema(&buf, None).unwrap();
+    let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
     let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
@@ -467,4 +467,81 @@ fn test_fixed_array_display() {
     assert!(array_nodes.len() >= 4, "expected at least 4 array elements, got {}:\n{joined}", array_nodes.len());
     assert!(texts.iter().any(|t| t.contains("= 6")), "value 6 missing");
     assert!(texts.iter().any(|t| t.contains("= 16")), "value 16 missing");
+}
+
+#[derive(MmapStruct, Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct Splittable {
+    x: u32,
+    y: f32,
+}
+
+#[test]
+fn test_load_schema_sidecar() {
+    let v = Splittable { x: 123, y: 3.14 };
+    let path = std::env::temp_dir().join("sidecar_test.mms");
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("mmshdr"));
+    mmapstruct_schema::write_to_file_split(&path, &v, true, true).unwrap();
+    assert!(path.exists());
+    assert!(path.with_extension("mmshdr").exists());
+
+    let buf = std::fs::read(&path).unwrap();
+    // headerless data must not start with the mmapstruct magic
+    assert_ne!(&buf[0..4], b"MMAP");
+
+    // auto-detect the sidecar via the data file path
+    let loaded = mmapview_tui::schema::load_schema(
+        &buf,
+        None,
+        Some(path.to_str().unwrap()),
+    )
+    .unwrap();
+    assert!(!loaded.schema_bytes.is_empty());
+    assert_eq!(loaded.payload_range, 0..buf.len());
+
+    // and the typed reader must open it via the sidecar
+    let r = mmapstruct::MmapReader::from_file_with_sidecar(&path).unwrap();
+    let got: Splittable = r.read::<Splittable>().into();
+    assert_eq!(got, v);
+}
+
+#[test]
+fn test_load_schema_sidecar_registry() {
+    // Use an isolated registry dir so we don't touch the real home.
+    let reg = std::env::temp_dir().join(format!("mmap_schema_registry_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&reg);
+    std::env::set_var("MMAPSTRUCT_SCHEMA_DIR", &reg);
+
+    let v = Splittable { x: 7, y: 2.5 };
+    // Save the shared schema to the registry (what the split command does).
+    mmapstruct_schema::ensure_registry_schema::<Splittable>();
+
+    let path = std::env::temp_dir().join("sidecar_reg_test.mms");
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("mmshdr"));
+    // Hash-only sidecar (embed_schema = false): schema comes from the registry.
+    mmapstruct_schema::write_to_file_split(&path, &v, false, false).unwrap();
+    assert!(path.exists());
+    assert!(path.with_extension("mmshdr").exists());
+
+    let buf = std::fs::read(&path).unwrap();
+    assert_ne!(&buf[0..4], b"MMAP");
+
+    // Sidecar carries only layout_hash -> schema resolved from the registry.
+    let loaded = mmapview_tui::schema::load_schema(
+        &buf,
+        None,
+        Some(path.to_str().unwrap()),
+    )
+    .unwrap();
+    assert!(!loaded.schema_bytes.is_empty());
+    assert_eq!(loaded.payload_range, 0..buf.len());
+
+    // Typed reader opens it via the sidecar hash.
+    let r = mmapstruct::MmapReader::from_file_with_sidecar(&path).unwrap();
+    let got: Splittable = r.read::<Splittable>().into();
+    assert_eq!(got, v);
+
+    let _ = std::fs::remove_dir_all(&reg);
 }

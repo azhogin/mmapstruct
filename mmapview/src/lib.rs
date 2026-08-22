@@ -4,7 +4,7 @@ mod interpreter;
 #[cfg(feature = "json")]
 pub mod json_conv;
 mod parser;
-pub mod registry;
+pub use mmapstruct_schema::registry;
 pub mod schema;
 pub mod tree;
 mod tokenizer;
