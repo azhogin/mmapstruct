@@ -288,3 +288,75 @@ impl BufReader {
         self.buf
     }
 }
+
+// ---------------------------------------------------------------------------
+// Layout-hash patching — in-place header fixup for pre-existing files
+// ---------------------------------------------------------------------------
+
+/// Stored `layout_hash` from a headered file's 24-byte header.
+///
+/// Returns `Ok(None)` for raw payloads, the old 8-byte v0 format, unknown
+/// versions, or headers without the hash flag.
+pub fn stored_layout_hash(path: &Path) -> io::Result<Option<u64>> {
+    use std::io::Read;
+    let mut f = File::open(path)?;
+    let mut hdr = [0u8; HEADER_SIZE];
+    let n = f.read(&mut hdr)?;
+    if n < HEADER_SIZE {
+        return Ok(None);
+    }
+    let header: FileHeader = unsafe { mmap_read_pod(&hdr) };
+    if header.magic != MMAP_MAGIC {
+        return Ok(None);
+    }
+    match header.hdr_ver {
+        HEADER_VER_1 | HEADER_VER_2 => {
+            if header.flags & HEADER_FLAG_HASH_PRESENT != 0 {
+                Ok(Some(header.layout_hash))
+            } else {
+                Ok(None)
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Overwrite the `layout_hash` field of a headered file in place
+/// (8 bytes at offset 8). The payload and CRC are untouched.
+///
+/// Errors for files that are too small, lack the MMAP magic, or carry no
+/// hash flag (raw / v0).
+pub fn write_layout_hash(path: &Path, new_hash: u64) -> io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut f = File::options().read(true).write(true).open(path)?;
+    let mut hdr = [0u8; HEADER_SIZE];
+    f.read_exact(&mut hdr)?;
+    let header: FileHeader = unsafe { mmap_read_pod(&hdr) };
+    if header.magic != MMAP_MAGIC {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{}: not an MMAP-headered file", path.display()),
+        ));
+    }
+    if !matches!(header.hdr_ver, HEADER_VER_1 | HEADER_VER_2)
+        || header.flags & HEADER_FLAG_HASH_PRESENT == 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{}: header has no layout_hash slot (v0/raw)", path.display()),
+        ));
+    }
+    hdr[8..16].copy_from_slice(&new_hash.to_le_bytes());
+    f.seek(SeekFrom::Start(0))?;
+    f.write_all(&hdr)?;
+    f.sync_all()
+}
+
+/// Recompute [`LayoutHash::HASH`] for `T` and write it into the file header.
+///
+/// One-shot migration tool for files written before a change to the hash
+/// composition formula (binary layouts unchanged). O(1) per file regardless
+/// of file size.
+pub fn patch_layout_hash<T: LayoutHash>(path: &Path) -> io::Result<()> {
+    write_layout_hash(path, T::HASH)
+}

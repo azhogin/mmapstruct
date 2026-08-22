@@ -32,3 +32,20 @@ pub fn load_schema(layout_hash: u64) -> Option<Vec<u8>> {
     let path = registry_dir().join(format!("{:016x}.mms", layout_hash));
     std::fs::read(path).ok()
 }
+
+/// Move a registry entry from `old_hash` to `new_hash`.
+///
+/// No-op if the old entry does not exist. Overwrites an existing entry at
+/// `new_hash` and deletes the old file.
+pub fn rekey_schema(old_hash: u64, new_hash: u64) -> std::io::Result<()> {
+    if old_hash == new_hash {
+        return Ok(());
+    }
+    let Some(bytes) = load_schema(old_hash) else {
+        return Ok(());
+    };
+    save_schema(new_hash, &bytes)?;
+    let dir = registry_dir();
+    let _ = std::fs::remove_file(dir.join(format!("{:016x}.mms", old_hash)));
+    Ok(())
+}

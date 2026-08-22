@@ -1442,7 +1442,7 @@ fn test_dyn_hashmap_access() {
     map.insert("beta".into(), 2u32);
     map.insert("gamma".into(), 3u32);
     let w = DynHashMapFile { map };
-    let buf = write_to_buf_raw(&w);
+    let buf = mmapstruct::write_to_buf_raw(&w);
     let ctx = SchemaCtx::new(&buf);
 
     let schema = <DynHashMapFile as GetSchema>::get_struct_schema();
@@ -2408,7 +2408,7 @@ fn test_dyn_fixed_array_top_level() {
     use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
 
     let w = TopLevelArray { arr: [1, 2, 3, 4] };
-    let buf = write_to_buf_raw(&w);
+    let buf = mmapstruct::write_to_buf_raw(&w);
     let ctx = SchemaCtx::new(&buf);
 
     let schema = <TopLevelArray as GetSchema>::get_struct_schema();
@@ -2444,7 +2444,7 @@ fn test_dyn_vec_fixed_array_pod() {
         rows: vec![[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]],
         label: "test".into(),
     };
-    let buf = write_to_buf_raw(&w);
+    let buf = mmapstruct::write_to_buf_raw(&w);
     let ctx = SchemaCtx::new(&buf);
 
     let schema = <VecOfFixedArrays as GetSchema>::get_struct_schema();
@@ -2494,7 +2494,7 @@ fn test_dyn_vec_fixed_array_fixed() {
             TestFixedArr { id: 2, label: "b".into() },
         ],
     };
-    let buf = write_to_buf_raw(&w);
+    let buf = mmapstruct::write_to_buf_raw(&w);
     let ctx = SchemaCtx::new(&buf);
 
     let schema = <VecOfFixedArr as GetSchema>::get_struct_schema();
@@ -2525,7 +2525,7 @@ fn test_dyn_vec_nested_fixed_array() {
             [[0; 4]; 4],
         ],
     };
-    let buf = write_to_buf_raw(&w);
+    let buf = mmapstruct::write_to_buf_raw(&w);
     let ctx = SchemaCtx::new(&buf);
 
     let schema = <VecOfMatrices as GetSchema>::get_struct_schema();
@@ -2743,7 +2743,7 @@ fn test_dyn_fixed_array_podstruct() {
             PodPoint { x: 5.0, y: 6.0 },
         ],
     };
-    let buf = write_to_buf_raw(&w);
+    let buf = mmapstruct::write_to_buf_raw(&w);
     let ctx = SchemaCtx::new(&buf);
 
     let schema = <WithPodStructArray as GetSchema>::get_struct_schema();
@@ -2774,7 +2774,7 @@ fn test_dyn_fixed_array_enum() {
         id: 42,
         arr: [10, 20, 30, 40],
     };
-    let buf = write_to_buf_raw(&w);
+    let buf = mmapstruct::write_to_buf_raw(&w);
     let ctx = SchemaCtx::new(&buf);
 
     let vt = <SimpleEnumWithArray as GetSchema>::root_value_type();
@@ -2798,7 +2798,7 @@ fn test_dyn_fixed_array_enum_beta() {
     use mmapstruct::schema::Value;
 
     let w = SimpleEnumWithArray::Beta { val: 99 };
-    let buf = write_to_buf_raw(&w);
+    let buf = mmapstruct::write_to_buf_raw(&w);
     let ctx = SchemaCtx::new(&buf);
 
     let vt = <SimpleEnumWithArray as GetSchema>::root_value_type();
@@ -2817,7 +2817,7 @@ fn test_dyn_fixed_array_byref() {
         id: 42,
         arr: [10, 20, 30, 40],
     };
-    let buf = write_to_buf_raw(&w);
+    let buf = mmapstruct::write_to_buf_raw(&w);
     let ctx = SchemaCtx::new(&buf);
 
     let schema = <WithByrefArray as GetSchema>::get_struct_schema();
@@ -2938,7 +2938,7 @@ fn test_dyn_pod_vec_of_struct_with_enum() {
             ComplexItem { id: 2, value: 2.71, kind: ItemKind::Beta },
         ],
     };
-    let buf = write_to_buf_raw(&w);
+    let buf = mmapstruct::write_to_buf_raw(&w);
     let ctx = SchemaCtx::new(&buf);
 
     let schema = <ComplexContainer as GetSchema>::get_struct_schema();
@@ -3028,7 +3028,7 @@ fn test_pod_field_rich_schema_when_derived() {
         id: 9,
         origin: PodPoint { x: 1.5, y: -2.5 },
     };
-    let buf = write_to_buf_raw(&w);
+    let buf = mmapstruct::write_to_buf_raw(&w);
     let ctx = SchemaCtx::new(&buf);
     let root = <PodRichFile as GetSchema>::root_value(0);
     let origin = ctx.field_get(&root, "origin").unwrap();
@@ -3108,4 +3108,61 @@ fn test_pod_vec_of_non_derived_compiles_and_roundtrips() {
     let root = <PodVecNoDeriveFile as GetSchema>::root_value(0);
     let weights = ctx.field_get(&root, "weights").unwrap();
     assert_eq!(ctx.array_len(&weights), 3);
+}
+
+// ---------------------------------------------------------------------------
+// Layout-hash patching (in-place header fixup)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_stored_layout_hash_raw_file_is_none() {
+    let w = Point { x: 1, y: 2 };
+    let buf = mmapstruct::write_to_buf_raw(&w);
+    let tmp = NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), &buf).unwrap();
+    assert_eq!(
+        mmapstruct::file_reader::stored_layout_hash(tmp.path()).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn test_patch_layout_hash_restores_typed_read() {
+    let w = Point { x: 7, y: 9 };
+    let buf = write_to_buf(&w, false);
+    let tmp = NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), &buf).unwrap();
+
+    let stored = mmapstruct::file_reader::stored_layout_hash(tmp.path())
+        .unwrap()
+        .expect("v1/v2 header must carry a hash");
+
+    // Corrupt the stored hash (simulate a hash-formula change).
+    let mut corrupted = buf.clone();
+    corrupted[8..16].copy_from_slice(&[0xABu8; 8]);
+    std::fs::write(tmp.path(), &corrupted).unwrap();
+    assert_ne!(
+        mmapstruct::file_reader::stored_layout_hash(tmp.path()).unwrap(),
+        Some(stored)
+    );
+
+    // Patch back and verify a typed read succeeds again.
+    mmapstruct::file_reader::patch_layout_hash::<Point>(tmp.path()).unwrap();
+    assert_eq!(
+        mmapstruct::file_reader::stored_layout_hash(tmp.path()).unwrap(),
+        Some(stored)
+    );
+    let r = mmapstruct::file_reader::BufReader::from_file(tmp.path()).unwrap();
+    let p: &Point = r.read::<Point>();
+    assert_eq!(p.x, 7);
+    assert_eq!(p.y, 9);
+}
+
+#[test]
+fn test_write_layout_hash_rejects_raw_file() {
+    let w = Point { x: 1, y: 2 };
+    let buf = mmapstruct::write_to_buf_raw(&w);
+    let tmp = NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), &buf).unwrap();
+    assert!(mmapstruct::file_reader::write_layout_hash(tmp.path(), 42).is_err());
 }
