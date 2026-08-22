@@ -58,10 +58,29 @@ fn field_value_type(
         // PodPrimitive is handled by caller via primitive_vt_ref canonical statics.
         FieldCategory::PodPrimitive => unreachable!(),
         FieldCategory::PodCustom => {
+            // Rich schema when the type has GetSchema (#[derive(MmapStruct)]),
+            // opaque PodStruct{size} fallback otherwise. The autoref probe must
+            // live in a concrete (non-generic) context — which generated code is.
             let ty = &fi.ty;
             let size = type_size_expr(ty);
-            let vt_expr = quote! { ::mmapstruct::schema::DynValueType::PodStruct { size: (#size) as u64 } };
-            (vt_expr, Vec::new())
+            let resolve_name = format_ident!("__mmap_resolve_{}_{}", struct_name, field_ident);
+            let resolver = quote! {
+                #[allow(non_snake_case)]
+                fn #resolve_name() -> &'static ::mmapstruct::schema::DynValueType {
+                    static FB: ::mmapstruct::schema::DynValueType =
+                        ::mmapstruct::schema::DynValueType::PodStruct { size: (#size) as u64 };
+                    use ::mmapstruct::schema::{PodViaGetSchema as _, PodViaOpaque as _};
+                    let mut w = ::mmapstruct::schema::PodResolve::<#ty>(::core::marker::PhantomData);
+                    match w.resolve_pod() {
+                        Some(vt) => vt,
+                        None => &FB,
+                    }
+                }
+            };
+            (
+                quote! { ::mmapstruct::schema::DynValueType::Lazy(#resolve_name) },
+                vec![resolver],
+            )
         }
         FieldCategory::FixedArray { inner_type, count, .. } => {
             // Fixed-size array with known count — uses FixedPod layout.
@@ -259,7 +278,16 @@ fn inner_dyn_value_type(
     let resolver = quote! {
         #[allow(non_snake_case)]
         fn #resolve_name() -> &'static ::mmapstruct::schema::DynValueType {
-            <#inner_ty as ::mmapstruct::schema::GetSchema>::root_value_type()
+            static FB: ::mmapstruct::schema::DynValueType =
+                ::mmapstruct::schema::DynValueType::PodStruct {
+                    size: (::core::mem::size_of::<#inner_ty>()) as u64,
+                };
+            use ::mmapstruct::schema::{PodViaGetSchema as _, PodViaOpaque as _};
+            let mut w = ::mmapstruct::schema::PodResolve::<#inner_ty>(::core::marker::PhantomData);
+            match w.resolve_pod() {
+                Some(vt) => vt,
+                None => &FB,
+            }
         }
     };
     let vt_static = quote! {

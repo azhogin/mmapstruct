@@ -182,6 +182,18 @@ impl<'a> RuntimeSchemaCtx<'a> {
                     s.min(8).next_power_of_two() as u64
                 }
             }
+            TypeDefReader::Struct {
+                fixed_section_size,
+                inline_dyn_count,
+                ..
+            } if **inline_dyn_count == 0 => {
+                let s = **fixed_section_size as usize;
+                if s == 0 {
+                    1
+                } else {
+                    s.min(8).next_power_of_two() as u64
+                }
+            }
             _ => 8,
         }
     }
@@ -211,6 +223,18 @@ impl<'a> RuntimeSchemaCtx<'a> {
                 _ => None,
             },
             TypeDefReader::Enum { disc_size, .. } => Some(**disc_size),
+            // Pod struct (no inline-dynamic fields): raw blob of its fixed size.
+            TypeDefReader::Struct {
+                fixed_section_size,
+                inline_dyn_count,
+                ..
+            } => {
+                if **inline_dyn_count == 0 {
+                    Some(**fixed_section_size)
+                } else {
+                    None
+                }
+            }
             // Struct, HashMap, Option, ByRef — not fixed-size;
             // their extent depends on offset tables, variant discriminants, or
             // dynamic content.  Callers that need the full range for these types

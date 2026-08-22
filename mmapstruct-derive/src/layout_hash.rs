@@ -4,6 +4,7 @@ use quote::{format_ident, quote};
 
 use crate::category::*;
 use crate::field_info::*;
+use crate::utils::{known_primitive_size, type_size_expr};
 
 /// Generate `impl LayoutHash` for a struct.
 pub(crate) fn generate_layout_hash_impl(
@@ -22,9 +23,16 @@ pub(crate) fn generate_layout_hash_impl(
                     let s = *size as u64;
                     quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_INLINE, #base, #s]) }
                 }
-                FieldCategory::DynamicVec { elem_is_pod, elem_fixed, .. } => {
+                FieldCategory::DynamicVec { inner, elem_is_pod, elem_fixed } => {
                     if *elem_is_pod {
-                        quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_POD_VEC, #base]) }
+                        if known_primitive_size(inner).is_some() {
+                            quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_POD_VEC, #base]) }
+                        } else {
+                            // Custom pod element (may lack a derive, hence no
+                            // LayoutHash): hash by its size instead.
+                            let sz = type_size_expr(inner);
+                            quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_POD_VEC, ::mmapstruct::traits::ENC_POD_CUSTOM, (#sz) as u64]) }
+                        }
                     } else if *elem_fixed {
                         quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_FIXED_VEC, #base]) }
                     } else {
@@ -37,6 +45,12 @@ pub(crate) fn generate_layout_hash_impl(
                 FieldCategory::FixedArray { count, .. } => {
                     let c = *count as u64;
                     quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_FIXED_ARRAY, #base, #c]) }
+                }
+                FieldCategory::PodCustom => {
+                    // Opaque pod blob (may lack a derive, hence no LayoutHash):
+                    // its binary contribution is fully determined by its size.
+                    let sz = type_size_expr(ty);
+                    quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_POD_CUSTOM, (#sz) as u64]) }
                 }
                 FieldCategory::DynamicHashMap { .. } => {
                     quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_HASHMAP, #base]) }

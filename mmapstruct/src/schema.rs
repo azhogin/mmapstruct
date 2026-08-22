@@ -414,12 +414,19 @@ impl<'a> SchemaCtx<'a> {
         } else {
             // Pod or inline string in fixed section
             let fixed_off = base + desc.offset_in_fixed as u64;
-            let limit = match desc.value_type {
+            // Resolve Lazy (pod custom types with GetSchema) to the concrete type.
+            let vt = match desc.value_type {
+                DynValueType::Lazy(resolve) => resolve(),
+                other => other,
+            };
+            let limit = match vt {
                 DynValueType::Str(Some(n)) => fixed_off + n,
                 DynValueType::PodStruct { size } => fixed_off + size,
+                DynValueType::Struct(resolve) => fixed_off + resolve().fixed_section_size as u64,
+                DynValueType::Enum(es) => fixed_off + es.disc_size,
                 _ => fixed_off + 8,
             };
-            Some(Value::new(fixed_off, limit, desc.value_type))
+            Some(Value::new(fixed_off, limit, vt))
         }
     }
 
@@ -773,5 +780,39 @@ pub trait GetSchema {
     /// Create a root `Value` for this struct at offset 0 with the given total size.
     fn root_value(total_size: u64) -> Value {
         Value::new(0, total_size, Self::root_value_type())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pod schema resolution (autoref specialization)
+// ---------------------------------------------------------------------------
+
+/// Zero-sized marker used to detect `GetSchema` availability at
+/// monomorphization time via autoref specialization (stable Rust).
+///
+/// Must be probed from a **concrete** (e.g. proc-macro generated) context —
+/// inside a generic function, method resolution happens once generically and
+/// always prefers the unconditional fallback.
+pub struct PodResolve<T>(pub core::marker::PhantomData<T>);
+
+/// Higher-priority candidate (`Self = PodResolve<T>`, matched at the autoref
+/// step): picked whenever `T: GetSchema`.
+pub trait PodViaGetSchema {
+    fn resolve_pod(&self) -> Option<&'static DynValueType>;
+}
+impl<T: GetSchema> PodViaGetSchema for PodResolve<T> {
+    fn resolve_pod(&self) -> Option<&'static DynValueType> {
+        Some(T::root_value_type())
+    }
+}
+
+/// Lower-priority fallback (`Self = &mut PodResolve<T>`, matched only at the
+/// autoref-mut step): used when `T` does not implement [`GetSchema`].
+pub trait PodViaOpaque {
+    fn resolve_pod(self) -> Option<&'static DynValueType>;
+}
+impl<T> PodViaOpaque for &mut PodResolve<T> {
+    fn resolve_pod(self) -> Option<&'static DynValueType> {
+        None
     }
 }

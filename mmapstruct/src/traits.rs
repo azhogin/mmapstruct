@@ -212,6 +212,7 @@ pub const ENC_FIXED_VEC: u64 = fnv1a(b"FIXED_VEC");
 pub const ENC_BYREF_VEC: u64 = fnv1a(b"BYREF_VEC");
 pub const ENC_HASHMAP: u64 = fnv1a(b"HASHMAP");
 pub const ENC_FIXED_ARRAY: u64 = fnv1a(b"FIXED_ARRAY");
+pub const ENC_POD_CUSTOM: u64 = fnv1a(b"POD_CUSTOM");
 
 // ---------------------------------------------------------------------------
 // Pod I/O

@@ -2962,3 +2962,150 @@ fn test_dyn_pod_vec_of_struct_with_enum() {
     let kind1 = ctx.field_get(&item1, "kind").unwrap();
     assert_eq!(ctx.read_u32(&kind1), 1);
 }
+
+// ---------------------------------------------------------------------------
+// Pod custom schema resolution: rich when GetSchema exists, opaque otherwise
+// ---------------------------------------------------------------------------
+
+/// Pod wrapper WITHOUT MmapStruct derive — an opaque blob for the schema system.
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct RawWeight([[u8; 4]; 2]);
+
+#[derive(MmapStruct, Debug, Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct PodRichFile {
+    id: u32,
+    #[pod]
+    origin: PodPoint,
+}
+
+#[derive(MmapStruct, Debug, Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct PodOpaqueFile {
+    id: u32,
+    #[pod]
+    weight: RawWeight,
+}
+
+#[derive(MmapStruct, Debug)]
+struct PodVecNoDeriveFile {
+    meta: u32,
+    #[pod]
+    weights: Vec<RawWeight>,
+}
+
+/// Resolve a (possibly Lazy) field value type to its concrete type.
+#[cfg(feature = "dyn")]
+fn resolve_vt(
+    vt: &'static mmapstruct::schema::DynValueType,
+) -> &'static mmapstruct::schema::DynValueType {
+    use mmapstruct::schema::DynValueType;
+    match vt {
+        DynValueType::Lazy(resolve) => resolve(),
+        other => other,
+    }
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_pod_field_rich_schema_when_derived() {
+    use mmapstruct::schema::{DynValueType, SchemaCtx};
+    use mmapstruct::{write_to_buf_raw, GetSchema};
+
+    // The #[pod] field whose type has MmapStruct derive resolves to a Struct schema.
+    let schema = <PodRichFile as GetSchema>::get_struct_schema();
+    let f = &schema.fields[1];
+    assert_eq!(f.name, "origin");
+    match resolve_vt(f.value_type) {
+        DynValueType::Struct(_) => {}
+        DynValueType::PodStruct { size } => panic!("got opaque PodStruct size={size}"),
+        _ => panic!("expected Struct schema for derived pod field"),
+    }
+
+    // End-to-end navigation through the resolved struct.
+    let w = PodRichFile {
+        id: 9,
+        origin: PodPoint { x: 1.5, y: -2.5 },
+    };
+    let buf = write_to_buf_raw(&w);
+    let ctx = SchemaCtx::new(&buf);
+    let root = <PodRichFile as GetSchema>::root_value(0);
+    let origin = ctx.field_get(&root, "origin").unwrap();
+    let x = ctx.field_get(&origin, "x").unwrap();
+    assert!((ctx.read_f32(&x) - 1.5).abs() < 1e-6);
+    let y = ctx.field_get(&origin, "y").unwrap();
+    assert!((ctx.read_f32(&y) + 2.5).abs() < 1e-6);
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_pod_field_opaque_schema_without_derive() {
+    use mmapstruct::schema::DynValueType;
+    use mmapstruct::GetSchema;
+
+    // RawWeight has no GetSchema — the field stays an honest opaque blob.
+    let schema = <PodOpaqueFile as GetSchema>::get_struct_schema();
+    let f = &schema.fields[1];
+    assert_eq!(f.name, "weight");
+    match resolve_vt(f.value_type) {
+        DynValueType::PodStruct { size } => assert_eq!(*size, core::mem::size_of::<RawWeight>() as u64),
+        _ => panic!("expected PodStruct fallback for non-derived pod field"),
+    }
+
+    // Roundtrip still works.
+    let w = PodOpaqueFile {
+        id: 3,
+        weight: RawWeight([[1, 2, 3, 4], [5, 6, 7, 8]]),
+    };
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader: PodOpaqueFile = *r.read::<PodOpaqueFile>();
+    assert_eq!(reader.id, 3);
+    assert_eq!(reader.weight.0[1][3], 8);
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_pod_vec_of_non_derived_compiles_and_roundtrips() {
+    use mmapstruct::schema::{ArrayLayout, DynValueType};
+    use mmapstruct::{write_to_buf_raw, GetSchema, SchemaCtx};
+
+    // Previously this failed to compile under feature = "dyn":
+    // element types required GetSchema unconditionally.
+    let w = PodVecNoDeriveFile {
+        meta: 7,
+        weights: vec![RawWeight([[9; 4]; 2]), RawWeight([[8; 4]; 2]), RawWeight([[7; 4]; 2])],
+    };
+
+    // Typed roundtrip.
+    let buf = write_to_buf(&w, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<PodVecNoDeriveFile>();
+    assert_eq!(*reader.meta, 7);
+    assert_eq!(reader.weights.len(), 3);
+    assert_eq!(reader.weights[0].0[0][0], 9);
+
+    // Schema: Array with Pod layout; elements are opaque PodStruct{size}.
+    let schema = <PodVecNoDeriveFile as GetSchema>::get_struct_schema();
+    let f = &schema.fields[1];
+    assert_eq!(f.name, "weights");
+    let elem = match resolve_vt(f.value_type) {
+        DynValueType::Array(arr) => {
+            assert!(matches!(arr.layout, ArrayLayout::Pod { stride: 8 }));
+            arr.elem_type
+        }
+        _ => panic!("expected Array schema for pod Vec field"),
+    };
+    match resolve_vt(elem) {
+        DynValueType::PodStruct { size } => assert_eq!(*size, core::mem::size_of::<RawWeight>() as u64),
+        _ => panic!("expected opaque PodStruct element"),
+    }
+
+    // Dynamic navigation: array_len via count prefix, element bytes readable.
+    let raw = write_to_buf_raw(&w);
+    let ctx = SchemaCtx::new(&raw);
+    let root = <PodVecNoDeriveFile as GetSchema>::root_value(0);
+    let weights = ctx.field_get(&root, "weights").unwrap();
+    assert_eq!(ctx.array_len(&weights), 3);
+}

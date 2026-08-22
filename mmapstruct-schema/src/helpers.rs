@@ -23,6 +23,9 @@ impl TypeDefReaderExt for TypeDefReader<'_> {
             TypeDefReader::Str { size } => size.is_some(),
             TypeDefReader::Array { layout, .. } => matches!(layout, ArrayLayoutDefReader::FixedPod { .. }),
             TypeDefReader::Enum { .. } => true,
+            // A derived struct with no inline-dynamic fields is a plain pod
+            // blob (MmapPod) stored raw in the parent's fixed section.
+            TypeDefReader::Struct { inline_dyn_count, .. } => **inline_dyn_count == 0,
             _ => false,
         }
     }
