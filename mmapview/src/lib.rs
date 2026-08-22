@@ -9,8 +9,11 @@ pub mod schema;
 pub mod tree;
 mod tokenizer;
 pub mod query_context;
+pub mod runtime_json;
+pub mod describe;
 
 pub use interpreter::interpret;
+pub use interpreter::{interpret_with_limits, QueryLimits};
 pub use parser::parse;
 pub use tokenizer::tokenize;
 
@@ -224,6 +227,20 @@ pub fn query_from_generic<'a, C: query_context::QueryContext<'a>>(
     let tokens = tokenize(q)?;
     let expr = parse(&tokens)?;
     interpret(&expr, ctx, root)
+}
+
+/// Like [`query_from_generic`] but applies [`QueryLimits`] pushdown:
+/// multi-result operations (`[?filter]`, slices) stop scanning once the
+/// limits are exhausted.
+pub fn query_from_generic_limited<'a, C: query_context::QueryContext<'a>>(
+    q: &str,
+    ctx: &C,
+    root: &C::Val,
+    limits: &QueryLimits,
+) -> Result<Vec<EvalResult<C::Val>>, String> {
+    let tokens = tokenize(q)?;
+    let expr = parse(&tokens)?;
+    interpret_with_limits(&expr, ctx, root, limits)
 }
 
 #[cfg(test)]

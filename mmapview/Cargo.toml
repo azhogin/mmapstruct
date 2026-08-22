@@ -8,11 +8,11 @@ mmapstruct = { path = "../mmapstruct", features = ["dyn"] }
 mmapstruct-schema = { path = "../mmapstruct-schema" }
 mmapstruct-schemagen = { path = "../mmapstruct-schemagen" }
 bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
-serde_json = { version = "1", optional = true }
+serde_json = "1"
 serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
-json = ["serde_json", "serde"]
+json = ["serde"]
 
 [[bin]]
 name = "mmapview"

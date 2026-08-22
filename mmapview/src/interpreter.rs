@@ -2,6 +2,73 @@ use crate::parser::{AggregateFunc, Expr, FilterExpr, FilterOp, FilterValue};
 use crate::query_context::QueryContext;
 use crate::EvalResult;
 
+/// Limits for query evaluation (pushdown of CLI `--skip` / `--limit`).
+///
+/// The budget counts **candidate items** emitted by multi-result operations
+/// (`[?filter]`, slices, `[a:b]`). Exact index paths (`/items[5]`) are never
+/// counted or blocked, and aggregations (`count()` etc.) always scan the full
+/// container regardless of limits.
+///
+/// For pipelines the budget is approximate: it is consumed by intermediate
+/// steps, so `/items[a:b] | select(...)` may yield fewer than `max` rows.
+#[derive(Clone, Copy, Debug)]
+pub struct QueryLimits {
+    /// Number of initial candidate items to skip.
+    pub skip: usize,
+    /// Maximum number of candidate items to emit (`None` = unlimited).
+    pub max: Option<usize>,
+}
+
+impl Default for QueryLimits {
+    fn default() -> Self {
+        Self {
+            skip: 0,
+            max: None,
+        }
+    }
+}
+
+impl QueryLimits {
+    /// Recommended default cap for AI-facing tools (`--limit`).
+    pub const DEFAULT_MAX: usize = 200;
+}
+
+#[derive(Default)]
+struct Budget {
+    to_skip: usize,
+    remaining: Option<usize>,
+}
+
+impl Budget {
+    fn new(limits: &QueryLimits) -> Self {
+        Self {
+            to_skip: limits.skip,
+            remaining: limits.max,
+        }
+    }
+
+    /// Returns `true` when the next candidate item should be emitted.
+    /// Stops admitting once `skip + max` candidates have been seen.
+    fn admit(&mut self) -> bool {
+        if self.to_skip > 0 {
+            self.to_skip -= 1;
+            return false;
+        }
+        match self.remaining.as_mut() {
+            Some(0) => false,
+            Some(n) => {
+                *n -= 1;
+                true
+            }
+            None => true,
+        }
+    }
+
+    fn exhausted(&self) -> bool {
+        self.to_skip == 0 && self.remaining == Some(0)
+    }
+}
+
 /// Parse and evaluate a query expression against a root value.
 ///
 /// Generic over any [`QueryContext`] implementation.
@@ -10,7 +77,20 @@ pub fn interpret<'a, C: QueryContext<'a>>(
     ctx: &C,
     root: &C::Val,
 ) -> Result<Vec<EvalResult<C::Val>>, String> {
-    eval_expr(expr, ctx, root)
+    let mut budget = Budget::default();
+    eval_expr(expr, ctx, root, &mut budget)
+}
+
+/// Like [`interpret`] but stops emitting multi-result items once
+/// [`QueryLimits`] are exhausted (early exit — the rest is never scanned).
+pub fn interpret_with_limits<'a, C: QueryContext<'a>>(
+    expr: &Expr<'_>,
+    ctx: &C,
+    root: &C::Val,
+    limits: &QueryLimits,
+) -> Result<Vec<EvalResult<C::Val>>, String> {
+    let mut budget = Budget::new(limits);
+    eval_expr(expr, ctx, root, &mut budget)
 }
 
 fn unwrap_buf<V>(v: &EvalResult<V>) -> Result<&V, String> {
@@ -24,6 +104,7 @@ fn eval_expr<'a, C: QueryContext<'a>>(
     expr: &Expr<'_>,
     ctx: &C,
     current: &C::Val,
+    budget: &mut Budget,
 ) -> Result<Vec<EvalResult<C::Val>>, String> {
     match expr {
         Expr::Path(segs) => {
@@ -45,7 +126,7 @@ fn eval_expr<'a, C: QueryContext<'a>>(
                         let mut filtered = Vec::new();
                         for v in &vals {
                             let inner = unwrap_buf(v)?;
-                            let batch = filter_array(ctx, &[*inner], filter)?;
+                            let batch = filter_array(ctx, &[*inner], filter, budget)?;
                             filtered.extend(batch.into_iter().map(EvalResult::Buf));
                         }
                         vals = filtered;
@@ -64,7 +145,7 @@ fn eval_expr<'a, C: QueryContext<'a>>(
                         let mut new_vals = Vec::new();
                         for v in vals {
                             let inner = unwrap_buf(&v)?;
-                            for elem in slice_array(ctx, inner, *s, *e)? {
+                            for elem in slice_array(ctx, inner, *s, *e, budget)? {
                                 new_vals.push(EvalResult::Buf(elem));
                             }
                         }
@@ -74,14 +155,14 @@ fn eval_expr<'a, C: QueryContext<'a>>(
             }
             Ok(vals)
         }
-        Expr::Filter(filter) => filter_array(ctx, &[*current], filter)
-            .map(|v| v.into_iter().map(EvalResult::Buf).collect()),
-        Expr::Index(idx) => index_array(ctx, current, *idx).map(|v| vec![EvalResult::Buf(v)]),
-        Expr::All => Ok(vec![EvalResult::Buf(*current)]),
-        Expr::Slice(s, e) => {
-            slice_array(ctx, current, *s, *e)
+        Expr::Filter(filter) => {
+            filter_array(ctx, &[*current], filter, budget)
                 .map(|v| v.into_iter().map(EvalResult::Buf).collect())
         }
+        Expr::Index(idx) => index_array(ctx, current, *idx).map(|v| vec![EvalResult::Buf(v)]),
+        Expr::All => Ok(vec![EvalResult::Buf(*current)]),
+        Expr::Slice(s, e) => slice_array(ctx, current, *s, *e, budget)
+            .map(|v| v.into_iter().map(EvalResult::Buf).collect()),
         Expr::Projection(fields) => {
             let mut result = Vec::new();
             for f in fields {
@@ -93,18 +174,19 @@ fn eval_expr<'a, C: QueryContext<'a>>(
             Ok(result)
         }
         Expr::Pipe(left, right) => {
-            let left_val = eval_expr(left, ctx, current)?;
+            let left_val = eval_expr(left, ctx, current, budget)?;
             let mut all = Vec::new();
             for v in left_val {
                 let inner = unwrap_buf(&v)?;
-                let r = eval_expr(right, ctx, inner)?;
+                let r = eval_expr(right, ctx, inner, budget)?;
                 all.extend(r);
             }
             Ok(all)
         }
         Expr::Select { filter } => {
             if ctx.is_array_type(current) {
-                let filtered = filter_array(ctx, &[*current], filter).unwrap_or_default();
+                let filtered =
+                    filter_array(ctx, &[*current], filter, budget).unwrap_or_default();
                 Ok(filtered.into_iter().map(EvalResult::Buf).collect())
             } else {
                 if eval_filter(ctx, current, filter) {
@@ -122,14 +204,18 @@ fn filter_array<'a, C: QueryContext<'a>>(
     ctx: &C,
     vals: &[C::Val],
     filter: &crate::parser::FilterExpr<'_>,
+    budget: &mut Budget,
 ) -> Result<Vec<C::Val>, String> {
     let mut filtered: Vec<C::Val> = Vec::new();
-    for dv in vals {
+    'outer: for dv in vals {
         let len = ctx.array_len(dv);
         for i in 0..len {
             if let Some(elem) = ctx.array_get(dv, i) {
-                if eval_filter(ctx, &elem, filter) {
+                if eval_filter(ctx, &elem, filter) && budget.admit() {
                     filtered.push(elem);
+                    if budget.exhausted() {
+                        break 'outer;
+                    }
                 }
             }
         }
@@ -223,14 +309,20 @@ fn slice_array<'a, C: QueryContext<'a>>(
     val: &C::Val,
     start: usize,
     end: usize,
+    budget: &mut Budget,
 ) -> Result<Vec<C::Val>, String> {
     let len = ctx.array_len(val);
     let s = start.min(len);
     let e = end.min(len);
     let mut sliced = Vec::new();
     for i in s..e {
+        if budget.exhausted() {
+            break;
+        }
         if let Some(elem) = ctx.array_get(val, i) {
-            sliced.push(elem);
+            if budget.admit() {
+                sliced.push(elem);
+            }
         }
     }
     Ok(sliced)
