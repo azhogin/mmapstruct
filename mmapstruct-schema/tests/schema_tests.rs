@@ -893,3 +893,39 @@ fn test_schema_fixed_array_podstruct() {
     let tag_val = ctx.field_get(&root, "tag").unwrap();
     assert_eq!(ctx.read_u32(&tag_val), 99);
 }
+
+#[test]
+fn test_array_get_out_of_range_returns_none() {
+    #[derive(MmapStruct)]
+    struct ArrFile {
+        nums: Vec<u32>,
+    }
+
+    let w = ArrFile {
+        nums: vec![10, 20, 30],
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<ArrFile>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let arr = ctx.field_get(&root, "nums").unwrap();
+    assert_eq!(ctx.array_len(&arr), 3);
+
+    // In-bounds reads work.
+    assert_eq!(ctx.read_u32(&ctx.array_get(&arr, 0).unwrap()), 10);
+    assert_eq!(ctx.read_u32(&ctx.array_get(&arr, 2).unwrap()), 30);
+
+    // Out-of-range returns None instead of a garbage SchemaValue
+    // (consistency with the static SchemaCtx::array_get).
+    assert!(ctx.array_get(&arr, 3).is_none());
+    assert!(ctx.array_get(&arr, 1000).is_none());
+}

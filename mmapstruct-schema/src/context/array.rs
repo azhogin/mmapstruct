@@ -47,9 +47,16 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
     }
 
     /// Get the i-th element of an array value.
+    ///
+    /// Out-of-range indices return `None` (consistent with the static
+    /// `SchemaCtx::array_get`).
     pub fn array_get(&self, val: &SchemaValue, index: u64) -> Option<SchemaValue> {
         let t = self.type_reader(val.type_idx);
         if let TypeDefReader::Array { elem_type, layout } = t {
+            // Bounds-check against the actual element count first.
+            if index >= self.array_len(val) {
+                return None;
+            }
             let arr_range = val.mmap_begin as usize..val.mmap_end as usize;
             let (elem_off, elem_limit) = match layout {
                 ArrayLayoutDefReader::Pod { stride } => {
