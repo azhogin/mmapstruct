@@ -81,30 +81,37 @@ fn run_q(args: &[String]) {
     let mut full = false;
     let mut positional: Vec<&str> = Vec::new();
 
+    // Value of `--flag` / `--flag=value` starting at index i; returns
+    // (value_str, next_index).
+    fn flag_val<'a>(args: &'a [String], i: usize, name: &str) -> Option<(&'a str, usize)> {
+        let eq = format!("{name}=");
+        if args[i].starts_with(&eq) {
+            return Some((&args[i][eq.len()..], i + 1));
+        }
+        if args[i] == name && i + 1 < args.len() {
+            return Some((args[i + 1].as_str(), i + 2));
+        }
+        None
+    }
+
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
-        if a == "--schema" && i + 1 < args.len() {
-            schema_opt = Some(&args[i + 1]);
-            i += 2;
-        } else if let Some(v) = a.strip_prefix("--limit=") {
+        if let Some((v, ni)) = flag_val(args, i, "--schema") {
+            schema_opt = Some(v);
+            i = ni;
+        } else if let Some((v, ni)) = flag_val(args, i, "--limit") {
             limit = v.parse().unwrap_or(DEFAULT_LIMIT);
-            i += 1;
-        } else if a == "--limit" && i + 1 < args.len() {
-            limit = args[i + 1].parse().unwrap_or(DEFAULT_LIMIT);
-            i += 2;
-        } else if let Some(v) = a.strip_prefix("--skip=") {
+            i = ni;
+        } else if let Some((v, ni)) = flag_val(args, i, "--skip") {
             skip = v.parse().unwrap_or(0);
-            i += 1;
-        } else if a == "--skip" && i + 1 < args.len() {
-            skip = args[i + 1].parse().unwrap_or(0);
-            i += 2;
-        } else if let Some(v) = a.strip_prefix("--max-string=") {
+            i = ni;
+        } else if let Some((v, ni)) = flag_val(args, i, "--max-string") {
             max_string = v.parse().unwrap_or(DEFAULT_MAX_STRING);
-            i += 1;
-        } else if let Some(v) = a.strip_prefix("--max-bytes=") {
+            i = ni;
+        } else if let Some((v, ni)) = flag_val(args, i, "--max-bytes") {
             max_bytes = v.parse().unwrap_or(DEFAULT_MAX_BYTES);
-            i += 1;
+            i = ni;
         } else if a == "--count-only" {
             count_only = true;
             i += 1;

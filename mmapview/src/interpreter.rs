@@ -108,8 +108,31 @@ fn eval_expr<'a, C: QueryContext<'a>>(
 ) -> Result<Vec<EvalResult<C::Val>>, String> {
     match expr {
         Expr::Path(segs) => {
-            let mut vals: Vec<EvalResult<C::Val>> = vec![EvalResult::Buf(*current)];
+            // Merge runs of consecutive filters into single AND-filters:
+            // /a[?x=1][?y=2] must intersect on the SAME elements, not apply
+            // the second filter to a non-array leftover.
+            let mut merged: Vec<crate::parser::Segment> = Vec::with_capacity(segs.len());
             for seg in segs {
+                if let crate::parser::Segment::Filter(f2) = seg {
+                    if let Some(crate::parser::Segment::Filter(f1)) = merged.last_mut() {
+                        *f1 = crate::parser::FilterExpr::And(
+                            Box::new(std::mem::replace(
+                                f1,
+                                crate::parser::FilterExpr::Simple {
+                                    field: "",
+                                    op: crate::parser::FilterOp::Eq,
+                                    value: crate::parser::FilterValue::Int(0),
+                                },
+                            )),
+                            Box::new(f2.clone()),
+                        );
+                        continue;
+                    }
+                }
+                merged.push(seg.clone());
+            }
+            let mut vals: Vec<EvalResult<C::Val>> = vec![EvalResult::Buf(*current)];
+            for seg in merged.iter() {
                 match seg {
                     crate::parser::Segment::Field(name) => {
                         vals = vals
@@ -420,6 +443,51 @@ fn compare_values<'a, C: QueryContext<'a>>(
             .unwrap_or(false),
 
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod chained_filter_tests {
+    use crate::query_context::QueryContext;
+    use crate::EvalResult;
+    use mmapstruct::{GetSchema, MmapStruct};
+
+    #[derive(MmapStruct, Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+    #[repr(C)]
+    struct Ev {
+        layer: u16,
+        eid: u16,
+        kind: u32,
+    }
+    #[derive(MmapStruct, Debug)]
+    struct LogFile {
+        events: Vec<Ev>,
+    }
+
+    #[test]
+    fn consecutive_filters_intersect() {
+        let w = LogFile {
+            events: vec![
+                Ev { layer: 28, eid: 29, kind: 0 },
+                Ev { layer: 28, eid: 30, kind: 0 },
+                Ev { layer: 67, eid: 29, kind: 1 },
+                Ev { layer: 67, eid: 31, kind: 1 },
+            ],
+        };
+        let buf = mmapstruct::write_to_buf_raw(&w);
+        let ctx = mmapstruct::SchemaCtx::new(&buf);
+        let root = <LogFile as GetSchema>::root_value(buf.len() as u64);
+
+        // Both conditions must hold on the SAME element (AND), not apply
+        // sequentially to a non-array leftover.
+        let r = crate::query_from("/events[?layer=28][?eid=29]", &ctx, &root).unwrap();
+        assert_eq!(r.len(), 1, "expected exactly one intersection match");
+
+        // Sanity: single filters still return their full sets.
+        let r1 = crate::query_from("/events[?layer=28]", &ctx, &root).unwrap();
+        assert_eq!(r1.len(), 2);
+        let r2 = crate::query_from("/events[?eid=29]", &ctx, &root).unwrap();
+        assert_eq!(r2.len(), 2);
     }
 }
 

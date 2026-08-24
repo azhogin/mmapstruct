@@ -144,6 +144,12 @@ fn write_value_inner(
                     ..
                 } = variant_t
                 {
+                    // Unit variants render compactly: "EcIoKind::Submit"
+                    // (no empty braces that break line-oriented parsers).
+                    if fields.is_empty() {
+                        out.push_str(variant_name);
+                        return;
+                    }
                     out.push_str(variant_name);
                     out.push_str(" {\n");
                     write_struct_fields(ctx, val, fields, depth, out);
