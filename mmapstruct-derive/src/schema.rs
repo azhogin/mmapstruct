@@ -477,7 +477,11 @@ pub(crate) fn generate_schema_impl(
 }
 
 /// Compute offset_in_fixed for a field in an enum variant.
-/// Mirrors the layout computation in `handle_enum`.
+/// Mirrors the layout computation in `handle_enum`: every field sits at its
+/// naturally aligned offset within the fixed section, so the field's own
+/// alignment must be applied before its offset is recorded (a u64 after a
+/// u32 is padded to the next multiple of 8 — matching `handle_enum`'s
+/// pod_layout, which aligns first and records the aligned offset).
 fn variant_field_offset(fields: &[FieldInfo], fi: &FieldInfo) -> proc_macro2::TokenStream {
     fn is_fixed(f: &FieldInfo) -> bool {
         is_pod_field(&f.category)
@@ -490,16 +494,19 @@ fn variant_field_offset(fields: &[FieldInfo], fi: &FieldInfo) -> proc_macro2::To
     }
     let mut offset = 0usize;
     for f in fields {
-        if f.name == fi.name {
-            break;
-        }
         if !is_fixed(f) {
             continue;
         }
         if f.has_byref_attr {
             offset = align_offset(offset, 4);
+            if f.name == fi.name {
+                break;
+            }
             offset += 8;
         } else if is_inline_string_field(&f.category) {
+            if f.name == fi.name {
+                break;
+            }
             if let FieldCategory::InlineString { size } = &f.category {
                 offset += size;
             }
@@ -511,16 +518,19 @@ fn variant_field_offset(fields: &[FieldInfo], fi: &FieldInfo) -> proc_macro2::To
                 let total_sz = elem_sz * count;
                 let al = if elem_sz == 1 { 1 } else { elem_sz.min(8).max(1) };
                 offset = align_offset(offset, al);
+                if f.name == fi.name {
+                    break;
+                }
                 offset += total_sz;
             }
         } else if is_pod_field(&f.category) {
             let sz = known_primitive_size(&f.ty).unwrap_or(8);
             let al = if sz == 1 { 1 } else { sz.min(8).max(1) };
             offset = align_offset(offset, al);
+            if f.name == fi.name {
+                break;
+            }
             offset += sz;
-        } else if f.has_byref_attr {
-            offset = align_offset(offset, 4);
-            offset += 8;
         }
     }
     quote! { #offset as u64 }

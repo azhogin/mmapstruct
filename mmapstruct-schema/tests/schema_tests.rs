@@ -309,6 +309,106 @@ fn test_schema_context_enum_variant() {
     assert_eq!(ctx.read_u64(&val), 99);
 }
 
+/// Regression test: a u64 field that follows a u32 in an enum variant needs
+/// 4 bytes of alignment padding. The schema's offset_in_fixed must apply the
+/// field's OWN alignment (matching the writer), otherwise the schema-driven
+/// reader reads the u64 4 bytes early and renders `value << 32`.
+#[test]
+fn test_schema_context_enum_variant_u64_after_u32() {
+    #[derive(MmapStruct, Debug, Clone, PartialEq)]
+    enum MixedTask {
+        Read {
+            task_id: u64,
+            begin_ns: u64,
+            end_ns: u64,
+            step: u32,
+            layer: u16,
+            eid: u16,
+            ram_slot: u32,
+            bytes: u64,
+            is_prefetch: u32,
+        },
+    }
+
+    #[derive(MmapStruct)]
+    struct MixedTaskFile {
+        tasks: Vec<MixedTask>,
+    }
+
+    let expected = MixedTask::Read {
+        task_id: 6939,
+        begin_ns: 41_185_329_442,
+        end_ns: 41_185_342_832,
+        step: 3,
+        layer: 11,
+        eid: 76,
+        ram_slot: 211,
+        bytes: 18_915_328,
+        is_prefetch: 1,
+    };
+    let file = MixedTaskFile {
+        tasks: vec![expected.clone()],
+    };
+    let data = write_to_buf_raw(&file);
+    let schema = build_serialized_schema::<MixedTaskFile>();
+    let schema_bytes = write_to_buf_raw(&schema);
+
+    // The variant struct in the type table must record `bytes` at its aligned
+    // offset: 3*u64 + u32 + u16 + u16 + u32 = 36, aligned to 8 -> 40.
+    let root_idx = schema.root_type as usize;
+    let mmapstruct_schema::schema::TypeDef::Struct { fields: file_fields, .. } = &schema.types[root_idx]
+    else {
+        panic!("expected root struct");
+    };
+    let mmapstruct_schema::schema::TypeDef::Array { elem_type, .. } = &schema.types[file_fields[0].type_index as usize]
+    else {
+        panic!("expected tasks array");
+    };
+    let mmapstruct_schema::schema::TypeDef::Enum { variant_type_indices, .. } =
+        &schema.types[*elem_type as usize]
+    else {
+        panic!("expected enum");
+    };
+    let mmapstruct_schema::schema::TypeDef::Struct { fields, .. } =
+        &schema.types[variant_type_indices[0] as usize]
+    else {
+        panic!("expected variant struct");
+    };
+    let off = fields
+        .iter()
+        .find(|f| f.name == "bytes")
+        .expect("bytes field in variant")
+        .offset_in_fixed;
+    assert_eq!(off, 40, "u64 after u32 must be 8-aligned in the schema");
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, schema.root_type);
+
+    let tasks = ctx.field_get(&root, "tasks").unwrap();
+    let task0 = ctx.array_get(&tasks, 0).unwrap();
+    assert_eq!(
+        ctx.read_u64(&ctx.field_get(&task0, "task_id").unwrap()),
+        6939
+    );
+    assert_eq!(
+        ctx.read_u64(&ctx.field_get(&task0, "begin_ns").unwrap()),
+        41_185_329_442
+    );
+    assert_eq!(
+        ctx.read_u64(&ctx.field_get(&task0, "end_ns").unwrap()),
+        41_185_342_832
+    );
+    assert_eq!(ctx.read_u32(&ctx.field_get(&task0, "step").unwrap()), 3);
+    assert_eq!(ctx.read_u16(&ctx.field_get(&task0, "layer").unwrap()), 11);
+    assert_eq!(ctx.read_u16(&ctx.field_get(&task0, "eid").unwrap()), 76);
+    assert_eq!(ctx.read_u32(&ctx.field_get(&task0, "ram_slot").unwrap()), 211);
+    assert_eq!(
+        ctx.read_u64(&ctx.field_get(&task0, "bytes").unwrap()),
+        18_915_328
+    );
+    assert_eq!(ctx.read_u32(&ctx.field_get(&task0, "is_prefetch").unwrap()), 1);
+}
+
 #[test]
 fn test_schema_context_array() {
     #[derive(MmapStruct)]
