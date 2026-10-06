@@ -14,7 +14,6 @@ pub(crate) enum FieldCategory {
         size: usize,
     },
     FixedArray {
-        inner_type: Type,
         count: usize,
         elem_is_pod: bool,
     },
@@ -97,7 +96,7 @@ pub(crate) fn classify_field(field: &syn::Field) -> FieldCategory {
     }
     if let Some((inner, count)) = extract_fixed_array_inner(ty) {
         let elem_is_pod = is_pod_type(&inner);
-        return FieldCategory::FixedArray { inner_type: inner, count, elem_is_pod };
+        return FieldCategory::FixedArray { count, elem_is_pod };
     }
     if has_pod_attr(&field.attrs) {
         return FieldCategory::PodCustom;

@@ -127,20 +127,6 @@ pub(crate) fn type_size_expr(ty: &Type) -> proc_macro2::TokenStream {
     }
 }
 
-/// Compute the total byte size of a type during proc-macro expansion when possible.
-/// Returns `None` for types whose size cannot be determined at proc-macro time.
-pub(crate) fn eval_type_size(ty: &Type) -> Option<usize> {
-    if let Some(sz) = known_primitive_size(ty) {
-        return Some(sz);
-    }
-    if let Some((inner, count)) = extract_fixed_array_inner(ty) {
-        if let Some(inner_sz) = eval_type_size(&inner) {
-            return Some(inner_sz * count);
-        }
-    }
-    None
-}
-
 pub(crate) fn type_align_expr(ty: &Type) -> proc_macro2::TokenStream {
     if let Some(sz) = known_primitive_size(ty) {
         let align = sz.min(8).max(1);

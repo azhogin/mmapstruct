@@ -3166,3 +3166,255 @@ fn test_write_layout_hash_rejects_raw_file() {
     std::fs::write(tmp.path(), &buf).unwrap();
     assert!(mmapstruct::file_reader::write_layout_hash(tmp.path(), 42).is_err());
 }
+
+// ---------------------------------------------------------------------------
+// Regression: enum variant with a #[pod] custom field followed by more fixed
+// fields — the enum-path layout must use the field's REAL size_of/align_of
+// (const-eval, same as the struct path), not a macro-time guess of 8.
+// bugs/enum-podcustom-field-layout-8-vs-write-4.md
+// ---------------------------------------------------------------------------
+
+#[derive(MmapStruct, Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RecSrc {
+    A = 0,
+    B = 1,
+    C = 2,
+}
+
+#[derive(MmapStruct, Debug, Clone, PartialEq)]
+pub enum PodCustomRec {
+    /// `half: u8` is the LAST fixed field after a 4-byte #[pod] custom field:
+    /// with the old guess (source = 8 bytes) it was read at +4 past its real
+    /// position — garbage mid-array, panic at the buffer edge.
+    Direct {
+        id: u64,
+        #[pod]
+        src: RecSrc,
+        half: u8,
+    },
+    Full {
+        id: u64,
+    },
+}
+
+#[derive(MmapStruct, Debug, PartialEq)]
+pub struct PodCustomLogFile {
+    records: Vec<PodCustomRec>,
+}
+
+#[test]
+fn test_enum_podcustom_field_offset_roundtrip() {
+    // Direct (mid-array), Full, Direct (LAST record — trailing u8 at the edge).
+    let log = PodCustomLogFile {
+        records: vec![
+            PodCustomRec::Direct { id: 1, src: RecSrc::B, half: 7 },
+            PodCustomRec::Full { id: 2 },
+            PodCustomRec::Direct { id: 3, src: RecSrc::C, half: 9 },
+        ],
+    };
+    let buf = write_to_buf(&log, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<PodCustomLogFile>();
+    let recs = &reader.records;
+    assert_eq!(recs.len(), 3);
+
+    match recs.get(0).unwrap() {
+        PodCustomRecReader::Direct { id, src, half } => {
+            assert_eq!(*id, 1);
+            assert_eq!(*src, RecSrc::B);
+            assert_eq!(*half, 7, "mid-array half after #[pod] custom field");
+        }
+        _ => panic!("expected Direct"),
+    }
+    match recs.get(1).unwrap() {
+        PodCustomRecReader::Full { id } => assert_eq!(*id, 2),
+        _ => panic!("expected Full"),
+    }
+    match recs.get(2).unwrap() {
+        PodCustomRecReader::Direct { id, src, half } => {
+            assert_eq!(*id, 3);
+            assert_eq!(*src, RecSrc::C);
+            assert_eq!(*half, 9, "last-record half at the buffer edge");
+        }
+        _ => panic!("expected Direct"),
+    }
+
+    // Owned conversion roundtrip.
+    let restored: PodCustomLogFile = r.read::<PodCustomLogFile>().into();
+    assert_eq!(restored, log);
+}
+
+/// Real test_glm geometry: nested enums — the outer enum stores the inner one
+/// as an inline-dynamic field, the inner variant carries the #[pod] custom
+/// field + trailing u8.
+#[derive(MmapStruct, Debug, Clone, PartialEq)]
+pub enum InnerTask {
+    Direct {
+        id: u64,
+        #[pod]
+        src: RecSrc,
+        half: u8,
+    },
+    Other {
+        id: u64,
+    },
+}
+
+#[derive(MmapStruct, Debug)]
+pub enum OuterTask {
+    Ssd(InnerTask),
+    Gpu { stamp: u64 },
+}
+
+#[derive(MmapStruct, Debug)]
+pub struct NestedTaskLog {
+    tasks: Vec<OuterTask>,
+}
+
+#[test]
+fn test_enum_nested_podcustom_last_record() {
+    let log = NestedTaskLog {
+        tasks: vec![
+            OuterTask::Ssd(InnerTask::Direct { id: 1, src: RecSrc::B, half: 7 }),
+            OuterTask::Gpu { stamp: 2 },
+            OuterTask::Ssd(InnerTask::Direct { id: 3, src: RecSrc::C, half: 9 }),
+        ],
+    };
+    let buf = write_to_buf(&log, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<NestedTaskLog>();
+    let tasks = &reader.tasks;
+    assert_eq!(tasks.len(), 3);
+
+    match tasks.get(0).unwrap() {
+        OuterTaskReader::Ssd(InnerTaskReader::Direct { id, src, half }) => {
+            assert_eq!(*id, 1);
+            assert_eq!(*src, RecSrc::B);
+            assert_eq!(*half, 7);
+        }
+        _ => panic!("expected Ssd(Direct)"),
+    }
+    match tasks.get(1).unwrap() {
+        OuterTaskReader::Gpu { stamp } => assert_eq!(*stamp, 2),
+        _ => panic!("expected Gpu"),
+    }
+    // Last record: the inner variant's trailing u8 ends exactly at the
+    // payload edge — overreading would panic.
+    match tasks.get(2).unwrap() {
+        OuterTaskReader::Ssd(InnerTaskReader::Direct { id, src, half }) => {
+            assert_eq!(*id, 3);
+            assert_eq!(*src, RecSrc::C);
+            assert_eq!(*half, 9);
+        }
+        _ => panic!("expected Ssd(Direct)"),
+    }
+}
+
+/// Fixed array of non-primitive pod structs inside an enum variant, followed
+/// by a fixed field — the old macro-time layout guessed 8-byte elements
+/// (Pair is 4 bytes), shifting the trailing field by +8.
+#[derive(MmapStruct, Debug, Clone, Copy, PartialEq, Default, Pod, Zeroable)]
+#[repr(C)]
+pub struct Pair {
+    a: u16,
+    b: u16,
+}
+
+#[derive(MmapStruct, Debug, Clone, PartialEq)]
+pub enum FixedArrRec {
+    Batch {
+        v: u64,
+        ids: [Pair; 2],
+        tail: u8,
+    },
+    Simple {
+        v: u64,
+    },
+}
+
+#[derive(MmapStruct, Debug)]
+pub struct FixedArrLogFile {
+    records: Vec<FixedArrRec>,
+}
+
+#[test]
+fn test_enum_fixed_array_pod_custom_offset() {
+    let log = FixedArrLogFile {
+        records: vec![
+            FixedArrRec::Batch {
+                v: 1,
+                ids: [Pair { a: 10, b: 11 }, Pair { a: 12, b: 13 }],
+                tail: 5,
+            },
+            FixedArrRec::Simple { v: 2 },
+            FixedArrRec::Batch {
+                v: 3,
+                ids: [Pair { a: 20, b: 21 }, Pair { a: 22, b: 23 }],
+                tail: 6,
+            },
+        ],
+    };
+    let buf = write_to_buf(&log, false);
+    let r = BufReader::new(buf);
+    let reader = r.read::<FixedArrLogFile>();
+    let recs = &reader.records;
+    assert_eq!(recs.len(), 3);
+
+    match recs.get(0).unwrap() {
+        FixedArrRecReader::Batch { v, ids, tail } => {
+            assert_eq!(*v, 1);
+            assert_eq!((*ids)[0], Pair { a: 10, b: 11 });
+            assert_eq!((*ids)[1], Pair { a: 12, b: 13 });
+            assert_eq!(*tail, 5);
+        }
+        _ => panic!("expected Batch"),
+    }
+    match recs.get(1).unwrap() {
+        FixedArrRecReader::Simple { v } => assert_eq!(*v, 2),
+        _ => panic!("expected Simple"),
+    }
+    match recs.get(2).unwrap() {
+        FixedArrRecReader::Batch { v, ids, tail } => {
+            assert_eq!(*v, 3);
+            assert_eq!((*ids)[0], Pair { a: 20, b: 21 });
+            assert_eq!((*ids)[1], Pair { a: 22, b: 23 });
+            assert_eq!(*tail, 6, "last-record tail at the buffer edge");
+        }
+        _ => panic!("expected Batch"),
+    }
+}
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_enum_podcustom_schema_field_get() {
+    use mmapstruct::schema::Value;
+    use mmapstruct::{GetSchema, SchemaCtx, write_to_buf_raw};
+
+    let log = PodCustomLogFile {
+        records: vec![
+            PodCustomRec::Direct { id: 1, src: RecSrc::B, half: 7 },
+            PodCustomRec::Full { id: 2 },
+            PodCustomRec::Direct { id: 3, src: RecSrc::C, half: 9 },
+        ],
+    };
+    let buf = mmapstruct::write_to_buf_raw(&log);
+    let ctx = SchemaCtx::new(&buf);
+
+    let vt = <PodCustomLogFile as GetSchema>::root_value_type();
+    let root = Value::new(0, buf.len() as u64, vt);
+    let records = ctx.field_get(&root, "records").unwrap();
+    assert_eq!(ctx.array_len(&records), 3);
+
+    // Mid-array: schema offset must match the writer's real layout.
+    let r0 = ctx.array_get(&records, 0).unwrap();
+    assert_eq!(ctx.read_u64(&ctx.field_get(&r0, "id").unwrap()), 1);
+    assert_eq!(ctx.read_u32(&ctx.field_get(&r0, "src").unwrap()), 1);
+    assert_eq!(ctx.read_u8(&ctx.field_get(&r0, "half").unwrap()), 7);
+
+    // Last record: trailing u8 at the payload edge.
+    let r2 = ctx.array_get(&records, 2).unwrap();
+    assert_eq!(ctx.read_u64(&ctx.field_get(&r2, "id").unwrap()), 3);
+    assert_eq!(ctx.read_u32(&ctx.field_get(&r2, "src").unwrap()), 2);
+    assert_eq!(ctx.read_u8(&ctx.field_get(&r2, "half").unwrap()), 9);
+}

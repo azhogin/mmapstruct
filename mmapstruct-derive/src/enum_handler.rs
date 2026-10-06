@@ -177,6 +177,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
     let reader_name = format_ident!("{}Reader", name);
 
     let mut vars = Vec::new();
+    let mut variant_consts: Vec<proc_macro2::TokenStream> = Vec::new();
 
     for (disc, variant) in de.variants.iter().enumerate() {
         let vident = &variant.ident;
@@ -260,63 +261,26 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         let inline_dyn_indices = collect_inline_dyn_indices(&all_fields);
         let has_dynamic = all_fields.iter().any(|f| !is_pod_field(&f.category) || f.is_fixed_byref());
 
-        let mut variant_data_align = 1usize;
-        for fi in &all_fields {
-            let is_pod = matches!(
-                fi.category,
-                FieldCategory::PodPrimitive | FieldCategory::PodCustom
-            );
-            if is_pod {
-                let sz = known_primitive_size(&fi.ty).unwrap_or(8);
-                let al = if sz == 1 { 1 } else { sz.min(8).max(1) };
-                if al > variant_data_align {
-                    variant_data_align = al;
-                }
-            } else if fi.has_byref_attr {
-                if 4 > variant_data_align {
-                    variant_data_align = 4;
-                }
-            }
-        }
-        let variant_data_align_for_offset = variant_data_align.max(8);
-        let variant_data_offset = align_offset(4, variant_data_align_for_offset);
-
-        let mut fixed_offset = 0usize;
-        let mut pod_layout: Vec<(String, usize, usize)> = Vec::new();
-        let mut byref_layout: Vec<(String, usize)> = Vec::new();
-        for fi in &all_fields {
-            let is_pod = matches!(
-                fi.category,
-                FieldCategory::PodPrimitive | FieldCategory::PodCustom
-            );
-            if is_pod {
-                let sz = known_primitive_size(&fi.ty).unwrap_or(8);
-                let al = if sz == 1 { 1 } else { sz.min(8).max(1) };
-                fixed_offset = align_offset(fixed_offset, al);
-                pod_layout.push((fi.name.clone(), fixed_offset, sz));
-                fixed_offset += sz;
-            } else if let FieldCategory::InlineString { size } = &fi.category {
-                pod_layout.push((fi.name.clone(), fixed_offset, *size));
-                fixed_offset += size;
-            } else if fi.has_byref_attr {
-                fixed_offset = align_offset(fixed_offset, 4);
-                byref_layout.push((fi.name.clone(), fixed_offset));
-                fixed_offset += 8;
-            } else if let FieldCategory::FixedArray { inner_type, count, .. } = &fi.category {
-                let elem_sz = known_primitive_size(inner_type)
-                    .or_else(|| eval_type_size(inner_type))
-                    .unwrap_or(8);
-                let total_sz = elem_sz * count;
-                let al = if elem_sz == 1 { 1 } else { elem_sz.min(8).max(1) };
-                fixed_offset = align_offset(fixed_offset, al);
-                pod_layout.push((fi.name.clone(), fixed_offset, total_sz));
-                fixed_offset += total_sz;
-            }
-        }
-        fixed_offset = align_offset(fixed_offset, 8);
-        let fixed_sz = fixed_offset;
+        // Fixed-section layout via const-eval — mirrors the struct path
+        // (`generate_fixed_layout_consts`): real size_of/align_of for every
+        // fixed field, including non-primitive pod fields (PodCustom) where a
+        // macro-time guess (8) desynced reader/schema offsets from the writer
+        // (see bugs/enum-podcustom-field-layout-8-vs-write-4.md). The reader
+        // and the schema reference these consts; the writer writes the real
+        // sizes, so all three agree by construction.
+        // The post-discriminant data start is uniformly 8 (u32 disc + align
+        // to 8), matching the writer's `ctx.align_to(8)` and both schema
+        // readers' variant data offsets.
+        let vprefix = variant_const_prefix(name, vident);
+        let fo_name = format_ident!("__MMAP_FO_{}", vprefix);
+        let fs_name = format_ident!("__MMAP_FS_{}", vprefix);
+        let hs_name = format_ident!("__MMAP_HS_{}", vprefix);
+        variant_consts.push(generate_fixed_layout_consts(
+            &vprefix,
+            &all_fields,
+            inline_dyn_indices.len(),
+        ));
         let dyn_cnt = inline_dyn_indices.len();
-        let hdr_sz = fixed_sz + if dyn_cnt > 0 { (dyn_cnt + 1) * 8 } else { 0 };
 
         let rfields: Vec<_> = all_fields
             .iter()
@@ -331,8 +295,8 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             })
             .collect();
 
-        let rs = quote! { range.start + #variant_data_offset };
-        let rs_ot = quote! { #rs + #fixed_sz };
+        let rs = quote! { range.start + 8 };
+        let rs_ot = quote! { #rs + #fs_name };
         let field_end_offset = quote! { u64::from_le_bytes(data[#rs_ot + #dyn_cnt * 8 .. #rs_ot + (#dyn_cnt + 1) * 8].try_into().unwrap()) as usize };
         let mut rinit = Vec::new();
         for fi in &all_fields {
@@ -344,33 +308,25 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             let is_inline_string = matches!(fi.category, FieldCategory::InlineString { .. });
             let is_fixed_arr = matches!(fi.category, FieldCategory::FixedArray { .. });
             if is_pod {
-                let off = pod_layout
-                    .iter()
-                    .find(|(n, _, _)| *n == fi.name)
-                    .map(|(_, o, _)| *o)
-                    .expect("pod not in pod_layout");
+                let idx = fixed_section_index(&all_fields, fi.name.as_str());
                 let ty = &fi.ty;
-                let expr = quote! { ::mmapstruct::bytemuck::from_bytes(&data[#rs + #off .. #rs + #off + std::mem::size_of::<#ty>()]) };
+                let expr = quote! { ::mmapstruct::bytemuck::from_bytes(&data[#rs + #fo_name[#idx] .. #rs + #fo_name[#idx] + std::mem::size_of::<#ty>()]) };
                 if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
             } else if is_inline_string {
-                let (off_val, sz) = pod_layout
-                    .iter()
-                    .find(|(n, _, _)| *n == fi.name)
-                    .map(|(_, o, sz)| (*o, *sz))
-                    .expect("inline_str not in pod_layout");
-                let expr = quote! { <String as ::mmapstruct::traits::MmapRead>::read(data, #rs + #off_val .. #rs + #off_val + #sz) };
+                let idx = fixed_section_index(&all_fields, fi.name.as_str());
+                let sz = match &fi.category {
+                    FieldCategory::InlineString { size } => *size,
+                    _ => unreachable!(),
+                };
+                let expr = quote! { <String as ::mmapstruct::traits::MmapRead>::read(data, #rs + #fo_name[#idx] .. #rs + #fo_name[#idx] + #sz) };
                 if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
             } else if fi.has_byref_attr {
-                let off = byref_layout
-                    .iter()
-                    .find(|(n, _)| *n == fi.name)
-                    .map(|(_, o)| *o)
-                    .expect("byref not in byref_layout");
+                let idx = fixed_section_index(&all_fields, fi.name.as_str());
                 match &fi.category {
                     FieldCategory::DynamicOption { inner } => {
                         let expr = quote! {{
                             let base = #rs;
-                            let br: ::mmapstruct::traits::ByRefRange = *::mmapstruct::bytemuck::from_bytes(&data[base + #off .. base + #off + 8]);
+                            let br: ::mmapstruct::traits::ByRefRange = *::mmapstruct::bytemuck::from_bytes(&data[base + #fo_name[#idx] .. base + #fo_name[#idx] + 8]);
                             if br.begin == 0 && br.end == 0 { None }
                             else { Some(<#inner as ::mmapstruct::traits::MmapRead>::read(data, br.range(base))) }
                         }};
@@ -380,21 +336,17 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                         let ty = &fi.ty;
                         let expr = quote! {{
                             let base = #rs;
-                            ::mmapstruct::reader::read_by_ref::<#ty>(data, base, #rs + #off .. #rs + #off + 8)
+                            ::mmapstruct::reader::read_by_ref::<#ty>(data, base, #rs + #fo_name[#idx] .. #rs + #fo_name[#idx] + 8)
                         }};
                         if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
                     }
                 }
             } else if is_fixed_arr {
-                let off = pod_layout
-                    .iter()
-                    .find(|(n, _, _)| *n == fi.name)
-                    .map(|(_, o, _)| *o)
-                    .expect("fixed_arr not in pod_layout");
+                let idx = fixed_section_index(&all_fields, fi.name.as_str());
                 let ty = &fi.ty;
                 let expr = quote! {
                     unsafe {
-                        &*(data.as_ptr().add(#rs + #off) as *const #ty)
+                        &*(data.as_ptr().add(#rs + #fo_name[#idx]) as *const #ty)
                     }
                 };
                 if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
@@ -404,8 +356,8 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     .position(|&i| all_fields[i].name == fi.name)
                     .expect("field not found in inline_dyn_indices (else branch)");
                 let rc = quote! {{
-                    let ot_start = #rs + #fixed_sz;
-                    let vs = #rs + #hdr_sz;
+                    let ot_start = #rs + #fs_name;
+                    let vs = #rs + #hs_name;
                     let off0 = u64::from_le_bytes(data[ot_start + #di * 8 .. ot_start + #di * 8 + 8].try_into().unwrap()) as usize;
                     let off1 = if #di + 1 < #dyn_cnt {
                         u64::from_le_bytes(data[ot_start + (#di + 1) * 8 .. ot_start + (#di + 1) * 8 + 8].try_into().unwrap()) as usize
@@ -458,14 +410,11 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         let fw = write_helpers::generate_fixed_writes(&all_fields, &field_ref);
         let idb = write_helpers::generate_inline_dyn_writes(&all_fields, &inline_dyn_indices, &field_ref);
 
-        let variant_data_align_inner = variant_data_align.max(8);
-        let align_after_disc = quote! { ctx.align_to(#variant_data_align_inner); };
-
         let wbody = if !has_dynamic {
             let fw_pod = write_helpers::generate_fixed_writes(&all_fields, &field_ref);
             quote! {
                 ctx.write_u32_le(#disc as u32);
-                #align_after_disc
+                ctx.align_to(8);
                 let start = ctx.current_offset();
                 #(#fw_pod)*
                 ctx.align_from(start, 8);
@@ -473,7 +422,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         } else {
             quote! {
                 ctx.write_u32_le(#disc as u32);
-                #align_after_disc
+                ctx.align_to(8);
                 let start = ctx.current_offset();
                 #(#fw)*
                 ctx.align_from(start, 8);
@@ -588,7 +537,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             write_body: wbody,
             from_body: fbody,
             default_body: dbody,
-            layout_hash: quote! { ::mmapstruct::traits::combine_hashes(&[#disc_u64 as u64, #(#variant_field_hashes),*, #fixed_sz as u64, #hdr_sz as u64]) },
+            layout_hash: quote! { ::mmapstruct::traits::combine_hashes(&[#disc_u64 as u64, #(#variant_field_hashes),*, #fs_name as u64, #hs_name as u64]) },
             is_tuple,
         });
     }
@@ -721,6 +670,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
     };
 
     let output = quote! {
+        #(#variant_consts)*
         pub enum #reader_name<'a> {
             #(#enum_def_variants),*
         }

@@ -1029,3 +1029,73 @@ fn test_array_get_out_of_range_returns_none() {
     assert!(ctx.array_get(&arr, 3).is_none());
     assert!(ctx.array_get(&arr, 1000).is_none());
 }
+
+/// Regression (bugs/enum-podcustom-field-layout-8-vs-write-4.md): enum
+/// variant with a `#[pod]` custom field (real size 4) followed by more
+/// fixed fields — the serialized schema's offsets must match the writer's
+/// real layout, not the old macro-time guess of 8. The last record's
+/// trailing `u8` sits at the payload edge (panic on overread).
+#[test]
+fn test_schema_enum_podcustom_last_record() {
+    #[derive(MmapStruct, Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u32)]
+    enum Src {
+        A = 0,
+        B = 1,
+    }
+
+    #[derive(MmapStruct)]
+    enum Rec {
+        Direct {
+            id: u64,
+            #[pod]
+            src: Src,
+            half: u8,
+        },
+        Other {
+            id: u64,
+        },
+    }
+
+    #[derive(MmapStruct)]
+    struct Log {
+        recs: Vec<Rec>,
+    }
+
+    let w = Log {
+        recs: vec![
+            Rec::Direct { id: 1, src: Src::B, half: 7 },
+            Rec::Other { id: 2 },
+            Rec::Direct { id: 3, src: Src::A, half: 9 },
+        ],
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<Log>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let recs = ctx.field_get(&root, "recs").unwrap();
+    assert_eq!(ctx.array_len(&recs), 3);
+
+    // Mid-array record: fields after the #[pod] custom field must be at
+    // their real offsets (the old bug read `half` +4 past its position,
+    // silently returning the next record's outer discriminant byte).
+    let r0 = ctx.array_get(&recs, 0).unwrap();
+    assert_eq!(ctx.read_u64(&ctx.field_get(&r0, "id").unwrap()), 1);
+    assert_eq!(ctx.read_u32(&ctx.field_get(&r0, "src").unwrap()), 1);
+    assert_eq!(ctx.read_u8(&ctx.field_get(&r0, "half").unwrap()), 7);
+
+    // Last record: the trailing u8 ends exactly at the payload edge.
+    let r2 = ctx.array_get(&recs, 2).unwrap();
+    assert_eq!(ctx.read_u64(&ctx.field_get(&r2, "id").unwrap()), 3);
+    assert_eq!(ctx.read_u32(&ctx.field_get(&r2, "src").unwrap()), 0);
+    assert_eq!(ctx.read_u8(&ctx.field_get(&r2, "half").unwrap()), 9);
+}

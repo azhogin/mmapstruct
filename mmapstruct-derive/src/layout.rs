@@ -44,17 +44,22 @@ pub(crate) fn fixed_section_index(fields: &[FieldInfo], field_name: &str) -> usi
             is_pod_field(&f.category)
                 || is_inline_string_field(&f.category)
                 || is_fixed_array_field(&f.category)
-                || f.has_byref_attr
+                || f.is_fixed_byref()
         })
         .position(|f| f.name == field_name)
         .expect("field not in fixed section")
 }
 
-pub(crate) fn align_offset(offset: usize, align: usize) -> usize {
-    if align == 0 {
-        return offset;
-    }
-    (offset + align - 1) & !(align - 1)
+/// Merged ident for an enum variant's layout consts: `{Enum}_{Variant}`.
+/// Enum-variant layout constants share the struct-path naming scheme with
+/// this prefix so the reader, the writer hash, and the schema all reference
+/// the SAME const-evaluated layout (real `size_of`/`align_of`) instead of
+/// macro-time guesses.
+pub(crate) fn variant_const_prefix(
+    enum_name: &proc_macro2::Ident,
+    variant_ident: &proc_macro2::Ident,
+) -> proc_macro2::Ident {
+    format_ident!("{}_{}", enum_name, variant_ident)
 }
 
 /// Generate `const FO: [usize; N]` (field offsets) and `const FS: usize` (fixed section size)

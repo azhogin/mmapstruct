@@ -63,7 +63,10 @@ where
         } else if is_fixed_array_field(&fi.category) {
             let ty = &fi.ty;
             quote! {
-                ctx.align_from(start, std::mem::align_of::<#ty>());
+                // Clamp to 8: the reader/schema layout consts clamp
+                // alignment the same way (type_align_expr), so the writer
+                // and the const-eval layout agree by construction.
+                ctx.align_from(start, std::mem::align_of::<#ty>().min(8));
                 unsafe {
                     let bytes = std::slice::from_raw_parts((#field as *const #ty).cast::<u8>(), std::mem::size_of::<#ty>());
                     ctx.write_raw(bytes);
@@ -72,7 +75,10 @@ where
         } else if is_pod_field(&fi.category) {
             let ty = &fi.ty;
             quote! {
-                ctx.align_from(start, std::mem::align_of::<#ty>());
+                // Clamp to 8: the reader/schema layout consts clamp
+                // alignment the same way (type_align_expr), so the writer
+                // and the const-eval layout agree by construction.
+                ctx.align_from(start, std::mem::align_of::<#ty>().min(8));
                 ctx.write_pod(#field);
             }
         } else {

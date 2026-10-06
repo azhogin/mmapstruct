@@ -82,15 +82,18 @@ fn field_value_type(
                 vec![resolver],
             )
         }
-        FieldCategory::FixedArray { inner_type, count, .. } => {
+        FieldCategory::FixedArray { count, .. } => {
             // Fixed-size array with known count — uses FixedPod layout.
             // e.g. [[u32; 4]; 4] → Array(FixedPod, stride=4, count=4) → u32.
             // The outer count is in the FixedPod; the inner is reported by the
             // recursively generated Array entry for [u32; 4].
             let arr_name = format_ident!("__mmap_ARR_{}_{}", struct_name, field_ident);
-            let stride = type_size_expr(inner_type);
+            let inner_type = extract_fixed_array_inner(&fi.ty)
+                .map(|(t, _)| t)
+                .expect("FixedArray category without an array type");
+            let stride = type_size_expr(&inner_type);
             let (elem_ref, extra) =
-                inner_dyn_value_type(struct_name, field_ident, inner_type);
+                inner_dyn_value_type(struct_name, field_ident, &inner_type);
             let arr_static = quote! {
                 #[allow(non_upper_case_globals)]
                 static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
@@ -477,12 +480,16 @@ pub(crate) fn generate_schema_impl(
 }
 
 /// Compute offset_in_fixed for a field in an enum variant.
-/// Mirrors the layout computation in `handle_enum`: every field sits at its
-/// naturally aligned offset within the fixed section, so the field's own
-/// alignment must be applied before its offset is recorded (a u64 after a
-/// u32 is padded to the next multiple of 8 — matching `handle_enum`'s
-/// pod_layout, which aligns first and records the aligned offset).
-fn variant_field_offset(fields: &[FieldInfo], fi: &FieldInfo) -> proc_macro2::TokenStream {
+/// Reads the variant's const-evaluated layout table (`__MMAP_FO_{Enum}_{Variant}`,
+/// generated alongside the reader/writer in `handle_enum`) — the same source
+/// the struct path uses. This guarantees real size_of/align_of for
+/// non-primitive pod fields (PodCustom) instead of a macro-time guess, and a
+/// single source of truth between reader, writer and both schema contexts.
+fn variant_field_offset(
+    fo_name: &proc_macro2::Ident,
+    fields: &[FieldInfo],
+    fi: &FieldInfo,
+) -> proc_macro2::TokenStream {
     fn is_fixed(f: &FieldInfo) -> bool {
         is_pod_field(&f.category)
             || is_inline_string_field(&f.category)
@@ -492,48 +499,8 @@ fn variant_field_offset(fields: &[FieldInfo], fi: &FieldInfo) -> proc_macro2::To
     if !is_fixed(fi) {
         return quote! { 0u64 };
     }
-    let mut offset = 0usize;
-    for f in fields {
-        if !is_fixed(f) {
-            continue;
-        }
-        if f.has_byref_attr {
-            offset = align_offset(offset, 4);
-            if f.name == fi.name {
-                break;
-            }
-            offset += 8;
-        } else if is_inline_string_field(&f.category) {
-            if f.name == fi.name {
-                break;
-            }
-            if let FieldCategory::InlineString { size } = &f.category {
-                offset += size;
-            }
-        } else if is_fixed_array_field(&f.category) {
-            if let FieldCategory::FixedArray { inner_type, count, .. } = &f.category {
-                let elem_sz = known_primitive_size(inner_type)
-                    .or_else(|| eval_type_size(inner_type))
-                    .unwrap_or(8);
-                let total_sz = elem_sz * count;
-                let al = if elem_sz == 1 { 1 } else { elem_sz.min(8).max(1) };
-                offset = align_offset(offset, al);
-                if f.name == fi.name {
-                    break;
-                }
-                offset += total_sz;
-            }
-        } else if is_pod_field(&f.category) {
-            let sz = known_primitive_size(&f.ty).unwrap_or(8);
-            let al = if sz == 1 { 1 } else { sz.min(8).max(1) };
-            offset = align_offset(offset, al);
-            if f.name == fi.name {
-                break;
-            }
-            offset += sz;
-        }
-    }
-    quote! { #offset as u64 }
+    let idx = fixed_section_index(fields, fi.name.as_str());
+    quote! { #fo_name[#idx] as u64 }
 }
 
 /// Generate Schema + GetSchema for an enum type.
@@ -571,8 +538,14 @@ pub(crate) fn generate_enum_schema_impl(
 
         let fields = &v.fields;
         let vname = format_ident!("{}_{}", name, vident);
+        let vprefix = variant_const_prefix(name, vident);
+        let fs_name = format_ident!("__MMAP_FS_{}", vprefix);
+        let hs_name = format_ident!("__MMAP_HS_{}", vprefix);
+        let fo_name = format_ident!("__MMAP_FO_{}", vprefix);
 
-        let fs = build_field_schema(fields, &vname, variant_field_offset);
+        let fs = build_field_schema(fields, &vname, |flds, fi| {
+            variant_field_offset(&fo_name, flds, fi)
+        });
 
         let inline_dyn_count = fs.inline_dyn_count;
         let schema_name = format_ident!("__mmap_ENUMVAR_{}_{}", name, vident);
@@ -586,41 +559,6 @@ pub(crate) fn generate_enum_schema_impl(
             .into_iter()
             .collect::<proc_macro2::TokenStream>();
 
-        let mut fixed_offset = 0usize;
-        for fi in fields {
-            if fi.is_fixed_byref() {
-                fixed_offset = align_offset(fixed_offset, 4);
-                fixed_offset += 8;
-            } else if is_inline_string_field(&fi.category) {
-                if let FieldCategory::InlineString { size } = &fi.category {
-                    fixed_offset += size;
-                }
-            } else if is_fixed_array_field(&fi.category) {
-                if let FieldCategory::FixedArray { inner_type, count, .. } = &fi.category {
-                    let elem_sz = known_primitive_size(inner_type)
-                        .or_else(|| eval_type_size(inner_type))
-                        .unwrap_or(8);
-                    let total_sz = elem_sz * count;
-                    let al = if elem_sz == 1 { 1 } else { elem_sz.min(8).max(1) };
-                    fixed_offset = align_offset(fixed_offset, al);
-                    fixed_offset += total_sz;
-                }
-            } else if is_pod_field(&fi.category) {
-                let sz = known_primitive_size(&fi.ty).unwrap_or(8);
-                let al = if sz == 1 { 1 } else { sz.min(8).max(1) };
-                fixed_offset = align_offset(fixed_offset, al);
-                fixed_offset += sz;
-            }
-        }
-        fixed_offset = align_offset(fixed_offset, 8);
-        let fixed_sz = fixed_offset;
-        let hdr_sz = fixed_sz
-            + if inline_dyn_count > 0 {
-                (inline_dyn_count + 1) * 8
-            } else {
-                0
-            };
-
         let variant_name_str = format!("{}::{}", name_str, vident);
         variant_schema_statics.push(quote! {
             #resolver_stream
@@ -631,8 +569,8 @@ pub(crate) fn generate_enum_schema_impl(
             static #schema_name: ::mmapstruct::schema::StructSchema = ::mmapstruct::schema::StructSchema {
                 name: #variant_name_str,
                 fields: &#field_statics_name,
-                fixed_section_size: #fixed_sz as u64,
-                header_size: #hdr_sz as u64,
+                fixed_section_size: #fs_name as u64,
+                header_size: #hs_name as u64,
                 inline_dyn_count: #inline_dyn_count,
             };
         });
