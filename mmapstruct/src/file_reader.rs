@@ -131,6 +131,16 @@ impl MmapReader {
         Ok(Self::new_internal(mmap, payload_range, hash, crc, embedded_schema))
     }
 
+    /// Open a headerless payload file RAW: the whole file is the payload,
+    /// and the layout-hash/crc checks are skipped entirely (like the
+    /// O_DIRECT expert-cache reads — the caller guarantees the layout).
+    pub fn from_file_raw(path: impl AsRef<Path>) -> io::Result<Self> {
+        let file = File::open(path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+        let payload_range = 0..mmap.len();
+        Ok(Self::new_internal(mmap, payload_range, None, None, None))
+    }
+
     /// Wrap an existing `Mmap`.
     pub fn new(mmap: Mmap) -> Self {
         let (payload, schema, hash, crc) = parse_header(&mmap);

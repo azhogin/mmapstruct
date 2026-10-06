@@ -30,6 +30,7 @@ pub(crate) fn generate_reader_struct(
 }
 
 /// Generate reader init expression for a pod field (::mmapstruct::bytemuck::from_bytes).
+#[allow(dead_code)]
 pub(crate) fn generate_pod_reader_init_expr(
     field: &FieldInfo,
     struct_name: &proc_macro2::Ident,
