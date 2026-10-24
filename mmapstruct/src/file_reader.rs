@@ -138,8 +138,7 @@ impl MmapReader {
         let path = path.as_ref();
         let mut sidecar_path = path.to_path_buf();
         sidecar_path.set_extension("mmshdr");
-        let sidecar =
-            std::fs::read(&sidecar_path).map_err(|e| with_path(&sidecar_path, e))?;
+        let sidecar = std::fs::read(&sidecar_path).map_err(|e| with_path(&sidecar_path, e))?;
         let (_sp, schema, hash, crc) = parse_header(&sidecar);
         let embedded_schema = schema.map(|(s, e)| sidecar[s..e].to_vec());
         let file = File::open(path).map_err(|e| with_path(path, e))?;
@@ -271,8 +270,7 @@ impl BufReader {
         let buf = std::fs::read(path).map_err(|e| with_path(path, e))?;
         let mut sidecar_path = path.to_path_buf();
         sidecar_path.set_extension("mmshdr");
-        let sidecar =
-            std::fs::read(&sidecar_path).map_err(|e| with_path(&sidecar_path, e))?;
+        let sidecar = std::fs::read(&sidecar_path).map_err(|e| with_path(&sidecar_path, e))?;
         let (_sp, schema, hash, crc) = parse_header(&sidecar);
         let embedded_schema = schema.map(|(s, e)| sidecar[s..e].to_vec());
         let payload_range = 0..buf.len();

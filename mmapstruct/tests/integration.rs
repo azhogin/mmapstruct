@@ -4,9 +4,7 @@
 #![allow(clippy::field_reassign_with_default)]
 
 use bytemuck::{Pod, Zeroable};
-use mmapstruct::file_reader::{
-    stored_layout_hash, write_layout_hash, BufReader, MmapReader,
-};
+use mmapstruct::file_reader::{stored_layout_hash, write_layout_hash, BufReader, MmapReader};
 use mmapstruct::indexed_array::{write_indexed_array, IndexedArrayReader};
 use mmapstruct::pod_array::write_pod_array;
 use mmapstruct::{write_to_buf, write_to_file, MmapStruct, WriteContext};
@@ -3618,7 +3616,9 @@ fn test_reader_error_includes_path() {
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 
     // MmapReader::from_file_raw
-    let err = MmapReader::from_file_raw(MISSING).err().expect("expected Err");
+    let err = MmapReader::from_file_raw(MISSING)
+        .err()
+        .expect("expected Err");
     assert!(err.to_string().contains(MISSING), "missing path in: {err}");
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 
@@ -3629,16 +3629,18 @@ fn test_reader_error_includes_path() {
 
     // sidecar variants. MmapReader reads the *sidecar* first → sidecar path in
     // the message; BufReader reads the *data* file first → data path.
-    let err =
-        MmapReader::from_file_with_sidecar(MISSING).err().expect("expected Err");
+    let err = MmapReader::from_file_with_sidecar(MISSING)
+        .err()
+        .expect("expected Err");
     assert!(
         err.to_string().contains("nope.mmshdr"),
         "missing sidecar path in: {err}"
     );
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 
-    let err =
-        BufReader::from_file_with_sidecar(MISSING).err().expect("expected Err");
+    let err = BufReader::from_file_with_sidecar(MISSING)
+        .err()
+        .expect("expected Err");
     assert!(err.to_string().contains(MISSING), "missing path in: {err}");
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 
