@@ -59,15 +59,48 @@ impl Overscan {
         Overscan::build(new_scanner, |val| prev.is_expanded(&val))
     }
 
-    /// Build a new `Overscan` from `next`, reusing expansions from both
-    /// visible nodes and the current path segments.
+    /// Build a new `Overscan` from `next`, reusing expansion state.
     ///
-    /// Like `from_previous`, but also marks as expanded every container
-    /// that appears in `next.scanner.path`.  This ensures that when we
-    /// walk upward (BottomUp) into a region whose parent was already
-    /// traversed (e.g. an expanded array whose children are visible),
-    /// the parent stays expanded in the new view.
+    /// A node **loaded** in `next.nodes` keeps its actual state — a container
+    /// the user collapsed stays collapsed even if it lies on
+    /// `next.scanner.path` (the path of the current window start is not a
+    /// navigation goal when scrolling up / jumping home).
+    ///
+    /// A node **not loaded** in `next.nodes` (boundary — the walk passes a
+    /// container outside the cached window) falls back to the path
+    /// heuristic: containers appearing in `next.scanner.path` are expanded,
+    /// so that regions whose parents were already traversed stay expanded.
     pub fn from_next(next: &Overscan, new_scanner: Scanner) -> Self {
+        let expanded_from_path: HashSet<(u64, u32)> = next
+            .scanner
+            .path
+            .iter()
+            .map(|seg| (seg.val.mmap_begin, seg.val.type_idx))
+            .collect();
+        let loaded: HashSet<(u64, u32)> = next
+            .nodes
+            .iter()
+            .map(|n| (n.value.mmap_begin, n.value.type_idx))
+            .collect();
+
+        Overscan::build(new_scanner, |val| {
+            let key = (val.mmap_begin, val.type_idx);
+            if loaded.contains(&key) {
+                next.is_expanded(&val)
+            } else {
+                expanded_from_path.contains(&key)
+            }
+        })
+    }
+
+    /// Like [`Overscan::from_next`], but path segments **always** win over
+    /// the loaded state.
+    ///
+    /// Used when the path is the navigation goal (search jump): ancestors on
+    /// the path must be expanded even if the user had collapsed them,
+    /// otherwise the match would land inside a collapsed container and
+    /// become invisible.
+    pub fn from_next_path_wins(next: &Overscan, new_scanner: Scanner) -> Self {
         let expanded_from_path: HashSet<(u64, u32)> = next
             .scanner
             .path
@@ -868,5 +901,133 @@ mod tests {
         // Expand c again — no new children, re-push virtual_end (no dup)
         os.expand_node(2, 3);
         assert_eq!(os.cursor.effective_end_stack.len(), 1, "no duplicate push");
+    }
+
+    // ── from_next semantics: user collapse vs path heuristic ────────
+
+    #[derive(MmapStruct, Debug)]
+    struct Group {
+        name: String,
+        nums: Vec<u32>,
+    }
+
+    #[derive(MmapStruct, Debug)]
+    struct GroupFile {
+        groups: Vec<Group>,
+        tail: u32,
+    }
+
+    fn setup_groups() -> (&'static RuntimeSchemaCtx<'static>, SchemaValue) {
+        let val = GroupFile {
+            groups: vec![
+                Group {
+                    name: "g0".into(),
+                    nums: vec![1, 2],
+                },
+                Group {
+                    name: "g1".into(),
+                    nums: vec![3],
+                },
+                Group {
+                    name: "g2".into(),
+                    nums: vec![4, 5, 6],
+                },
+                Group {
+                    name: "g3".into(),
+                    nums: vec![7],
+                },
+            ],
+            tail: 9,
+        };
+        setup(&val)
+    }
+
+    /// Build `next` with g2 expanded-then-collapsed (children stay loaded)
+    /// and `next.scanner.path` passing through g2 (focus at g2's `nums`).
+    /// Returns `(ctx, root, next, g2_val, nums_path)`.
+    fn build_next_with_collapsed_on_path() -> (
+        &'static RuntimeSchemaCtx<'static>,
+        SchemaValue,
+        Overscan,
+        SchemaValue,
+        Path,
+    ) {
+        let (ctx, root) = setup_groups();
+        let mut next = Overscan::new(Scanner::new(ctx, root, 200));
+        // nodes: [groups(0), tail(1)]
+        next.expand_node(0, 100); // groups expanded → g0..g3 at 1..=4
+        assert_eq!(next.nodes.len(), 6);
+        let g2_idx = 3; // g0=1, g1=2, g2=3, g3=4
+        next.expand_node(g2_idx, 100); // load name + nums
+        assert_eq!(next.nodes.len(), 8);
+        let nums_idx = g2_idx + 2;
+        next.collapse_node(g2_idx); // user collapses g2; children stay loaded
+                                    // Path through g2: focus at its nums child.
+        let nums_path = next.path_of(g2_idx + 2);
+        // Sanity: g2 is one of the path's ancestor values.
+        let g2_val = next.nodes[g2_idx].value;
+        assert!(nums_path
+            .iter()
+            .any(|seg| seg.val.mmap_begin == g2_val.mmap_begin));
+        next.scanner = Scanner::from_path(ctx, nums_path.clone(), 200);
+        (ctx, root, next, g2_val, nums_path)
+    }
+
+    #[test]
+    fn test_from_next_respects_user_collapse_on_path() {
+        let (ctx, root, next, g2_val, _p) = build_next_with_collapsed_on_path();
+
+        // Rebuild with a fresh from-root walk that passes g2.  g2 is loaded
+        // in next.nodes and collapsed there — the user's choice must win
+        // even though g2 lies on next.scanner.path.
+        let rebuilt = Overscan::from_next(&next, Scanner::new(ctx, root, 200));
+
+        assert!(
+            rebuilt
+                .nodes
+                .iter()
+                .any(|n| n.value.mmap_begin == g2_val.mmap_begin),
+            "g2 must be present in the rebuilt view"
+        );
+        assert!(
+            !rebuilt.is_expanded(&g2_val),
+            "user-collapsed node on the path must stay collapsed"
+        );
+    }
+
+    #[test]
+    fn test_from_next_path_fallback_for_unloaded() {
+        let (ctx, root, _tmp, g2_val, p) = build_next_with_collapsed_on_path();
+        // Simulate a window whose loaded part ends BEFORE g2: groups is
+        // partially expanded (g0, g1 loaded; g2 beyond the window edge), and
+        // a path through g2 is set on the scanner.  g2 is then an unloaded
+        // path node → the fallback must expand it (current behavior
+        // preserved for boundary nodes).
+        let mut next = Overscan::new(Scanner::new(ctx, root, 200));
+        next.expand_node(0, 2); // partial: g0, g1 loaded; g2 NOT loaded
+        assert!(!next
+            .nodes
+            .iter()
+            .any(|n| n.value.mmap_begin == g2_val.mmap_begin));
+        next.scanner = Scanner::from_path(ctx, p, 200);
+
+        let rebuilt = Overscan::from_next(&next, Scanner::new(ctx, root, 200));
+        assert!(
+            rebuilt.is_expanded(&g2_val),
+            "unloaded path ancestor must be expanded via the path fallback"
+        );
+    }
+
+    #[test]
+    fn test_from_next_path_wins_over_user_collapse() {
+        let (ctx, root, next, g2_val, _) = build_next_with_collapsed_on_path();
+
+        // Search-jump semantics: the path is the navigation goal — ancestors
+        // on it expand even if the user collapsed them.
+        let rebuilt = Overscan::from_next_path_wins(&next, Scanner::new(ctx, root, 200));
+        assert!(
+            rebuilt.is_expanded(&g2_val),
+            "path-wins must expand the collapsed ancestor"
+        );
     }
 }

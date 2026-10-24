@@ -365,9 +365,11 @@ impl App {
         let scanner = Scanner::from_path(ctx, mp.clone(), back_steps);
         let (back_path, steps_taken) = scanner.do_steps_back(&mp, back_steps, &|_| false);
 
-        // Build overscan from the backed-up position
+        // Build overscan from the backed-up position.  The path here is the
+        // navigation goal: ancestors on it must be expanded even if the user
+        // had collapsed them, so use the path-wins variant.
         let new_scanner = Scanner::from_path(ctx, back_path, OVERSCAN_STEPS);
-        self.overscan = Overscan::from_next(&self.overscan, new_scanner);
+        self.overscan = Overscan::from_next_path_wins(&self.overscan, new_scanner);
 
         // Find the match position in the new overscan
         let match_pos = self
