@@ -2,16 +2,18 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use mmapview_tui::app::App;
 use mmapview_tui::input;
-use mmapview_tui::schema;
-use mmapview_tui::scanner::Scanner;
 use mmapview_tui::overscan::Overscan;
+use mmapview_tui::scanner::Scanner;
+use mmapview_tui::schema;
 use mmapview_tui::ui;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -89,7 +91,7 @@ fn main() {
     let data: &'static [u8] = Box::leak(data_vec.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
     let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> = Box::leak(Box::new(
-        mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes)
+        mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes),
     ));
 
     let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
@@ -115,7 +117,9 @@ fn main() {
     // Setup terminal
     enable_raw_mode().expect("raw mode");
     let mut stdout = io::stdout();
-    stdout.execute(EnterAlternateScreen).expect("alternate screen");
+    stdout
+        .execute(EnterAlternateScreen)
+        .expect("alternate screen");
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
@@ -124,7 +128,9 @@ fn main() {
     // Restore terminal
     disable_raw_mode().expect("raw mode off");
     let mut stdout = io::stdout();
-    stdout.execute(LeaveAlternateScreen).expect("leave alternate screen");
+    stdout
+        .execute(LeaveAlternateScreen)
+        .expect("leave alternate screen");
     crossterm::execute!(std::io::stdout(), crossterm::cursor::Show).ok();
 
     if let Err(e) = result {
@@ -138,7 +144,17 @@ fn run_tui(
     app: &mut App,
 ) -> Result<(), String> {
     loop {
-        terminal.draw(|f| ui::draw_viewport(f, &app.viewport, &app.overscan, app.search_mode, &app.search_buffer, app.search_message))
+        terminal
+            .draw(|f| {
+                ui::draw_viewport(
+                    f,
+                    &app.viewport,
+                    &app.overscan,
+                    app.search_mode,
+                    &app.search_buffer,
+                    app.search_message,
+                )
+            })
             .map_err(|e| e.to_string())?;
         if !input::handle_input(app)? {
             break Ok(());

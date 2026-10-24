@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use mmapstruct::MmapStruct;
 use bytemuck::{Pod, Zeroable};
+use mmapstruct::MmapStruct;
 
 /// Nested fixed array: 16×16 matrix of u32 — all data in fixed section.
 #[derive(MmapStruct, Debug, PartialEq, Clone, Copy, Pod, Zeroable)]
@@ -35,7 +35,9 @@ fn main() {
 
     // ── MatrixFile: pure fixed-array struct ──
 
-    let mut m = MatrixFile { matrix: [[0u32; 16]; 16] };
+    let mut m = MatrixFile {
+        matrix: [[0u32; 16]; 16],
+    };
     m.matrix[0][0] = 1;
     m.matrix[0][1] = 2;
     m.matrix[7][8] = 99;
@@ -51,7 +53,10 @@ fn main() {
         let restored: MatrixFile = reader.into();
         assert_eq!(restored, m);
     }
-    println!("MatrixFile ([[u32; 16]; 16]): {} bytes, roundtrip OK", m_buf.len());
+    println!(
+        "MatrixFile ([[u32; 16]; 16]): {} bytes, roundtrip OK",
+        m_buf.len()
+    );
 
     // ── RowsFile: Vec<[u32; 4]> ──
 
@@ -69,7 +74,10 @@ fn main() {
         let restored: RowsFile = reader.into();
         assert_eq!(restored, r);
     }
-    println!("RowsFile (Vec<[u32; 4]>): {} bytes, roundtrip OK", r_buf.len());
+    println!(
+        "RowsFile (Vec<[u32; 4]>): {} bytes, roundtrip OK",
+        r_buf.len()
+    );
 
     // ── FixedArrayDemo with schema ──
 

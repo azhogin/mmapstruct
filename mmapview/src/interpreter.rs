@@ -11,15 +11,13 @@ use crate::EvalResult;
 ///
 /// For pipelines the budget is approximate: it is consumed by intermediate
 /// steps, so `/items[a:b] | select(...)` may yield fewer than `max` rows.
-#[derive(Clone, Copy, Debug)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct QueryLimits {
     /// Number of initial candidate items to skip.
     pub skip: usize,
     /// Maximum number of candidate items to emit (`None` = unlimited).
     pub max: Option<usize>,
 }
-
 
 impl QueryLimits {
     /// Recommended default cap for AI-facing tools (`--limit`).
@@ -171,10 +169,8 @@ fn eval_expr<'a, C: QueryContext<'a>>(
             }
             Ok(vals)
         }
-        Expr::Filter(filter) => {
-            filter_array(ctx, &[*current], filter, budget)
-                .map(|v| v.into_iter().map(EvalResult::Buf).collect())
-        }
+        Expr::Filter(filter) => filter_array(ctx, &[*current], filter, budget)
+            .map(|v| v.into_iter().map(EvalResult::Buf).collect()),
         Expr::Index(idx) => index_array(ctx, current, *idx).map(|v| vec![EvalResult::Buf(v)]),
         Expr::All => Ok(vec![EvalResult::Buf(*current)]),
         Expr::Slice(s, e) => slice_array(ctx, current, *s, *e, budget)
@@ -201,8 +197,7 @@ fn eval_expr<'a, C: QueryContext<'a>>(
         }
         Expr::Select { filter } => {
             if ctx.is_array_type(current) {
-                let filtered =
-                    filter_array(ctx, &[*current], filter, budget).unwrap_or_default();
+                let filtered = filter_array(ctx, &[*current], filter, budget).unwrap_or_default();
                 Ok(filtered.into_iter().map(EvalResult::Buf).collect())
             } else {
                 if eval_filter(ctx, current, filter) {
@@ -387,9 +382,7 @@ fn compare_variant_name<'a, C: QueryContext<'a>>(
         FilterOp::Eq => eq,
         FilterOp::Ne => !eq,
         FilterOp::Contains => name.contains(*expected_str) || short.contains(*expected_str),
-        FilterOp::StartsWith => {
-            name.starts_with(*expected_str) || short.starts_with(*expected_str)
-        }
+        FilterOp::StartsWith => name.starts_with(*expected_str) || short.starts_with(*expected_str),
         FilterOp::EndsWith => name.ends_with(*expected_str) || short.ends_with(*expected_str),
         _ => false,
     }
@@ -495,10 +488,26 @@ mod chained_filter_tests {
     fn consecutive_filters_intersect() {
         let w = LogFile {
             events: vec![
-                Ev { layer: 28, eid: 29, kind: 0 },
-                Ev { layer: 28, eid: 30, kind: 0 },
-                Ev { layer: 67, eid: 29, kind: 1 },
-                Ev { layer: 67, eid: 31, kind: 1 },
+                Ev {
+                    layer: 28,
+                    eid: 29,
+                    kind: 0,
+                },
+                Ev {
+                    layer: 28,
+                    eid: 30,
+                    kind: 0,
+                },
+                Ev {
+                    layer: 67,
+                    eid: 29,
+                    kind: 1,
+                },
+                Ev {
+                    layer: 67,
+                    eid: 31,
+                    kind: 1,
+                },
             ],
         };
         let buf = mmapstruct::write_to_buf_raw(&w);
@@ -522,7 +531,7 @@ mod chained_filter_tests {
 mod tests {
     use super::*;
     use crate::query_from;
-    use mmapstruct::{SchemaCtx, GetSchema, MmapStruct};
+    use mmapstruct::{GetSchema, MmapStruct, SchemaCtx};
 
     #[derive(MmapStruct, Debug)]
     #[mmap(scope)]
@@ -568,7 +577,7 @@ mod tests {
 
     #[test]
     fn test_negative_float_filter() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -623,7 +632,7 @@ mod tests {
 
     #[test]
     fn test_leading_dot_float_filter() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -816,7 +825,7 @@ mod tests {
     #[test]
     fn test_filter_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -879,7 +888,7 @@ mod tests {
     #[test]
     fn test_field_access_pod_array_elements() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -938,7 +947,7 @@ mod tests {
 
     #[test]
     fn test_select_filter_pipe() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -991,7 +1000,7 @@ mod tests {
 
     #[test]
     fn test_select_no_match() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1024,7 +1033,7 @@ mod tests {
 
     #[test]
     fn test_and_filter() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1069,7 +1078,7 @@ mod tests {
 
     #[test]
     fn test_or_filter() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1109,7 +1118,7 @@ mod tests {
 
     #[test]
     fn test_and_or_combined() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1154,7 +1163,7 @@ mod tests {
     #[test]
     fn test_and_filter_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1202,7 +1211,7 @@ mod tests {
     #[test]
     fn test_or_filter_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1249,7 +1258,7 @@ mod tests {
 
     #[test]
     fn test_select_and_filter() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1298,7 +1307,7 @@ mod tests {
 
     #[test]
     fn test_count() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1338,7 +1347,7 @@ mod tests {
 
     #[test]
     fn test_avg() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1385,7 +1394,7 @@ mod tests {
 
     #[test]
     fn test_min() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1432,7 +1441,7 @@ mod tests {
 
     #[test]
     fn test_max() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1480,7 +1489,7 @@ mod tests {
     #[test]
     fn test_count_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1522,7 +1531,7 @@ mod tests {
     #[test]
     fn test_avg_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1572,7 +1581,7 @@ mod tests {
     #[test]
     fn test_min_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1622,7 +1631,7 @@ mod tests {
     #[test]
     fn test_max_pod_array() {
         use bytemuck;
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(
             MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default,
@@ -1671,7 +1680,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_non_array_fails() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1697,7 +1706,7 @@ mod tests {
 
     #[test]
     fn test_format_aggregate_count() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1733,7 +1742,7 @@ mod tests {
 
     #[test]
     fn test_format_aggregate_avg() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         #[mmap(scope)]
@@ -1776,7 +1785,7 @@ mod tests {
 
     #[test]
     fn test_option_byref_some_via_dsl() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         struct Doc {
@@ -1801,7 +1810,7 @@ mod tests {
 
     #[test]
     fn test_option_byref_none_via_dsl() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         struct Doc {
@@ -1826,7 +1835,7 @@ mod tests {
 
     #[test]
     fn test_option_byref_none_in_struct_context() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         struct Doc {
@@ -1858,7 +1867,7 @@ mod tests {
 
     #[test]
     fn test_enum_schema_variant_a() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug, PartialEq)]
         enum MyEnum {
@@ -1886,7 +1895,7 @@ mod tests {
 
     #[test]
     fn test_enum_schema_variant_navigate() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug, PartialEq)]
         enum MyEnum {
@@ -1913,13 +1922,24 @@ mod tests {
 
     #[test]
     fn test_filter_enum_vec_variant_field() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         enum Event {
-            Click { id: u32, x: u32, y: u32 },
-            Key { id: u32, code: u32 },
-            Probe { id: u32, test_field: u32, note: String },
+            Click {
+                id: u32,
+                x: u32,
+                y: u32,
+            },
+            Key {
+                id: u32,
+                code: u32,
+            },
+            Probe {
+                id: u32,
+                test_field: u32,
+                note: String,
+            },
         }
 
         #[derive(MmapStruct, Debug)]
@@ -1929,7 +1949,11 @@ mod tests {
 
         let w = EventFile {
             events: vec![
-                Event::Click { id: 1, x: 10, y: 20 },
+                Event::Click {
+                    id: 1,
+                    x: 10,
+                    y: 20,
+                },
                 Event::Probe {
                     id: 10,
                     test_field: 5,
@@ -1999,13 +2023,24 @@ mod tests {
 
     #[test]
     fn test_aggregate_enum_vec_variant_field() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         enum Event {
-            Click { id: u32, x: u32, y: u32 },
-            Key { id: u32, code: u32 },
-            Probe { id: u32, test_field: u32, note: String },
+            Click {
+                id: u32,
+                x: u32,
+                y: u32,
+            },
+            Key {
+                id: u32,
+                code: u32,
+            },
+            Probe {
+                id: u32,
+                test_field: u32,
+                note: String,
+            },
         }
 
         #[derive(MmapStruct, Debug)]
@@ -2015,7 +2050,11 @@ mod tests {
 
         let w = EventFile {
             events: vec![
-                Event::Click { id: 1, x: 10, y: 20 },
+                Event::Click {
+                    id: 1,
+                    x: 10,
+                    y: 20,
+                },
                 Event::Probe {
                     id: 10,
                     test_field: 5,
@@ -2053,13 +2092,24 @@ mod tests {
 
     #[test]
     fn test_filter_dollar_variant() {
-        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
 
         #[derive(MmapStruct, Debug)]
         enum Event {
-            Click { id: u32, x: u32, y: u32 },
-            Key { id: u32, code: u32 },
-            Probe { id: u32, test_field: u32, note: String },
+            Click {
+                id: u32,
+                x: u32,
+                y: u32,
+            },
+            Key {
+                id: u32,
+                code: u32,
+            },
+            Probe {
+                id: u32,
+                test_field: u32,
+                note: String,
+            },
         }
 
         #[derive(MmapStruct, Debug)]
@@ -2069,7 +2119,11 @@ mod tests {
 
         let w = EventFile {
             events: vec![
-                Event::Click { id: 1, x: 10, y: 20 },
+                Event::Click {
+                    id: 1,
+                    x: 10,
+                    y: 20,
+                },
                 Event::Probe {
                     id: 10,
                     test_field: 5,
@@ -2081,7 +2135,11 @@ mod tests {
                     test_field: 0,
                     note: "b".into(),
                 },
-                Event::Click { id: 3, x: 30, y: 40 },
+                Event::Click {
+                    id: 3,
+                    x: 30,
+                    y: 40,
+                },
             ],
         };
         let buf = write_to_buf_raw(&w);

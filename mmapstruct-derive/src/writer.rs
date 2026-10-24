@@ -2,16 +2,21 @@
 
 use quote::quote;
 
-use crate::utils::*;
 use crate::category::*;
 use crate::field_info::*;
 use crate::layout::*;
+use crate::utils::*;
 use crate::write_helpers;
 
 /// Build a `syn::Member` from a field ident. For tuple structs the ident is `_0`, `_1`, etc.
 fn ident_member(id: &proc_macro2::Ident, is_tuple: bool) -> syn::Member {
     if is_tuple {
-        let idx: usize = id.to_string().strip_prefix('_').unwrap().parse().expect("tuple field ident should be _N");
+        let idx: usize = id
+            .to_string()
+            .strip_prefix('_')
+            .unwrap()
+            .parse()
+            .expect("tuple field ident should be _N");
         syn::Member::Unnamed(syn::Index::from(idx))
     } else {
         syn::Member::Named(id.clone())
@@ -53,7 +58,8 @@ pub(crate) fn generate_write_impl(
         quote! { &self.#member }
     };
     let fixed_writes = write_helpers::generate_fixed_writes(fields, field_ref);
-    let inline_dyn_writes = write_helpers::generate_inline_dyn_writes(fields, inline_dyn_indices, field_ref);
+    let inline_dyn_writes =
+        write_helpers::generate_inline_dyn_writes(fields, inline_dyn_indices, field_ref);
     let inline_dyn_count = layout.inline_dyn_count;
 
     let inner_body = if inline_dyn_count > 0 {

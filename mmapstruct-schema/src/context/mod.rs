@@ -12,8 +12,8 @@ mod variant;
 
 pub use mixed_struct::FieldInfo;
 
-use crate::value::SchemaValue;
 use crate::schema::{ArrayLayoutDefReader, FieldDef, PrimitiveDef, Schema, TypeDefReader};
+use crate::value::SchemaValue;
 use mmapstruct::indexed_array::IndexedArrayReader;
 use mmapstruct::traits::{mmap_read_pod, MmapRead};
 
@@ -39,18 +39,14 @@ impl<'a> RuntimeSchemaCtx<'a> {
     /// Pre-resolves every type entry in the schema table so that subsequent
     /// navigation can read `TypeDefReader` discriminants quickly.
     pub fn new(data: &'a [u8], schema_bytes: &'a [u8]) -> Self {
-        let schema =
-            <Schema as MmapRead>::read(schema_bytes, 0..schema_bytes.len());
+        let schema = <Schema as MmapRead>::read(schema_bytes, 0..schema_bytes.len());
         let type_count = schema.types.len();
         let mut types = Vec::with_capacity(type_count);
         for i in 0..type_count {
             let ty = schema.types.get(i).unwrap();
             types.push(ty);
         }
-        Self {
-            data,
-            types,
-        }
+        Self { data, types }
     }
 
     pub fn data(&self) -> &[u8] {
@@ -67,19 +63,45 @@ impl<'a> RuntimeSchemaCtx<'a> {
         &self.data[v.mmap_begin as usize..v.mmap_end as usize]
     }
 
-    pub fn read_u32(&self, v: &SchemaValue) -> u32 { self.read_pod(v) }
-    pub fn read_i32(&self, v: &SchemaValue) -> i32 { self.read_pod(v) }
-    pub fn read_u64(&self, v: &SchemaValue) -> u64 { self.read_pod(v) }
-    pub fn read_i64(&self, v: &SchemaValue) -> i64 { self.read_pod(v) }
-    pub fn read_f32(&self, v: &SchemaValue) -> f32 { self.read_pod(v) }
-    pub fn read_f64(&self, v: &SchemaValue) -> f64 { self.read_pod(v) }
-    pub fn read_u16(&self, v: &SchemaValue) -> u16 { self.read_pod(v) }
-    pub fn read_i16(&self, v: &SchemaValue) -> i16 { self.read_pod(v) }
-    pub fn read_u8(&self, v: &SchemaValue) -> u8 { self.read_pod(v) }
-    pub fn read_i8(&self, v: &SchemaValue) -> i8 { self.read_pod(v) }
-    pub fn read_usize(&self, v: &SchemaValue) -> usize { self.read_u64(v) as usize }
-    pub fn read_isize(&self, v: &SchemaValue) -> isize { self.read_i64(v) as isize }
-    pub fn read_bool(&self, v: &SchemaValue) -> bool { self.read_pod::<u32>(v) != 0 }
+    pub fn read_u32(&self, v: &SchemaValue) -> u32 {
+        self.read_pod(v)
+    }
+    pub fn read_i32(&self, v: &SchemaValue) -> i32 {
+        self.read_pod(v)
+    }
+    pub fn read_u64(&self, v: &SchemaValue) -> u64 {
+        self.read_pod(v)
+    }
+    pub fn read_i64(&self, v: &SchemaValue) -> i64 {
+        self.read_pod(v)
+    }
+    pub fn read_f32(&self, v: &SchemaValue) -> f32 {
+        self.read_pod(v)
+    }
+    pub fn read_f64(&self, v: &SchemaValue) -> f64 {
+        self.read_pod(v)
+    }
+    pub fn read_u16(&self, v: &SchemaValue) -> u16 {
+        self.read_pod(v)
+    }
+    pub fn read_i16(&self, v: &SchemaValue) -> i16 {
+        self.read_pod(v)
+    }
+    pub fn read_u8(&self, v: &SchemaValue) -> u8 {
+        self.read_pod(v)
+    }
+    pub fn read_i8(&self, v: &SchemaValue) -> i8 {
+        self.read_pod(v)
+    }
+    pub fn read_usize(&self, v: &SchemaValue) -> usize {
+        self.read_u64(v) as usize
+    }
+    pub fn read_isize(&self, v: &SchemaValue) -> isize {
+        self.read_i64(v) as isize
+    }
+    pub fn read_bool(&self, v: &SchemaValue) -> bool {
+        self.read_pod::<u32>(v) != 0
+    }
 
     /// Read a string using the Value's mmap_begin..mmap_end range.
     /// Trailing null bytes are trimmed (for `#[mmap(inline(N))]` strings).
@@ -260,9 +282,7 @@ impl<'a> RuntimeSchemaCtx<'a> {
                 | PrimitiveDef::Isize => Some(8),
             },
             TypeDefReader::PodStruct { size } => Some(**size),
-            TypeDefReader::Str { size } => {
-                size.map(|s| *s as u64)
-            }
+            TypeDefReader::Str { size } => size.map(|s| *s as u64),
             TypeDefReader::Array {
                 layout: ArrayLayoutDefReader::FixedPod { stride, count },
                 ..
@@ -303,5 +323,4 @@ impl<'a> RuntimeSchemaCtx<'a> {
     pub fn is_option_type(&self, type_idx: u32) -> bool {
         matches!(self.type_reader(type_idx), TypeDefReader::Option { .. })
     }
-
 }

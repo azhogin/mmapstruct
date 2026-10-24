@@ -7,7 +7,6 @@
 use std::path::PathBuf;
 
 fn registry_dir() -> PathBuf {
-
     std::env::var("MMAPSTRUCT_SCHEMA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {

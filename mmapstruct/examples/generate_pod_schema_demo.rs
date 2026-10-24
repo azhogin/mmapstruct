@@ -39,11 +39,12 @@ fn main() {
         id: 42,
         origin: PodPoint { x: 1.5, y: -2.5 },
         weight: RawWeight([[1, 2, 3, 4], [5, 6, 7, 8]]),
-        points: vec![
-            PodPoint { x: 10.0, y: 20.0 },
-            PodPoint { x: 30.0, y: 40.0 },
+        points: vec![PodPoint { x: 10.0, y: 20.0 }, PodPoint { x: 30.0, y: 40.0 }],
+        weights: vec![
+            RawWeight([[9; 4]; 2]),
+            RawWeight([[8; 4]; 2]),
+            RawWeight([[7; 4]; 2]),
         ],
-        weights: vec![RawWeight([[9; 4]; 2]), RawWeight([[8; 4]; 2]), RawWeight([[7; 4]; 2])],
     };
 
     let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&root, false);

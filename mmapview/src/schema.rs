@@ -41,13 +41,11 @@ pub fn resolve_schema(data: &[u8]) -> Result<SchemaResult, String> {
         }
     }
 
-    Err(
-        "No embedded schema found and no schema in registry.\n\
+    Err("No embedded schema found and no schema in registry.\n\
          Write the file with write_to_file_with_embedded_schema() or\n\
          save the schema to ~/.config/mmapstruct/schemas/<layout_hash>.mms.\n\
          Use --schema <file> to specify a schema explicitly."
-            .to_string(),
-    )
+        .to_string())
 }
 
 /// Full schema resolution used by all frontends (`mmapview q`, tree, TUI).

@@ -114,7 +114,13 @@ impl MmapReader {
         let payload_start = payload.as_ptr() as usize - mmap.as_ptr() as usize;
         let payload_range = payload_start..payload_start + payload.len();
         let embedded_schema = schema.map(|(s, e)| mmap[s..e].to_vec());
-        Ok(Self::new_internal(mmap, payload_range, hash, crc, embedded_schema))
+        Ok(Self::new_internal(
+            mmap,
+            payload_range,
+            hash,
+            crc,
+            embedded_schema,
+        ))
     }
 
     /// Open a headerless payload file whose mmapstruct header/schema lives in a
@@ -130,7 +136,13 @@ impl MmapReader {
         let file = File::open(path)?;
         let mmap = unsafe { Mmap::map(&file)? };
         let payload_range = 0..mmap.len();
-        Ok(Self::new_internal(mmap, payload_range, hash, crc, embedded_schema))
+        Ok(Self::new_internal(
+            mmap,
+            payload_range,
+            hash,
+            crc,
+            embedded_schema,
+        ))
     }
 
     /// Open a headerless payload file RAW: the whole file is the payload,
@@ -231,7 +243,13 @@ impl BufReader {
         let payload_start = payload.as_ptr() as usize - buf.as_ptr() as usize;
         let payload_range = payload_start..payload_start + payload.len();
         let embedded_schema = schema.map(|(s, e)| buf[s..e].to_vec());
-        Ok(Self::new_internal(buf, payload_range, hash, crc, embedded_schema))
+        Ok(Self::new_internal(
+            buf,
+            payload_range,
+            hash,
+            crc,
+            embedded_schema,
+        ))
     }
 
     /// Open a headerless payload file whose mmapstruct header/schema lives in a
@@ -246,7 +264,13 @@ impl BufReader {
         let (_sp, schema, hash, crc) = parse_header(&sidecar);
         let embedded_schema = schema.map(|(s, e)| sidecar[s..e].to_vec());
         let payload_range = 0..buf.len();
-        Ok(Self::new_internal(buf, payload_range, hash, crc, embedded_schema))
+        Ok(Self::new_internal(
+            buf,
+            payload_range,
+            hash,
+            crc,
+            embedded_schema,
+        ))
     }
 
     /// Wrap an existing `Vec<u8>`.
@@ -355,7 +379,10 @@ pub fn write_layout_hash(path: &Path, new_hash: u64) -> io::Result<()> {
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("{}: header has no layout_hash slot (v0/raw)", path.display()),
+            format!(
+                "{}: header has no layout_hash slot (v0/raw)",
+                path.display()
+            ),
         ));
     }
     hdr[8..16].copy_from_slice(&new_hash.to_le_bytes());

@@ -1,10 +1,9 @@
-use mmapstruct::{MmapStruct, write_to_buf_raw};
 use mmapstruct::traits::MmapRead;
+use mmapstruct::{write_to_buf_raw, MmapStruct};
 use mmapstruct_schema::builder::build_serialized_schema;
 use mmapstruct_schema::schema::TypeDefReader;
 use mmapstruct_schema::{
-    format_schema_value, navigate_path, RuntimeSchemaCtx, SchemaValue,
-    write_with_schema,
+    format_schema_value, navigate_path, write_with_schema, RuntimeSchemaCtx, SchemaValue,
 };
 
 #[test]
@@ -29,7 +28,10 @@ fn test_schema_build_simple() {
         schema.types[1],
         mmapstruct_schema::schema::TypeDef::Primitive(mmapstruct_schema::schema::PrimitiveDef::U64)
     ));
-    assert!(matches!(schema.types[2], mmapstruct_schema::schema::TypeDef::Str { .. }));
+    assert!(matches!(
+        schema.types[2],
+        mmapstruct_schema::schema::TypeDef::Str { .. }
+    ));
     assert_eq!(schema.root_type, 0);
 }
 
@@ -57,11 +59,17 @@ fn test_schema_build_mixed() {
         schema.types[1],
         mmapstruct_schema::schema::TypeDef::Primitive(mmapstruct_schema::schema::PrimitiveDef::U64)
     ));
-    assert!(matches!(schema.types[2], mmapstruct_schema::schema::TypeDef::Str { .. }));
+    assert!(matches!(
+        schema.types[2],
+        mmapstruct_schema::schema::TypeDef::Str { .. }
+    ));
 
     match &schema.types[3] {
         mmapstruct_schema::schema::TypeDef::Array { layout, .. } => {
-            assert!(matches!(layout, mmapstruct_schema::schema::ArrayLayoutDef::Indexed));
+            assert!(matches!(
+                layout,
+                mmapstruct_schema::schema::ArrayLayoutDef::Indexed
+            ));
         }
         _ => panic!("expected array"),
     }
@@ -119,7 +127,10 @@ fn test_schema_build_with_option() {
         }
         _ => panic!("expected option"),
     }
-    assert!(matches!(schema.types[3], mmapstruct_schema::schema::TypeDef::Str { .. }));
+    assert!(matches!(
+        schema.types[3],
+        mmapstruct_schema::schema::TypeDef::Str { .. }
+    ));
     assert_eq!(schema.root_type, 0);
 }
 
@@ -228,11 +239,8 @@ fn test_schema_write_with_schema_readback() {
     let (_data, schema_bytes) = write_with_schema(&pt);
 
     let schema: mmapstruct_schema::schema::Schema =
-        <mmapstruct_schema::schema::Schema as MmapRead>::read(
-            &schema_bytes,
-            0..schema_bytes.len(),
-        )
-        .into();
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len())
+            .into();
     assert!(!schema.types.is_empty());
     assert_eq!(schema.root_type, 0);
 }
@@ -253,10 +261,8 @@ fn test_schema_context_field_get() {
     let schema = build_serialized_schema::<Point>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -282,10 +288,8 @@ fn test_schema_context_enum_variant() {
     let schema = build_serialized_schema::<MyEnum>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -357,16 +361,22 @@ fn test_schema_context_enum_variant_u64_after_u32() {
     // The variant struct in the type table must record `bytes` at its aligned
     // offset: 3*u64 + u32 + u16 + u16 + u32 = 36, aligned to 8 -> 40.
     let root_idx = schema.root_type as usize;
-    let mmapstruct_schema::schema::TypeDef::Struct { fields: file_fields, .. } = &schema.types[root_idx]
+    let mmapstruct_schema::schema::TypeDef::Struct {
+        fields: file_fields,
+        ..
+    } = &schema.types[root_idx]
     else {
         panic!("expected root struct");
     };
-    let mmapstruct_schema::schema::TypeDef::Array { elem_type, .. } = &schema.types[file_fields[0].type_index as usize]
+    let mmapstruct_schema::schema::TypeDef::Array { elem_type, .. } =
+        &schema.types[file_fields[0].type_index as usize]
     else {
         panic!("expected tasks array");
     };
-    let mmapstruct_schema::schema::TypeDef::Enum { variant_type_indices, .. } =
-        &schema.types[*elem_type as usize]
+    let mmapstruct_schema::schema::TypeDef::Enum {
+        variant_type_indices,
+        ..
+    } = &schema.types[*elem_type as usize]
     else {
         panic!("expected enum");
     };
@@ -402,12 +412,18 @@ fn test_schema_context_enum_variant_u64_after_u32() {
     assert_eq!(ctx.read_u32(&ctx.field_get(&task0, "step").unwrap()), 3);
     assert_eq!(ctx.read_u16(&ctx.field_get(&task0, "layer").unwrap()), 11);
     assert_eq!(ctx.read_u16(&ctx.field_get(&task0, "eid").unwrap()), 76);
-    assert_eq!(ctx.read_u32(&ctx.field_get(&task0, "ram_slot").unwrap()), 211);
+    assert_eq!(
+        ctx.read_u32(&ctx.field_get(&task0, "ram_slot").unwrap()),
+        211
+    );
     assert_eq!(
         ctx.read_u64(&ctx.field_get(&task0, "bytes").unwrap()),
         18_915_328
     );
-    assert_eq!(ctx.read_u32(&ctx.field_get(&task0, "is_prefetch").unwrap()), 1);
+    assert_eq!(
+        ctx.read_u32(&ctx.field_get(&task0, "is_prefetch").unwrap()),
+        1
+    );
 }
 
 #[test]
@@ -443,10 +459,8 @@ fn test_schema_context_array() {
     let schema = build_serialized_schema::<ItemFile>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -486,19 +500,26 @@ fn test_schema_context_fixed_array() {
 
     let w = FixedFile {
         items: vec![
-            FixedItem { id: 10, name: "alpha".into() },
-            FixedItem { id: 20, name: "beta".into() },
-            FixedItem { id: 30, name: "alpha".into() },
+            FixedItem {
+                id: 10,
+                name: "alpha".into(),
+            },
+            FixedItem {
+                id: 20,
+                name: "beta".into(),
+            },
+            FixedItem {
+                id: 30,
+                name: "alpha".into(),
+            },
         ],
     };
     let data = mmapstruct::write_to_buf_raw(&w);
     let schema = build_serialized_schema::<FixedFile>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -545,10 +566,8 @@ fn test_schema_context_read_as() {
     let schema = build_serialized_schema::<Stats>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -580,10 +599,8 @@ fn test_schema_context_byref_string() {
     let schema = build_serialized_schema::<Rec>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -605,10 +622,8 @@ fn test_schema_context_option_none() {
     let schema = build_serialized_schema::<WithOpt>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -632,10 +647,8 @@ fn test_schema_context_option_some() {
     let schema = build_serialized_schema::<WithOpt>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -661,10 +674,8 @@ fn test_schema_format_value_struct() {
     let schema = build_serialized_schema::<Point>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -690,10 +701,8 @@ fn test_schema_format_value_enum() {
     let schema = build_serialized_schema::<MyEnum>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -706,7 +715,10 @@ fn test_schema_format_value_enum() {
     // 4 bytes after u32 discriminant). The formatter delegates field lookup
     // to field_get which handles the shift internally.
     let (_variant_type_idx, data_off) = ctx.enum_variant(&root).unwrap();
-    assert!(data_off > 0, "enum with u64 field should have non-zero data offset");
+    assert!(
+        data_off > 0,
+        "enum with u64 field should have non-zero data offset"
+    );
 }
 
 #[test]
@@ -738,10 +750,8 @@ fn test_schema_format_value_array() {
     let schema = build_serialized_schema::<ItemFile>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -802,10 +812,8 @@ fn test_schema_deep_nested_enum_field() {
     let data = mmapstruct::write_to_buf_raw(&w);
     let schema = build_serialized_schema::<DeepA>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -864,10 +872,8 @@ fn test_schema_query_path() {
     let schema = build_serialized_schema::<ItemFile>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -882,9 +888,9 @@ fn test_schema_query_path() {
 
 #[test]
 fn test_schema_fixed_array() {
+    use bytemuck::{Pod, Zeroable};
     use mmapstruct_schema::RuntimeSchemaCtx;
     use mmapstruct_schema::SchemaValue;
-    use bytemuck::{Pod, Zeroable};
 
     #[derive(MmapStruct, Clone, Copy, Pod, Zeroable)]
     #[repr(C)]
@@ -895,16 +901,19 @@ fn test_schema_fixed_array() {
 
     let w = WithArray {
         id: 42,
-        mat: [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]],
+        mat: [
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            [9, 10, 11, 12],
+            [13, 14, 15, 16],
+        ],
     };
     let data = mmapstruct::write_to_buf_raw(&w);
     let schema = build_serialized_schema::<WithArray>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -929,8 +938,14 @@ fn test_schema_fixed_array() {
     // Quick format check
     let s = format_schema_value(&ctx, &root);
     assert!(s.contains("\"id\": 42"), "missing id: {s}");
-    assert!(s.contains("[\n      1,\n      2,\n      3,\n      4\n    ]"), "missing row 0: {s}");
-    assert!(s.contains("[\n      13,\n      14,\n      15,\n      16\n    ]"), "missing row 3: {s}");
+    assert!(
+        s.contains("[\n      1,\n      2,\n      3,\n      4\n    ]"),
+        "missing row 0: {s}"
+    );
+    assert!(
+        s.contains("[\n      13,\n      14,\n      15,\n      16\n    ]"),
+        "missing row 3: {s}"
+    );
 }
 
 #[test]
@@ -943,13 +958,23 @@ fn test_schema_fixed_array_top_level() {
         arr: [u32; 4],
     }
 
-    let w = SimpleArray { arr: [10, 20, 30, 40] };
+    let w = SimpleArray {
+        arr: [10, 20, 30, 40],
+    };
     let data = write_to_buf_raw(&w);
     let schema = build_serialized_schema::<SimpleArray>();
     let schema_bytes = write_to_buf_raw(&schema);
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
-    let root = SchemaValue::new(0, data.len() as u64, *<mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len()).root_type);
+    let root = SchemaValue::new(
+        0,
+        data.len() as u64,
+        *<mmapstruct_schema::schema::Schema as MmapRead>::read(
+            &schema_bytes,
+            0..schema_bytes.len(),
+        )
+        .root_type,
+    );
 
     let arr_val = ctx.field_get(&root, "arr").unwrap();
     assert_eq!(ctx.array_len(&arr_val), 4);
@@ -975,7 +1000,11 @@ fn test_schema_fixed_array_podstruct() {
     }
 
     let w = WithPoints {
-        pts: [PodPoint { x: 1.0, y: 2.0 }, PodPoint { x: 3.0, y: 4.0 }, PodPoint { x: 5.0, y: 6.0 }],
+        pts: [
+            PodPoint { x: 1.0, y: 2.0 },
+            PodPoint { x: 3.0, y: 4.0 },
+            PodPoint { x: 5.0, y: 6.0 },
+        ],
         tag: 99,
     };
     let data = write_to_buf_raw(&w);
@@ -983,7 +1012,15 @@ fn test_schema_fixed_array_podstruct() {
     let schema_bytes = write_to_buf_raw(&schema);
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
-    let root = SchemaValue::new(0, data.len() as u64, *<mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len()).root_type);
+    let root = SchemaValue::new(
+        0,
+        data.len() as u64,
+        *<mmapstruct_schema::schema::Schema as MmapRead>::read(
+            &schema_bytes,
+            0..schema_bytes.len(),
+        )
+        .root_type,
+    );
 
     let pts_val = ctx.field_get(&root, "pts").unwrap();
     assert_eq!(ctx.array_len(&pts_val), 3);
@@ -1009,10 +1046,8 @@ fn test_array_get_out_of_range_returns_none() {
     let schema = build_serialized_schema::<ArrFile>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -1065,19 +1100,25 @@ fn test_schema_enum_podcustom_last_record() {
 
     let w = Log {
         recs: vec![
-            Rec::Direct { id: 1, src: Src::B, half: 7 },
+            Rec::Direct {
+                id: 1,
+                src: Src::B,
+                half: 7,
+            },
             Rec::Other { id: 2 },
-            Rec::Direct { id: 3, src: Src::A, half: 9 },
+            Rec::Direct {
+                id: 3,
+                src: Src::A,
+                half: 9,
+            },
         ],
     };
     let data = mmapstruct::write_to_buf_raw(&w);
     let schema = build_serialized_schema::<Log>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
 
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -1128,10 +1169,8 @@ fn test_schema_option_enum_align4_inner_offset() {
     let data = mmapstruct::write_to_buf_raw(&w);
     let schema = build_serialized_schema::<OptEnumFile>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -1155,7 +1194,19 @@ fn test_schema_option_enum_align4_inner_offset() {
 fn test_schema_option_pod_struct_align4() {
     // Pod struct with align 4 (two u32s): Option<S> inner data at +4; the old
     // size-based heuristic (size 8 → align 8) overestimated.
-    #[derive(MmapStruct, Debug, PartialEq, Eq, Ord, PartialOrd, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+    #[derive(
+        MmapStruct,
+        Debug,
+        PartialEq,
+        Eq,
+        Ord,
+        PartialOrd,
+        Clone,
+        Copy,
+        bytemuck::Pod,
+        bytemuck::Zeroable,
+        Default,
+    )]
     #[repr(C)]
     struct Pair {
         a: u32,
@@ -1173,10 +1224,8 @@ fn test_schema_option_pod_struct_align4() {
     let data = mmapstruct::write_to_buf_raw(&w);
     let schema = build_serialized_schema::<OptPodFile>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
@@ -1215,10 +1264,8 @@ fn test_schema_pod_enum_disc_size_bounds() {
     let data = mmapstruct::write_to_buf_raw(&w);
     let schema = build_serialized_schema::<ModeFile>();
     let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
-    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
-        &schema_bytes,
-        0..schema_bytes.len(),
-    );
+    let schema_reader =
+        <mmapstruct_schema::schema::Schema as MmapRead>::read(&schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
 
     let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);

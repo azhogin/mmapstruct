@@ -24,12 +24,16 @@ fn print_usage() {
     eprintln!();
     eprintln!("q options:");
     eprintln!("  --schema FILE   Explicit schema path (default: auto — embedded/sidecar/registry)");
-    eprintln!("  --limit N       Max candidate results for filters/slices (default: {DEFAULT_LIMIT})");
+    eprintln!(
+        "  --limit N       Max candidate results for filters/slices (default: {DEFAULT_LIMIT})"
+    );
     eprintln!("  --skip N        Skip first N candidates (default: 0)");
     eprintln!("  --count-only    Print only the number of matches (scans without limit)");
     eprintln!("  --text          Plain-text output instead of JSONL");
     eprintln!("  --max-string N  Truncate strings to N chars (default: {DEFAULT_MAX_STRING})");
-    eprintln!("  --max-bytes N   Stop after N serialized bytes (default: {DEFAULT_MAX_BYTES}; 0 = off)");
+    eprintln!(
+        "  --max-bytes N   Stop after N serialized bytes (default: {DEFAULT_MAX_BYTES}; 0 = off)"
+    );
     eprintln!("  --full          Expand containers fully (byte budget still applies)");
     eprintln!();
     eprintln!("describe options:");
@@ -257,7 +261,10 @@ fn run_describe(args: &[String]) {
         }
     };
     let opts = mmapview::describe::DescribeOpts { depth };
-    print!("{}", mmapview::describe::describe(&loaded.ctx, &loaded.root, &opts));
+    print!(
+        "{}",
+        mmapview::describe::describe(&loaded.ctx, &loaded.root, &opts)
+    );
 }
 
 fn main() {

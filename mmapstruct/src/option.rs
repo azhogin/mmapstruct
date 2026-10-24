@@ -12,7 +12,8 @@ impl<T: MmapRead> MmapRead for Option<T> {
         if range.is_empty() || data[range.start] == 0 {
             None
         } else {
-            let val_start = (range.start + 1 + std::mem::align_of::<T>() - 1) & !(std::mem::align_of::<T>() - 1);
+            let val_start = (range.start + 1 + std::mem::align_of::<T>() - 1)
+                & !(std::mem::align_of::<T>() - 1);
             Some(T::read(data, val_start..range.end))
         }
     }

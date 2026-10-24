@@ -1,8 +1,8 @@
 //! Parsing `#[mmap(...)]` attributes on struct fields.
 
 use quote::format_ident;
-use syn::{LitInt, Meta, Type};
 use syn::punctuated::Punctuated;
+use syn::{LitInt, Meta, Type};
 
 use crate::utils::*;
 
@@ -84,7 +84,9 @@ pub(crate) fn hash_map_module_name(key: HashMapLayout, val: HashMapLayout) -> pr
     format_ident!("{}_{}", k, v)
 }
 
-pub(crate) fn parse_hashmap_attrs(attrs: &[syn::Attribute]) -> (Option<HashMapLayout>, Option<HashMapLayout>) {
+pub(crate) fn parse_hashmap_attrs(
+    attrs: &[syn::Attribute],
+) -> (Option<HashMapLayout>, Option<HashMapLayout>) {
     let mut key = None;
     let mut val = None;
     for attr in attrs {

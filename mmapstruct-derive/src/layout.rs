@@ -2,9 +2,9 @@
 
 use quote::{format_ident, quote};
 
-use crate::utils::*;
 use crate::category::*;
 use crate::field_info::*;
+use crate::utils::*;
 
 pub(crate) struct StructLayout {
     pub(crate) inline_dyn_count: usize,

@@ -17,9 +17,14 @@ fn test_tree_viewer_output() {
     // Build a small binary and run it to create test data with embedded schema
     let status = Command::new("cargo")
         .args([
-            "run", "--quiet", "-p", "mmapview",
-            "--example", "f3_test_data",
-            "--", &path,
+            "run",
+            "--quiet",
+            "-p",
+            "mmapview",
+            "--example",
+            "f3_test_data",
+            "--",
+            &path,
         ])
         .status()
         .expect("failed to run f3_test_data example");
@@ -30,13 +35,23 @@ fn test_tree_viewer_output() {
     // Now run mmapview --tree on it (simulating MC F3 view)
     let output = Command::new("cargo")
         .args([
-            "run", "--quiet", "-p", "mmapview", "--",
-            "--tree", "--depth=5", "--max-array=10", &path,
+            "run",
+            "--quiet",
+            "-p",
+            "mmapview",
+            "--",
+            "--tree",
+            "--depth=5",
+            "--max-array=10",
+            &path,
         ])
         .output()
         .expect("failed to run mmapview --tree");
-    assert!(output.status.success(), "mmapview --tree failed:\n{}",
-        String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "mmapview --tree failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let out = String::from_utf8_lossy(&output.stdout);
     println!("=== TREE OUTPUT ===\n{}", out);
@@ -62,9 +77,14 @@ fn test_tree_viewer_auto_detect() {
 
     let status = Command::new("cargo")
         .args([
-            "run", "--quiet", "-p", "mmapview",
-            "--example", "f3_test_data",
-            "--", &path,
+            "run",
+            "--quiet",
+            "-p",
+            "mmapview",
+            "--example",
+            "f3_test_data",
+            "--",
+            &path,
         ])
         .status()
         .expect("failed to run f3_test_data example");
@@ -74,14 +94,14 @@ fn test_tree_viewer_auto_detect() {
 
     // Pipe stdout → auto-detect tree mode
     let output = Command::new("cargo")
-        .args([
-            "run", "--quiet", "-p", "mmapview", "--",
-            "--depth=2", &path,
-        ])
+        .args(["run", "--quiet", "-p", "mmapview", "--", "--depth=2", &path])
         .output()
         .expect("failed to run mmapview (auto)");
-    assert!(output.status.success(), "mmapview auto-tree failed:\n{}",
-        String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "mmapview auto-tree failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let out = String::from_utf8_lossy(&output.stdout);
     println!("=== AUTO TREE OUTPUT ===\n{}", out);
@@ -99,9 +119,14 @@ fn test_tree_viewer_enum_and_option() {
 
     let status = Command::new("cargo")
         .args([
-            "run", "--quiet", "-p", "mmapview",
-            "--example", "f3_test_data",
-            "--", &path,
+            "run",
+            "--quiet",
+            "-p",
+            "mmapview",
+            "--example",
+            "f3_test_data",
+            "--",
+            &path,
         ])
         .status()
         .expect("failed to run f3_test_data example");
@@ -111,13 +136,23 @@ fn test_tree_viewer_enum_and_option() {
 
     let output = Command::new("cargo")
         .args([
-            "run", "--quiet", "-p", "mmapview", "--",
-            "--tree", "--depth=5", "--max-array=10", &path,
+            "run",
+            "--quiet",
+            "-p",
+            "mmapview",
+            "--",
+            "--tree",
+            "--depth=5",
+            "--max-array=10",
+            &path,
         ])
         .output()
         .expect("failed to run mmapview --tree");
-    assert!(output.status.success(), "mmapview --tree failed:\n{}",
-        String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "mmapview --tree failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let out = String::from_utf8_lossy(&output.stdout);
     println!("=== ENUM/OPTION TREE OUTPUT ===\n{}", out);

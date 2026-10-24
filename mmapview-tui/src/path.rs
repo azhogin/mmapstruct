@@ -55,19 +55,22 @@ impl Path {
     /// `self.len()` entries.
     pub fn is_path_prefix(&self, other: &Path) -> bool {
         self.len() < other.len()
-            && self.iter().zip(other.iter()).all(|(a, b)| {
-                a.val == b.val && a.shift.index() == b.shift.index()
-            })
+            && self
+                .iter()
+                .zip(other.iter())
+                .all(|(a, b)| a.val == b.val && a.shift.index() == b.shift.index())
     }
 }
 
 impl Deref for Path {
     type Target = Vec<PathSegment>;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl DerefMut for Path {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
-
-

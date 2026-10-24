@@ -221,7 +221,13 @@ pub(crate) fn generate_reader_inits(
             } else if is_fixed_array_field(&fi.category) || is_pod_field(&fi.category) {
                 generate_fixed_array_reader_init_expr(fi, struct_name, fields)
             } else {
-                generate_inline_dyn_reader_init_expr(fi, layout, struct_name, fields, inline_dyn_indices)
+                generate_inline_dyn_reader_init_expr(
+                    fi,
+                    layout,
+                    struct_name,
+                    fields,
+                    inline_dyn_indices,
+                )
             };
             if is_tuple {
                 expr

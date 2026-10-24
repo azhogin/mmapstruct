@@ -40,8 +40,9 @@ fn test_build_tree() {
     let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
-    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
-        Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes)));
+    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> = Box::leak(Box::new(
+        mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes),
+    ));
 
     let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
         schema_bytes,
@@ -68,7 +69,10 @@ fn test_build_tree() {
 fn test_build_enum_tree() {
     let shapes = vec![
         Shape::Circle { radius: 1.0 },
-        Shape::Rect { width: 2.0, height: 3.0 },
+        Shape::Rect {
+            width: 2.0,
+            height: 3.0,
+        },
         Shape::Empty,
     ];
     let root = MyEnums { shapes };
@@ -77,8 +81,9 @@ fn test_build_enum_tree() {
     let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
-    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
-        Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes)));
+    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> = Box::leak(Box::new(
+        mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes),
+    ));
 
     let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
         schema_bytes,
@@ -143,18 +148,16 @@ fn test_tuple_display() {
             point: PodPoint(1, 2),
             tag: "test".into(),
         },
-        items: vec![
-            Item::Named { id: 7 },
-            Item::Pair("foo".into(), 99),
-        ],
+        items: vec![Item::Named { id: 7 }, Item::Pair("foo".into(), 99)],
     };
     let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&demo, false);
 
     let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
-    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
-        Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes)));
+    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> = Box::leak(Box::new(
+        mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes),
+    ));
 
     let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
         schema_bytes,
@@ -250,9 +253,9 @@ fn test_field_type_display() {
     let loaded1 = mmapview_tui::schema::load_schema(&buf1, None, None).unwrap();
     let d1: &'static [u8] = Box::leak(buf1.into_boxed_slice());
     let sb1: &'static [u8] = Box::leak(loaded1.schema_bytes.into_boxed_slice());
-    let ctx1 = Box::leak(Box::new(
-        mmapstruct_schema::context::RuntimeSchemaCtx::new(d1, sb1),
-    ));
+    let ctx1 = Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(
+        d1, sb1,
+    )));
     let sr1 = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(sb1, 0..sb1.len());
     let root1 = mmapstruct_schema::SchemaValue::new(
         loaded1.payload_range.start as u64,
@@ -265,8 +268,14 @@ fn test_field_type_display() {
     let j1 = t1.join("\n");
     println!("=== Inline + Option<u32> ===\n{j1}\n============================");
 
-    assert!(t1.iter().any(|t| t.contains("ABC123")), "inline value missing:\n{j1}");
-    assert!(t1.iter().any(|t| t.contains("42")), "option value 42 missing:\n{j1}");
+    assert!(
+        t1.iter().any(|t| t.contains("ABC123")),
+        "inline value missing:\n{j1}"
+    );
+    assert!(
+        t1.iter().any(|t| t.contains("42")),
+        "option value 42 missing:\n{j1}"
+    );
 
     // ── Vec<String> (indexed array) ──
     #[derive(MmapStruct, Debug)]
@@ -280,9 +289,9 @@ fn test_field_type_display() {
     let loaded2 = mmapview_tui::schema::load_schema(&buf2, None, None).unwrap();
     let d2: &'static [u8] = Box::leak(buf2.into_boxed_slice());
     let sb2: &'static [u8] = Box::leak(loaded2.schema_bytes.into_boxed_slice());
-    let ctx2 = Box::leak(Box::new(
-        mmapstruct_schema::context::RuntimeSchemaCtx::new(d2, sb2),
-    ));
+    let ctx2 = Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(
+        d2, sb2,
+    )));
     let sr2 = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(sb2, 0..sb2.len());
     let root2 = mmapstruct_schema::SchemaValue::new(
         loaded2.payload_range.start as u64,
@@ -295,8 +304,14 @@ fn test_field_type_display() {
     let j2 = t2.join("\n");
     println!("=== Vec<String> ===\n{j2}\n====================");
 
-    assert!(t2.iter().any(|t| t.contains("alpha")), "array elem alpha missing:\n{j2}");
-    assert!(t2.iter().any(|t| t.contains("beta")), "array elem beta missing:\n{j2}");
+    assert!(
+        t2.iter().any(|t| t.contains("alpha")),
+        "array elem alpha missing:\n{j2}"
+    );
+    assert!(
+        t2.iter().any(|t| t.contains("beta")),
+        "array elem beta missing:\n{j2}"
+    );
 
     // ── #[mmap(bool)] u32 ──
     #[derive(MmapStruct, Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -310,9 +325,9 @@ fn test_field_type_display() {
     let loaded3 = mmapview_tui::schema::load_schema(&buf3, None, None).unwrap();
     let d3: &'static [u8] = Box::leak(buf3.into_boxed_slice());
     let sb3: &'static [u8] = Box::leak(loaded3.schema_bytes.into_boxed_slice());
-    let ctx3 = Box::leak(Box::new(
-        mmapstruct_schema::context::RuntimeSchemaCtx::new(d3, sb3),
-    ));
+    let ctx3 = Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(
+        d3, sb3,
+    )));
     let sr3 = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(sb3, 0..sb3.len());
     let root3 = mmapstruct_schema::SchemaValue::new(
         loaded3.payload_range.start as u64,
@@ -325,8 +340,10 @@ fn test_field_type_display() {
     let j3 = t3.join("\n");
     println!("=== BoolDemo ===\n{j3}\n=================");
 
-    assert!(t3.iter().any(|t| t.contains("true")), "bool value true missing:\n{j3}");
-
+    assert!(
+        t3.iter().any(|t| t.contains("true")),
+        "bool value true missing:\n{j3}"
+    );
 }
 
 /// Regression test: byref Option should not cause scanner infinite loop.
@@ -339,14 +356,17 @@ fn test_byref_option_scanner_bug() {
         #[mmap(byref)]
         label: Option<String>,
     }
-    let demo = BugDemo { label: Some("test".into()) };
+    let demo = BugDemo {
+        label: Some("test".into()),
+    };
     let buf = write_to_file_with_embedded_schema(&demo, false);
 
     let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
-    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
-        Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes)));
+    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> = Box::leak(Box::new(
+        mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes),
+    ));
 
     let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
         schema_bytes,
@@ -389,8 +409,9 @@ fn test_build_hash_map() {
     let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
-    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
-        Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes)));
+    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> = Box::leak(Box::new(
+        mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes),
+    ));
 
     let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
         schema_bytes,
@@ -407,7 +428,10 @@ fn test_build_hash_map() {
     let os = mmapview_tui::overscan::Overscan::build(scanner, |_| true);
     assert!(!os.nodes.is_empty(), "should have at least a root node");
     // MyHashMap { map: HashMap<Status, u64> } with 3 entries
-    println!("hash_map nodes: {:?}", os.nodes.iter().map(|n| &n.display_text).collect::<Vec<_>>());
+    println!(
+        "hash_map nodes: {:?}",
+        os.nodes.iter().map(|n| &n.display_text).collect::<Vec<_>>()
+    );
     assert!(
         os.nodes.len() >= 3,
         "expected at least 3 nodes for hash map entries, got {}",
@@ -438,14 +462,20 @@ fn test_fixed_array_display() {
     use mmapstruct_schema::write_to_file_with_embedded_schema;
     let demo = MatrixDemo {
         id: 1,
-        matrix: [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]],
+        matrix: [
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            [9, 10, 11, 12],
+            [13, 14, 15, 16],
+        ],
     };
     let buf = write_to_file_with_embedded_schema(&demo, false);
     let loaded = mmapview_tui::schema::load_schema(&buf, None, None).unwrap();
     let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
     let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
-    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> =
-        Box::leak(Box::new(mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes)));
+    let ctx: &'static mmapstruct_schema::context::RuntimeSchemaCtx<'static> = Box::leak(Box::new(
+        mmapstruct_schema::context::RuntimeSchemaCtx::new(data, schema_bytes),
+    ));
     let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
         schema_bytes,
         0..schema_bytes.len(),
@@ -462,9 +492,16 @@ fn test_fixed_array_display() {
     let joined = texts.join("\n");
     println!("=== MatrixDemo ===\n{joined}\n=================");
 
-    assert!(texts.iter().any(|t| t.contains("matrix")), "matrix field missing");
+    assert!(
+        texts.iter().any(|t| t.contains("matrix")),
+        "matrix field missing"
+    );
     let array_nodes: Vec<&&str> = texts.iter().filter(|t| t.starts_with('[')).collect();
-    assert!(array_nodes.len() >= 4, "expected at least 4 array elements, got {}:\n{joined}", array_nodes.len());
+    assert!(
+        array_nodes.len() >= 4,
+        "expected at least 4 array elements, got {}:\n{joined}",
+        array_nodes.len()
+    );
     assert!(texts.iter().any(|t| t.contains("= 6")), "value 6 missing");
     assert!(texts.iter().any(|t| t.contains("= 16")), "value 16 missing");
 }
@@ -491,12 +528,8 @@ fn test_load_schema_sidecar() {
     assert_ne!(&buf[0..4], b"MMAP");
 
     // auto-detect the sidecar via the data file path
-    let loaded = mmapview_tui::schema::load_schema(
-        &buf,
-        None,
-        Some(path.to_str().unwrap()),
-    )
-    .unwrap();
+    let loaded =
+        mmapview_tui::schema::load_schema(&buf, None, Some(path.to_str().unwrap())).unwrap();
     assert!(!loaded.schema_bytes.is_empty());
     assert_eq!(loaded.payload_range, 0..buf.len());
 
@@ -529,12 +562,8 @@ fn test_load_schema_sidecar_registry() {
     assert_ne!(&buf[0..4], b"MMAP");
 
     // Sidecar carries only layout_hash -> schema resolved from the registry.
-    let loaded = mmapview_tui::schema::load_schema(
-        &buf,
-        None,
-        Some(path.to_str().unwrap()),
-    )
-    .unwrap();
+    let loaded =
+        mmapview_tui::schema::load_schema(&buf, None, Some(path.to_str().unwrap())).unwrap();
     assert!(!loaded.schema_bytes.is_empty());
     assert_eq!(loaded.payload_range, 0..buf.len());
 

@@ -2,9 +2,9 @@
 
 use quote::quote;
 
+use crate::attrs::*;
 use crate::category::*;
 use crate::field_info::*;
-use crate::attrs::*;
 
 /// Generate the fixed-section writer calls (pod + inline string + byref).
 ///

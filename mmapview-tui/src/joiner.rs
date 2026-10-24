@@ -17,7 +17,7 @@ impl TopDownJoiner {
         prev_overscan: &Overscan,
         overlap_lines: usize,
         remaining: usize,
-        display_height: usize
+        display_height: usize,
     ) -> (Overscan, Viewport) {
         let prev_end = prev_overscan.effective_end().unwrap();
         let ctx = prev_overscan.scanner.ctx;
@@ -25,8 +25,7 @@ impl TopDownJoiner {
         let back_scanner = Scanner::from_path(ctx, prev_end.clone(), 0);
         let should_step_in = |val: SchemaValue| prev_overscan.is_expanded(&val);
 
-        let (scan_start, _) = back_scanner
-            .do_steps_back(&prev_end, overlap_lines, &should_step_in);
+        let (scan_start, _) = back_scanner.do_steps_back(&prev_end, overlap_lines, &should_step_in);
 
         let new_scanner = Scanner::from_path(ctx, scan_start.clone(), OVERSCAN_STEPS);
 
@@ -35,7 +34,11 @@ impl TopDownJoiner {
 
         (
             Overscan::from_previous(prev_overscan, new_scanner),
-            Viewport { selected, scroll, display_height }
+            Viewport {
+                selected,
+                scroll,
+                display_height,
+            },
         )
     }
 }
@@ -54,7 +57,7 @@ impl BottomUpJoiner {
         prev_overscan: &Overscan,
         overlap_lines: usize,
         remaining: usize,
-        display_height: usize
+        display_height: usize,
     ) -> (Overscan, Viewport) {
         let begin = prev_overscan.scanner.path.clone();
         let ctx = prev_overscan.scanner.ctx;
@@ -63,8 +66,7 @@ impl BottomUpJoiner {
         let back_scanner = Scanner::from_path(ctx, begin.clone(), 0);
         let should_step_in = |val: SchemaValue| prev_overscan.is_expanded(&val);
 
-        let (scan_start, steps) = back_scanner
-            .do_steps_back(&begin, step_back, &should_step_in);
+        let (scan_start, steps) = back_scanner.do_steps_back(&begin, step_back, &should_step_in);
 
         let new_scanner = Scanner::from_path(ctx, scan_start.clone(), OVERSCAN_STEPS);
 
@@ -79,7 +81,11 @@ impl BottomUpJoiner {
 
         (
             Overscan::from_next(prev_overscan, new_scanner),
-            Viewport { selected, scroll, display_height }
+            Viewport {
+                selected,
+                scroll,
+                display_height,
+            },
         )
     }
 }

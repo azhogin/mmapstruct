@@ -22,11 +22,7 @@ impl Default for DescribeOpts {
 }
 
 /// Produce a text tree of the data structure starting at `root`.
-pub fn describe(
-    ctx: &RuntimeSchemaCtx<'_>,
-    root: &SchemaValue,
-    opts: &DescribeOpts,
-) -> String {
+pub fn describe(ctx: &RuntimeSchemaCtx<'_>, root: &SchemaValue, opts: &DescribeOpts) -> String {
     let mut out = String::new();
     let mut depth = 0usize;
     walk(ctx, root, "/", opts, &mut depth, &mut out);
@@ -76,8 +72,11 @@ fn walk(
             out.push_str(&format!("{path}: {n} (enum)\n"));
             // Active variant + its fields.
             if let Some((variant_idx, _off)) = ctx.enum_variant(val) {
-                if let TypeDefReader::Struct { name: vname, fields, .. } =
-                    ctx.type_reader(variant_idx)
+                if let TypeDefReader::Struct {
+                    name: vname,
+                    fields,
+                    ..
+                } = ctx.type_reader(variant_idx)
                 {
                     indent(out, *depth + 1);
                     out.push_str(&format!("active: {}\n", &**vname));
@@ -105,9 +104,7 @@ fn walk(
                 ArrayLayoutDefReader::Fixed { .. } => "fixed",
             };
             let elem_ty = type_name_of(ctx, **elem_type);
-            out.push_str(&format!(
-                "{path}: [{elem_ty}] ({layout_tag}) len={len}\n"
-            ));
+            out.push_str(&format!("{path}: [{elem_ty}] ({layout_tag}) len={len}\n"));
             // Show the first element's shape once.
             if len > 0 && *depth < opts.depth {
                 if let Some(ev) = ctx.array_get(val, 0) {
@@ -118,7 +115,9 @@ fn walk(
                 }
             }
         }
-        TypeDefReader::HashMap { key_type, val_type, .. } => {
+        TypeDefReader::HashMap {
+            key_type, val_type, ..
+        } => {
             let entries = ctx.hashmap_len(val);
             out.push_str(&format!(
                 "{path}: map<{}, {}> entries={entries}\n",

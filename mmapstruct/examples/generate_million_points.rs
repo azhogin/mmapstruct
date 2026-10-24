@@ -1,6 +1,6 @@
+use bytemuck::{Pod, Zeroable};
 use std::fs;
 use std::path::PathBuf;
-use bytemuck::{Pod, Zeroable};
 
 use mmapstruct::MmapStruct;
 
@@ -44,6 +44,10 @@ fn main() {
     let file_size = buf.len();
     let point_size = 16; // id(u32) + 3 * f32
     println!("Written {} points to {}", count, path.display());
-    println!("File size: {} bytes ({} bytes payload, {} bytes per point)",
-        file_size, count * point_size, point_size);
+    println!(
+        "File size: {} bytes ({} bytes payload, {} bytes per point)",
+        file_size,
+        count * point_size,
+        point_size
+    );
 }

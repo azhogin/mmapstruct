@@ -112,11 +112,11 @@ fn parse_field_segment(seg: &str) -> Option<(&str, Option<u64>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mmapstruct::MmapStruct;
+    use bytemuck::{Pod, Zeroable};
     use mmapstruct::schema::GetSchema;
     use mmapstruct::traits::{LayoutHash, MmapRead, MmapWrite};
+    use mmapstruct::MmapStruct;
     use mmapstruct_schema::{write_to_file_with_embedded_schema, Schema};
-    use bytemuck::{Pod, Zeroable};
 
     #[derive(MmapStruct, Clone, Copy, Debug, Pod, Zeroable)]
     #[repr(C)]
@@ -138,9 +138,8 @@ mod tests {
         let loaded = crate::schema::load_schema(&buf, None, None).unwrap();
         let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
         let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
-        let ctx: &'static RuntimeSchemaCtx<'static> = Box::leak(Box::new(
-            RuntimeSchemaCtx::new(data, schema_bytes),
-        ));
+        let ctx: &'static RuntimeSchemaCtx<'static> =
+            Box::leak(Box::new(RuntimeSchemaCtx::new(data, schema_bytes)));
         let schema_reader = <Schema as MmapRead>::read(schema_bytes, 0..schema_bytes.len());
         let root_type = *schema_reader.root_type;
         let root = SchemaValue::new(
@@ -163,7 +162,10 @@ mod tests {
 
     #[test]
     fn test_navigate_nested_field() {
-        let v = WithVec { items: vec![Point { x: 1, y: 2 }, Point { x: 3, y: 4 }], extra: 99 };
+        let v = WithVec {
+            items: vec![Point { x: 1, y: 2 }, Point { x: 3, y: 4 }],
+            extra: 99,
+        };
         let (ctx, root) = setup(&v);
         let (val, path) = navigate_path_segments(ctx, &root, "/items").unwrap();
         assert_eq!(ctx.array_len(&val), 2);
@@ -174,7 +176,10 @@ mod tests {
 
     #[test]
     fn test_navigate_array_index() {
-        let v = WithVec { items: vec![Point { x: 1, y: 2 }, Point { x: 3, y: 4 }], extra: 99 };
+        let v = WithVec {
+            items: vec![Point { x: 1, y: 2 }, Point { x: 3, y: 4 }],
+            extra: 99,
+        };
         let (ctx, root) = setup(&v);
         let (val, path) = navigate_path_segments(ctx, &root, "/items[1]/x").unwrap();
         assert_eq!(ctx.read_u32(&val), 3);
@@ -204,7 +209,10 @@ mod tests {
 
     #[test]
     fn test_navigate_invalid_index() {
-        let v = WithVec { items: vec![Point { x: 1, y: 2 }], extra: 99 };
+        let v = WithVec {
+            items: vec![Point { x: 1, y: 2 }],
+            extra: 99,
+        };
         let (ctx, root) = setup(&v);
         assert!(navigate_path_segments(ctx, &root, "/items[99]").is_none());
     }

@@ -42,7 +42,12 @@ fn main() {
                 code: format!("CODE_{:04}", i % 10000),
                 maybe_count: if has_count { Some(i as u32) } else { None },
                 maybe_label: if has_label {
-                    Some(format!("v{}.{}.{}", (i / 1000) % 10, (i / 100) % 10, i % 100))
+                    Some(format!(
+                        "v{}.{}.{}",
+                        (i / 1000) % 10,
+                        (i / 100) % 10,
+                        i % 100
+                    ))
                 } else {
                     None
                 },
@@ -53,15 +58,24 @@ fn main() {
         .collect();
 
     // Sample entries before moving
-    let samples: Vec<_> = [0, 1, 2, 5, 10].iter().map(|&i| {
-        format!("  [{i:>3}] code={:?} maybe_count={:?} maybe_label={:?} enabled={} tags=[{}]",
-            items[i].code,
-            items[i].maybe_count,
-            items[i].maybe_label,
-            items[i].enabled(),
-            items[i].tags.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", "),
-        )
-    }).collect();
+    let samples: Vec<_> = [0, 1, 2, 5, 10]
+        .iter()
+        .map(|&i| {
+            format!(
+                "  [{i:>3}] code={:?} maybe_count={:?} maybe_label={:?} enabled={} tags=[{}]",
+                items[i].code,
+                items[i].maybe_count,
+                items[i].maybe_label,
+                items[i].enabled(),
+                items[i]
+                    .tags
+                    .iter()
+                    .map(|s| format!("\"{}\"", s))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        })
+        .collect();
 
     let root = FieldTypesFile { items };
     let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&root, false);
@@ -83,8 +97,16 @@ fn main() {
     println!("Written {count} FieldTypes entries to {}", path.display());
     println!();
     println!("{:<30} {:>14}", "Total file size", format_bytes(file_size));
-    println!("{:<30} {:>14}", "Expected fixed payload", format_bytes(fixed_total));
-    println!("{:<30} {:>14}", "Expected dyn header overhead", format_bytes(dyn_header_total));
+    println!(
+        "{:<30} {:>14}",
+        "Expected fixed payload",
+        format_bytes(fixed_total)
+    );
+    println!(
+        "{:<30} {:>14}",
+        "Expected dyn header overhead",
+        format_bytes(dyn_header_total)
+    );
     println!();
     println!("{:<30} {:>8}", "field", "bytes");
     println!("{:<30} {:>8}", "code [mmap(inline(32))]", "32");

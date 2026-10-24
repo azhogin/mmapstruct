@@ -11,9 +11,20 @@ use mmapview::{query_from_generic, EvalResult};
 
 #[derive(MmapStruct, Debug)]
 enum Event {
-    Click { id: u32, x: u32, y: u32 },
-    Key { id: u32, code: u32 },
-    Probe { id: u32, test_field: u32, note: String },
+    Click {
+        id: u32,
+        x: u32,
+        y: u32,
+    },
+    Key {
+        id: u32,
+        code: u32,
+    },
+    Probe {
+        id: u32,
+        test_field: u32,
+        note: String,
+    },
 }
 
 #[derive(MmapStruct, Debug)]
@@ -24,7 +35,11 @@ struct EventFile {
 fn sample() -> EventFile {
     EventFile {
         events: vec![
-            Event::Click { id: 1, x: 10, y: 20 },
+            Event::Click {
+                id: 1,
+                x: 10,
+                y: 20,
+            },
             Event::Probe {
                 id: 10,
                 test_field: 5,
@@ -49,10 +64,12 @@ fn sample() -> EventFile {
 /// serialized schema → `RuntimeSchemaCtx` rooted at the payload start.
 fn setup(file_bytes: &[u8]) -> (RuntimeSchemaCtx<'static>, SchemaValue) {
     let r = mmapview::schema::resolve_schema(file_bytes).unwrap();
-    let schema_bytes: &'static [u8] =
-        Box::leak(r.schema_bytes.clone().into_boxed_slice());
-    let payload: &'static [u8] =
-        Box::leak(file_bytes[r.payload_range.clone()].to_vec().into_boxed_slice());
+    let schema_bytes: &'static [u8] = Box::leak(r.schema_bytes.clone().into_boxed_slice());
+    let payload: &'static [u8] = Box::leak(
+        file_bytes[r.payload_range.clone()]
+            .to_vec()
+            .into_boxed_slice(),
+    );
     let schema_reader = <Schema as MmapRead>::read(schema_bytes, 0..schema_bytes.len());
     let root_type = *schema_reader.root_type;
     let ctx = RuntimeSchemaCtx::new(payload, schema_bytes);
@@ -155,7 +172,10 @@ fn test_runtime_schema_direct_variant_field_access() {
     assert!(ctx.field_get(&click, "test_field").is_none());
 
     let probe0 = ctx.array_get(&ev, 1).unwrap();
-    assert_eq!(ctx.read_u32(&ctx.field_get(&probe0, "test_field").unwrap()), 5);
+    assert_eq!(
+        ctx.read_u32(&ctx.field_get(&probe0, "test_field").unwrap()),
+        5
+    );
     assert_eq!(ctx.read_u32(&ctx.field_get(&probe0, "id").unwrap()), 10);
     assert_eq!(ctx.read_str(&ctx.field_get(&probe0, "note").unwrap()), "a");
 
@@ -165,7 +185,10 @@ fn test_runtime_schema_direct_variant_field_access() {
 
     // Last element at the payload edge.
     let probe2 = ctx.array_get(&ev, 4).unwrap();
-    assert_eq!(ctx.read_u32(&ctx.field_get(&probe2, "test_field").unwrap()), 42);
+    assert_eq!(
+        ctx.read_u32(&ctx.field_get(&probe2, "test_field").unwrap()),
+        42
+    );
     assert_eq!(ctx.read_str(&ctx.field_get(&probe2, "note").unwrap()), "c");
 
     assert!(ctx.field_get(&probe2, "no_such").is_none());

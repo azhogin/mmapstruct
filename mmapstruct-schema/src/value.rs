@@ -28,7 +28,6 @@ impl SchemaValue {
     }
 }
 
-
 #[derive(Clone, Copy)]
 pub struct HashMapDef {
     pub key_is_pod: bool,

@@ -1312,7 +1312,7 @@ fn test_strict_validation_fixed_array_bounds() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_schema_and_dyn_context() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{write_to_buf_raw, GetSchema, SchemaCtx};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct SchemaTest {
@@ -1348,7 +1348,10 @@ fn test_schema_and_dyn_context() {
     // id field — pod primitive (u32)
     let id_field = &schema.fields[0];
     assert_eq!(id_field.name, "id");
-    assert!(!matches!(id_field.value_type, mmapstruct::schema::DynValueType::ByRef(_)));
+    assert!(!matches!(
+        id_field.value_type,
+        mmapstruct::schema::DynValueType::ByRef(_)
+    ));
 
     // name field — dynamic string
     let name_field = &schema.fields[1];
@@ -1361,7 +1364,10 @@ fn test_schema_and_dyn_context() {
     // label field — byref
     let label_field = &schema.fields[3];
     assert_eq!(label_field.name, "label");
-    assert!(matches!(label_field.value_type, mmapstruct::schema::DynValueType::ByRef(_)));
+    assert!(matches!(
+        label_field.value_type,
+        mmapstruct::schema::DynValueType::ByRef(_)
+    ));
 
     // Read field values via SchemaCtx
     let id_val = ctx.field_get(&root, "id").unwrap();
@@ -1384,7 +1390,7 @@ fn test_schema_and_dyn_context() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_pod_array_custom_struct_size() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{write_to_buf_raw, GetSchema, SchemaCtx};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct VecPod3d {
@@ -1435,7 +1441,7 @@ fn test_dyn_pod_array_custom_struct_size() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_hashmap_access() {
-    use mmapstruct::{SchemaCtx, GetSchema};
+    use mmapstruct::{GetSchema, SchemaCtx};
 
     #[derive(MmapStruct, Debug)]
     struct DynHashMapFile {
@@ -2032,11 +2038,7 @@ struct TupleStructFile {
 
 #[test]
 fn test_tuple_struct_write_read() {
-    let pts = vec![
-        TuplePoint(1, 10),
-        TuplePoint(2, 20),
-        TuplePoint(3, 30),
-    ];
+    let pts = vec![TuplePoint(1, 10), TuplePoint(2, 20), TuplePoint(3, 30)];
     let w = TupleStructFile {
         labels: vec!["a".into(), "b".into(), "c".into()],
         points: pts.clone(),
@@ -2085,7 +2087,9 @@ struct MatrixFile {
 
 #[test]
 fn test_fixed_array_pod() {
-    let mut m = MatrixFile { matrix: [[0u32; 16]; 16] };
+    let mut m = MatrixFile {
+        matrix: [[0u32; 16]; 16],
+    };
     m.matrix[0][0] = 42;
     m.matrix[7][8] = 99;
     let buf = mmapstruct::write_to_buf(&m, false);
@@ -2137,7 +2141,12 @@ struct MixedWithStringAndArray {
 fn test_fixed_array_with_string() {
     let m = MixedWithStringAndArray {
         label: "test".into(),
-        matrix: [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]],
+        matrix: [
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            [9, 10, 11, 12],
+            [13, 14, 15, 16],
+        ],
     };
     let buf = mmapstruct::write_to_buf(&m, false);
     let r = mmapstruct::BufReader::new(buf);
@@ -2170,13 +2179,8 @@ fn test_bool_schema_dyn() {
 
 #[derive(MmapStruct, Debug, PartialEq)]
 enum SimpleEnumWithArray {
-    Alpha {
-        id: u32,
-        arr: [u32; 4],
-    },
-    Beta {
-        val: u64,
-    },
+    Alpha { id: u32, arr: [u32; 4] },
+    Beta { val: u64 },
 }
 
 #[test]
@@ -2247,7 +2251,11 @@ struct WithPodStructArray {
 #[test]
 fn test_fixed_array_podstruct() {
     let w = WithPodStructArray {
-        points: [PodPoint { x: 1.0, y: 2.0 }, PodPoint { x: 3.0, y: 4.0 }, PodPoint { x: 5.0, y: 6.0 }],
+        points: [
+            PodPoint { x: 1.0, y: 2.0 },
+            PodPoint { x: 3.0, y: 4.0 },
+            PodPoint { x: 5.0, y: 6.0 },
+        ],
     };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
@@ -2263,10 +2271,7 @@ fn test_fixed_array_podstruct() {
 // Nested fixed array inside enum variant
 #[derive(MmapStruct, Debug, PartialEq)]
 enum NestedArrayInEnum {
-    VariantWithMatrix {
-        label: String,
-        mat: [[u32; 4]; 4],
-    },
+    VariantWithMatrix { label: String, mat: [[u32; 4]; 4] },
     Empty,
 }
 
@@ -2274,7 +2279,12 @@ enum NestedArrayInEnum {
 fn test_fixed_array_enum_nested() {
     let w = NestedArrayInEnum::VariantWithMatrix {
         label: "test".into(),
-        mat: [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]],
+        mat: [
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            [9, 10, 11, 12],
+            [13, 14, 15, 16],
+        ],
     };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
@@ -2299,7 +2309,7 @@ fn test_fixed_array_enum_empty() {
     let r = BufReader::new(buf);
     let reader = r.read::<NestedArrayInEnum>();
     match reader {
-        NestedArrayInEnumReader::Empty => {},
+        NestedArrayInEnumReader::Empty => {}
         _ => panic!("expected Empty"),
     }
     let w2: NestedArrayInEnum = r.read::<NestedArrayInEnum>().into();
@@ -2344,7 +2354,11 @@ struct WithByrefPodPointArray {
 fn test_fixed_array_byref_podstruct() {
     let w = WithByrefPodPointArray {
         tag: 7,
-        points: [PodPoint { x: 1.0, y: 2.0 }, PodPoint { x: 3.0, y: 4.0 }, PodPoint { x: 5.0, y: 6.0 }],
+        points: [
+            PodPoint { x: 1.0, y: 2.0 },
+            PodPoint { x: 3.0, y: 4.0 },
+            PodPoint { x: 5.0, y: 6.0 },
+        ],
     };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
@@ -2410,7 +2424,7 @@ fn test_fixed_array_byref_enum_beta() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_top_level() {
-    use mmapstruct::{SchemaCtx, GetSchema};
+    use mmapstruct::{GetSchema, SchemaCtx};
 
     let w = TopLevelArray { arr: [1, 2, 3, 4] };
     let buf = mmapstruct::write_to_buf_raw(&w);
@@ -2436,7 +2450,7 @@ fn test_dyn_fixed_array_top_level() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_vec_fixed_array_pod() {
-    use mmapstruct::{SchemaCtx, GetSchema};
+    use mmapstruct::{GetSchema, SchemaCtx};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct VecOfFixedArrays {
@@ -2479,7 +2493,7 @@ fn test_dyn_vec_fixed_array_pod() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_vec_fixed_array_fixed() {
-    use mmapstruct::{SchemaCtx, GetSchema};
+    use mmapstruct::{GetSchema, SchemaCtx};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct TestFixedArr {
@@ -2495,8 +2509,14 @@ fn test_dyn_vec_fixed_array_fixed() {
 
     let w = VecOfFixedArr {
         items: vec![
-            TestFixedArr { id: 1, label: "a".into() },
-            TestFixedArr { id: 2, label: "b".into() },
+            TestFixedArr {
+                id: 1,
+                label: "a".into(),
+            },
+            TestFixedArr {
+                id: 2,
+                label: "b".into(),
+            },
         ],
     };
     let buf = mmapstruct::write_to_buf_raw(&w);
@@ -2516,7 +2536,7 @@ fn test_dyn_vec_fixed_array_fixed() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_vec_nested_fixed_array() {
-    use mmapstruct::{SchemaCtx, GetSchema};
+    use mmapstruct::{GetSchema, SchemaCtx};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct VecOfMatrices {
@@ -2526,7 +2546,12 @@ fn test_dyn_vec_nested_fixed_array() {
 
     let w = VecOfMatrices {
         mats: vec![
-            [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]],
+            [
+                [1, 2, 3, 4],
+                [5, 6, 7, 8],
+                [9, 10, 11, 12],
+                [13, 14, 15, 16],
+            ],
             [[0; 4]; 4],
         ],
     };
@@ -2588,7 +2613,12 @@ fn test_vec_fixed_array_nested_pod() {
     }
 
     let w = SimpleVecMat {
-        mats: vec![[[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]]],
+        mats: vec![[
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            [9, 10, 11, 12],
+            [13, 14, 15, 16],
+        ]],
     };
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
@@ -2610,9 +2640,9 @@ fn test_pod_vec_consecutive_array_then_primitive() {
         #[pod]
         marginals: Vec<[u32; 256]>, // 1 elem = 1024 bytes
         #[pod]
-        tail_indices: Vec<u32>,     // 2 elems
+        tail_indices: Vec<u32>, // 2 elems
         #[pod]
-        head_indices: Vec<u32>,     // 3 elems — buggy: reads back as 4
+        head_indices: Vec<u32>, // 3 elems — buggy: reads back as 4
     }
 
     let w = PodVecBug {
@@ -2672,13 +2702,13 @@ fn test_pod_vec_consecutive_mixed_alignments() {
     #[derive(MmapStruct, Debug, PartialEq)]
     struct MixedAlign {
         #[pod]
-        bytes: Vec<u8>,       // align 1
+        bytes: Vec<u8>, // align 1
         #[pod]
         pairs: Vec<[u16; 2]>, // align 2
         #[pod]
         quads: Vec<[u32; 4]>, // align 4
         #[pod]
-        big: Vec<[u64; 2]>,   // align 8
+        big: Vec<[u64; 2]>, // align 8
     }
 
     let w = MixedAlign {
@@ -2708,9 +2738,11 @@ fn test_pod_vec_consecutive_mixed_alignments() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_nested() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{write_to_buf_raw, GetSchema, SchemaCtx};
 
-    let mut m = MatrixFile { matrix: [[0u32; 16]; 16] };
+    let mut m = MatrixFile {
+        matrix: [[0u32; 16]; 16],
+    };
     m.matrix[0][0] = 42;
     m.matrix[7][8] = 99;
     m.matrix[15][15] = 77;
@@ -2739,7 +2771,7 @@ fn test_dyn_fixed_array_nested() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_podstruct() {
-    use mmapstruct::{SchemaCtx, GetSchema};
+    use mmapstruct::{GetSchema, SchemaCtx};
 
     let w = WithPodStructArray {
         points: [
@@ -2772,8 +2804,8 @@ fn test_dyn_fixed_array_podstruct() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_enum() {
-    use mmapstruct::{SchemaCtx, GetSchema};
     use mmapstruct::schema::Value;
+    use mmapstruct::{GetSchema, SchemaCtx};
 
     let w = SimpleEnumWithArray::Alpha {
         id: 42,
@@ -2799,8 +2831,8 @@ fn test_dyn_fixed_array_enum() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_enum_beta() {
-    use mmapstruct::{SchemaCtx, GetSchema};
     use mmapstruct::schema::Value;
+    use mmapstruct::{GetSchema, SchemaCtx};
 
     let w = SimpleEnumWithArray::Beta { val: 99 };
     let buf = mmapstruct::write_to_buf_raw(&w);
@@ -2816,7 +2848,7 @@ fn test_dyn_fixed_array_enum_beta() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_byref() {
-    use mmapstruct::{SchemaCtx, GetSchema};
+    use mmapstruct::{GetSchema, SchemaCtx};
 
     let w = WithByrefArray {
         id: 42,
@@ -2915,8 +2947,16 @@ fn test_pod_vec_of_struct_with_enum() {
 
     let w = ComplexContainer {
         items: vec![
-            ComplexItem { id: 1, value: 3.25, kind: ItemKind::Alpha },
-            ComplexItem { id: 2, value: 2.71, kind: ItemKind::Beta },
+            ComplexItem {
+                id: 1,
+                value: 3.25,
+                kind: ItemKind::Alpha,
+            },
+            ComplexItem {
+                id: 2,
+                value: 2.71,
+                kind: ItemKind::Beta,
+            },
         ],
     };
     let n = w.items.len();
@@ -2935,12 +2975,20 @@ fn test_pod_vec_of_struct_with_enum() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_pod_vec_of_struct_with_enum() {
-    use mmapstruct::{SchemaCtx, GetSchema};
+    use mmapstruct::{GetSchema, SchemaCtx};
 
     let w = ComplexContainer {
         items: vec![
-            ComplexItem { id: 1, value: 3.25, kind: ItemKind::Alpha },
-            ComplexItem { id: 2, value: 2.71, kind: ItemKind::Beta },
+            ComplexItem {
+                id: 1,
+                value: 3.25,
+                kind: ItemKind::Alpha,
+            },
+            ComplexItem {
+                id: 2,
+                value: 2.71,
+                kind: ItemKind::Beta,
+            },
         ],
     };
     let buf = mmapstruct::write_to_buf_raw(&w);
@@ -3054,7 +3102,9 @@ fn test_pod_field_opaque_schema_without_derive() {
     let f = &schema.fields[1];
     assert_eq!(f.name, "weight");
     match resolve_vt(f.value_type) {
-        DynValueType::PodStruct { size } => assert_eq!(*size, core::mem::size_of::<RawWeight>() as u64),
+        DynValueType::PodStruct { size } => {
+            assert_eq!(*size, core::mem::size_of::<RawWeight>() as u64)
+        }
         _ => panic!("expected PodStruct fallback for non-derived pod field"),
     }
 
@@ -3080,7 +3130,11 @@ fn test_pod_vec_of_non_derived_compiles_and_roundtrips() {
     // element types required GetSchema unconditionally.
     let w = PodVecNoDeriveFile {
         meta: 7,
-        weights: vec![RawWeight([[9; 4]; 2]), RawWeight([[8; 4]; 2]), RawWeight([[7; 4]; 2])],
+        weights: vec![
+            RawWeight([[9; 4]; 2]),
+            RawWeight([[8; 4]; 2]),
+            RawWeight([[7; 4]; 2]),
+        ],
     };
 
     // Typed roundtrip.
@@ -3103,7 +3157,9 @@ fn test_pod_vec_of_non_derived_compiles_and_roundtrips() {
         _ => panic!("expected Array schema for pod Vec field"),
     };
     match resolve_vt(elem) {
-        DynValueType::PodStruct { size } => assert_eq!(*size, core::mem::size_of::<RawWeight>() as u64),
+        DynValueType::PodStruct { size } => {
+            assert_eq!(*size, core::mem::size_of::<RawWeight>() as u64)
+        }
         _ => panic!("expected opaque PodStruct element"),
     }
 
@@ -3213,9 +3269,17 @@ fn test_enum_podcustom_field_offset_roundtrip() {
     // Direct (mid-array), Full, Direct (LAST record — trailing u8 at the edge).
     let log = PodCustomLogFile {
         records: vec![
-            PodCustomRec::Direct { id: 1, src: RecSrc::B, half: 7 },
+            PodCustomRec::Direct {
+                id: 1,
+                src: RecSrc::B,
+                half: 7,
+            },
             PodCustomRec::Full { id: 2 },
-            PodCustomRec::Direct { id: 3, src: RecSrc::C, half: 9 },
+            PodCustomRec::Direct {
+                id: 3,
+                src: RecSrc::C,
+                half: 9,
+            },
         ],
     };
     let buf = write_to_buf(&log, false);
@@ -3281,9 +3345,17 @@ pub struct NestedTaskLog {
 fn test_enum_nested_podcustom_last_record() {
     let log = NestedTaskLog {
         tasks: vec![
-            OuterTask::Ssd(InnerTask::Direct { id: 1, src: RecSrc::B, half: 7 }),
+            OuterTask::Ssd(InnerTask::Direct {
+                id: 1,
+                src: RecSrc::B,
+                half: 7,
+            }),
             OuterTask::Gpu { stamp: 2 },
-            OuterTask::Ssd(InnerTask::Direct { id: 3, src: RecSrc::C, half: 9 }),
+            OuterTask::Ssd(InnerTask::Direct {
+                id: 3,
+                src: RecSrc::C,
+                half: 9,
+            }),
         ],
     };
     let buf = write_to_buf(&log, false);
@@ -3328,14 +3400,8 @@ pub struct Pair {
 
 #[derive(MmapStruct, Debug, Clone, PartialEq)]
 pub enum FixedArrRec {
-    Batch {
-        v: u64,
-        ids: [Pair; 2],
-        tail: u8,
-    },
-    Simple {
-        v: u64,
-    },
+    Batch { v: u64, ids: [Pair; 2], tail: u8 },
+    Simple { v: u64 },
 }
 
 #[derive(MmapStruct, Debug)]
@@ -3398,9 +3464,17 @@ fn test_enum_podcustom_schema_field_get() {
 
     let log = PodCustomLogFile {
         records: vec![
-            PodCustomRec::Direct { id: 1, src: RecSrc::B, half: 7 },
+            PodCustomRec::Direct {
+                id: 1,
+                src: RecSrc::B,
+                half: 7,
+            },
             PodCustomRec::Full { id: 2 },
-            PodCustomRec::Direct { id: 3, src: RecSrc::C, half: 9 },
+            PodCustomRec::Direct {
+                id: 3,
+                src: RecSrc::C,
+                half: 9,
+            },
         ],
     };
     let buf = mmapstruct::write_to_buf_raw(&log);
@@ -3431,13 +3505,24 @@ fn test_enum_podcustom_schema_field_get() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_enum_vec_variant_field_access() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{write_to_buf_raw, GetSchema, SchemaCtx};
 
     #[derive(MmapStruct, Debug)]
     enum Event {
-        Click { id: u32, x: u32, y: u32 },
-        Key { id: u32, code: u32 },
-        Probe { id: u32, test_field: u32, note: String },
+        Click {
+            id: u32,
+            x: u32,
+            y: u32,
+        },
+        Key {
+            id: u32,
+            code: u32,
+        },
+        Probe {
+            id: u32,
+            test_field: u32,
+            note: String,
+        },
     }
 
     #[derive(MmapStruct, Debug)]
@@ -3447,7 +3532,11 @@ fn test_dyn_enum_vec_variant_field_access() {
 
     let w = EventFile {
         events: vec![
-            Event::Click { id: 1, x: 10, y: 20 },
+            Event::Click {
+                id: 1,
+                x: 10,
+                y: 20,
+            },
             Event::Probe {
                 id: 10,
                 test_field: 5,
@@ -3502,7 +3591,10 @@ fn test_dyn_enum_vec_variant_field_access() {
 
     // Last element at the buffer edge.
     let probe2 = ctx.array_get(&ev_val, 4).unwrap();
-    assert_eq!(ctx.read_u32(&ctx.field_get(&probe2, "test_field").unwrap()), 42);
+    assert_eq!(
+        ctx.read_u32(&ctx.field_get(&probe2, "test_field").unwrap()),
+        42
+    );
     assert_eq!(ctx.read_str(&ctx.field_get(&probe2, "note").unwrap()), "c");
 
     // Unknown field name on any variant.

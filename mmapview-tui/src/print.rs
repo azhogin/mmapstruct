@@ -48,13 +48,21 @@ pub fn preview_text(
 
     let t = ctx.type_reader(val.type_idx);
     match t {
-        TypeDefReader::Struct { name, fields, .. } => {
-            build_preview(ctx, val, name, fields.len(), |i| {
+        TypeDefReader::Struct { name, fields, .. } => build_preview(
+            ctx,
+            val,
+            name,
+            fields.len(),
+            |i| {
                 let f = fields.get(i)?;
-                let FieldInfo { val: child, is_byref } = ctx.field_get_with_info(val, f.name)?;
+                let FieldInfo {
+                    val: child,
+                    is_byref,
+                } = ctx.field_get_with_info(val, f.name)?;
                 Some((f.name.to_string(), child, is_byref))
-            }, char_limit)
-        }
+            },
+            char_limit,
+        ),
         TypeDefReader::Enum { .. } => {
             let (variant_type_idx, data_off) = ctx.enum_variant(val)?;
             let vt = ctx.type_reader(variant_type_idx);
@@ -64,11 +72,21 @@ pub fn preview_text(
                     mmap_end: val.mmap_end,
                     type_idx: variant_type_idx,
                 };
-                build_preview(ctx, &shifted, name, fields.len(), |i| {
-                    let f = fields.get(i)?;
-                    let FieldInfo { val: child, is_byref } = ctx.field_get_with_info(&shifted, f.name)?;
-                    Some((f.name.to_string(), child, is_byref))
-                }, char_limit)
+                build_preview(
+                    ctx,
+                    &shifted,
+                    name,
+                    fields.len(),
+                    |i| {
+                        let f = fields.get(i)?;
+                        let FieldInfo {
+                            val: child,
+                            is_byref,
+                        } = ctx.field_get_with_info(&shifted, f.name)?;
+                        Some((f.name.to_string(), child, is_byref))
+                    },
+                    char_limit,
+                )
             } else {
                 None
             }
@@ -112,7 +130,11 @@ where
             format!(", {}: {}", field_name, value_text)
         };
 
-        let overhead = if i + 1 < field_count { TRUNC_SUFFIX.len() } else { 2 };
+        let overhead = if i + 1 < field_count {
+            TRUNC_SUFFIX.len()
+        } else {
+            2
+        };
 
         if field_str.len() + overhead <= remaining {
             out.push_str(&field_str);
@@ -156,7 +178,11 @@ pub fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
             PrimitiveDef::F32 => ctx.read_f32(val).to_string(),
             PrimitiveDef::F64 => ctx.read_f64(val).to_string(),
             PrimitiveDef::Bool => {
-                if ctx.read_bool(val) { "true".to_string() } else { "false".to_string() }
+                if ctx.read_bool(val) {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                }
             }
             PrimitiveDef::U16 => ctx.read_u16(val).to_string(),
             PrimitiveDef::I16 => ctx.read_i16(val).to_string(),
@@ -203,10 +229,14 @@ pub fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
                 let mut s = format!("[{} {} (#{}{})]", len, layout_label, val.type_idx, elem_ann);
                 // Pod arrays with ≤ 5 elements show inline values
                 if len <= 5 {
-                    if let ArrayLayoutDefReader::Pod { .. } | ArrayLayoutDefReader::FixedPod { .. } = layout {
+                    if let ArrayLayoutDefReader::Pod { .. }
+                    | ArrayLayoutDefReader::FixedPod { .. } = layout
+                    {
                         s.push_str(" = [");
                         for i in 0..len {
-                            if i > 0 { s.push_str(", "); }
+                            if i > 0 {
+                                s.push_str(", ");
+                            }
                             if let Some(elem) = ctx.array_get(val, i) {
                                 s.push_str(&inline_value_text(ctx, &elem));
                             }

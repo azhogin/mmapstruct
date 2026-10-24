@@ -67,13 +67,13 @@ pub fn build_view_nodes(
 mod tests {
     use super::*;
     use crate::scanner::Scanner;
-    use mmapstruct::MmapStruct;
+    use bytemuck::{Pod, Zeroable};
     use mmapstruct::schema::GetSchema;
     use mmapstruct::traits::{LayoutHash, MmapRead, MmapWrite};
-    use mmapstruct_schema::{write_to_file_with_embedded_schema, Schema};
+    use mmapstruct::MmapStruct;
     use mmapstruct_schema::context::RuntimeSchemaCtx;
     use mmapstruct_schema::SchemaValue;
-    use bytemuck::{Pod, Zeroable};
+    use mmapstruct_schema::{write_to_file_with_embedded_schema, Schema};
 
     #[derive(MmapStruct, Default, Clone, Copy, Debug, Pod, Zeroable)]
     #[repr(C)]
@@ -102,9 +102,8 @@ mod tests {
         let loaded = crate::schema::load_schema(&buf, None, None).unwrap();
         let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
         let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
-        let ctx: &'static RuntimeSchemaCtx<'static> = Box::leak(Box::new(
-            RuntimeSchemaCtx::new(data, schema_bytes),
-        ));
+        let ctx: &'static RuntimeSchemaCtx<'static> =
+            Box::leak(Box::new(RuntimeSchemaCtx::new(data, schema_bytes)));
         let schema_reader = <Schema as MmapRead>::read(schema_bytes, 0..schema_bytes.len());
         let root_type = *schema_reader.root_type;
         let root = SchemaValue::new(
@@ -130,7 +129,10 @@ mod tests {
 
     #[test]
     fn test_build_view_nodes_nested() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 10);
         let (nodes, _) = build_view_nodes(&scanner, |val| {
@@ -155,7 +157,10 @@ mod tests {
     #[test]
     fn test_build_view_nodes_flat_despite_children() {
         // should_step_in returns false for everything — all nodes appear at depth=1
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 10);
         let (nodes, _) = build_view_nodes(&scanner, |_| false);

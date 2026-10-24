@@ -2,8 +2,8 @@
 
 use syn::Type;
 
-use crate::utils::*;
 use crate::attrs::*;
+use crate::utils::*;
 
 #[derive(Clone)]
 // `syn::Type` is large and a derive-time value — boxing it would churn every
@@ -45,7 +45,12 @@ pub(crate) enum FieldCategory {
 pub(crate) fn is_pod_field(category: &FieldCategory) -> bool {
     matches!(
         category,
-        FieldCategory::PodPrimitive | FieldCategory::PodCustom | FieldCategory::FixedArray { elem_is_pod: true, .. }
+        FieldCategory::PodPrimitive
+            | FieldCategory::PodCustom
+            | FieldCategory::FixedArray {
+                elem_is_pod: true,
+                ..
+            }
     )
 }
 

@@ -2,11 +2,11 @@
 
 use quote::{format_ident, quote};
 
-use crate::utils::*;
 use crate::attrs::*;
 use crate::category::*;
 use crate::field_info::*;
 use crate::layout::*;
+use crate::utils::*;
 
 /// Return the canonical `&'static DynValueType` reference for a primitive type name,
 /// or `None` if the type is not a known primitive.
@@ -92,8 +92,7 @@ fn field_value_type(
                 .map(|(t, _)| t)
                 .expect("FixedArray category without an array type");
             let stride = type_size_expr(&inner_type);
-            let (elem_ref, extra) =
-                inner_dyn_value_type(struct_name, field_ident, &inner_type);
+            let (elem_ref, extra) = inner_dyn_value_type(struct_name, field_ident, &inner_type);
             let arr_static = quote! {
                 #[allow(non_upper_case_globals)]
                 static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
@@ -160,8 +159,7 @@ fn field_value_type(
         FieldCategory::DynamicVecByRef { inner, .. } => {
             let arr_name = format_ident!("__mmap_ARR_{}_{}", struct_name, field_ident);
 
-            let (inner_ref, extra) =
-                inner_dyn_value_type(struct_name, field_ident, inner);
+            let (inner_ref, extra) = inner_dyn_value_type(struct_name, field_ident, inner);
 
             let elem_byref_name = format_ident!("__mmap_VT_{}_{}_byref", struct_name, field_ident);
             let arr_static = quote! {
@@ -254,8 +252,11 @@ fn inner_dyn_value_type(
     }
     if let Some((inner_inner, count)) = extract_fixed_array_inner(inner_ty) {
         let arr_name = format_ident!("__mmap_ARR_{}_{}_inner", struct_name, field_ident);
-        let (elem_ref, extra) =
-            inner_dyn_value_type(struct_name, &format_ident!("{}_{}_inner", field_ident, ""), &inner_inner);
+        let (elem_ref, extra) = inner_dyn_value_type(
+            struct_name,
+            &format_ident!("{}_{}_inner", field_ident, ""),
+            &inner_inner,
+        );
         let stride = type_size_expr(&inner_inner);
         let arr_static = quote! {
             #[allow(non_upper_case_globals)]
@@ -345,8 +346,8 @@ fn build_field_schema(
                 field_refs.push(quote! { &::mmapstruct::schema::VT_BOOL });
             } else {
                 let ty_str = type_ident_name(&fi.ty).unwrap_or_default();
-                let canonical = primitive_vt_ref(&ty_str)
-                    .expect("PodPrimitive must have a canonical VT_* ref");
+                let canonical =
+                    primitive_vt_ref(&ty_str).expect("PodPrimitive must have a canonical VT_* ref");
                 field_refs.push(canonical);
             }
         } else if matches!(fi.category, FieldCategory::DynamicString) {
@@ -432,10 +433,12 @@ pub(crate) fn generate_schema_impl(
     let field_descriptors = &fs.descriptors;
     let field_count = fs.descriptors.len();
 
-    let resolver_stream = fs.resolver_fns
+    let resolver_stream = fs
+        .resolver_fns
         .into_iter()
         .collect::<proc_macro2::TokenStream>();
-    let vt_stream = fs.value_type_statics
+    let vt_stream = fs
+        .value_type_statics
         .into_iter()
         .collect::<proc_macro2::TokenStream>();
 
@@ -552,10 +555,12 @@ pub(crate) fn generate_enum_schema_impl(
         let field_statics_name = format_ident!("__mmap_ENUMVAR_FIELDS_{}_{}", name, vident);
         let field_descriptors = &fs.descriptors;
         let field_count = fs.descriptors.len();
-        let vt_stream = fs.value_type_statics
+        let vt_stream = fs
+            .value_type_statics
             .into_iter()
             .collect::<proc_macro2::TokenStream>();
-        let resolver_stream = fs.resolver_fns
+        let resolver_stream = fs
+            .resolver_fns
             .into_iter()
             .collect::<proc_macro2::TokenStream>();
 
@@ -601,5 +606,3 @@ pub(crate) fn generate_enum_schema_impl(
         }
     }
 }
-
-

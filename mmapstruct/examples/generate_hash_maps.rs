@@ -36,9 +36,8 @@ fn main() {
         .map(|i| (i, buckets[i as usize % buckets.len()].to_string()))
         .collect();
 
-    let pod_val_map: HashMap<String, u64> = (0..count)
-        .map(|i| (format!("key_{i:05}"), i))
-        .collect();
+    let pod_val_map: HashMap<String, u64> =
+        (0..count).map(|i| (format!("key_{i:05}"), i)).collect();
 
     let inlined_map: HashMap<String, String> = (0..count)
         .map(|i| (format!("key_{i:05}"), format!("value_{i:05}")))
@@ -61,9 +60,29 @@ fn main() {
     println!("Written 4 maps × {entries} entries to {}", path.display());
     println!("bucket cycles through 5 short names.\n");
     println!("{:<30} {:>14}", "Total file size", format_bytes(file_size));
-    println!("{:<30} {:>14}", "pod_map (u64→u64)", format_bytes(entries * 16));
-    println!("{:<30} {:>14}", "fixed_map (u64→String)", format_bytes(entries * 16));
-    println!("{:<30} {:>14}", "pod_val_map (String→u64)", format_bytes(entries * 16));
-    println!("{:<30} {:>14}", "inlined_map (String→String)", format_bytes(entries * 16));
-    println!("{:<30} {:>14}", "Overhead", format_bytes(file_size - entries * 4 * 16));
+    println!(
+        "{:<30} {:>14}",
+        "pod_map (u64→u64)",
+        format_bytes(entries * 16)
+    );
+    println!(
+        "{:<30} {:>14}",
+        "fixed_map (u64→String)",
+        format_bytes(entries * 16)
+    );
+    println!(
+        "{:<30} {:>14}",
+        "pod_val_map (String→u64)",
+        format_bytes(entries * 16)
+    );
+    println!(
+        "{:<30} {:>14}",
+        "inlined_map (String→String)",
+        format_bytes(entries * 16)
+    );
+    println!(
+        "{:<30} {:>14}",
+        "Overhead",
+        format_bytes(file_size - entries * 4 * 16)
+    );
 }

@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
 fn registry_dir() -> PathBuf {
-
     std::env::var("MMAPSTRUCT_SCHEMA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            let home =
-                std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| ".".into());
+            let home = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .unwrap_or_else(|_| ".".into());
             PathBuf::from(home).join(".config/mmapstruct/schemas")
         })
 }
@@ -26,8 +26,10 @@ fn main() {
     std::fs::write(&path, &bytes).unwrap();
 
     // Also copy to target/debug/ or target/release/ for easy access
-    let target_dir =
-        std::path::Path::new(&out_dir).parent().and_then(|p| p.parent()).and_then(|p| p.parent());
+    let target_dir = std::path::Path::new(&out_dir)
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent());
     if let Some(td) = target_dir {
         let _ = std::fs::write(td.join("self-schema.mms"), &bytes);
     }

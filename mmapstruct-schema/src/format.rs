@@ -1,8 +1,8 @@
 //! Formatting schema values for debugging / tree view.
 
 use crate::context::RuntimeSchemaCtx;
-use crate::value::SchemaValue;
 use crate::schema::{FieldDef, PrimitiveDef, TypeDefReader};
+use crate::value::SchemaValue;
 use mmapstruct::indexed_array::IndexedArrayReader;
 
 /// Format a schema value as a human-readable string (for debugging / tree view).
@@ -85,9 +85,7 @@ fn write_value_inner(
             out.push_str("[pod]");
         }
         TypeDefReader::Struct {
-            name: _,
-            fields,
-            ..
+            name: _, fields, ..
         } => {
             out.push_str("{\n");
             write_struct_fields(ctx, val, fields, depth, out);

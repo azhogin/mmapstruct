@@ -6,13 +6,13 @@ use syn::DeriveInput;
 
 use crate::attrs::*;
 use crate::field_info::*;
-use crate::layout::*;
-use crate::reader::*;
-use crate::writer::*;
 use crate::from_default::*;
+use crate::layout::*;
 use crate::layout_hash::*;
+use crate::reader::*;
 #[cfg(feature = "dyn")]
 use crate::schema::generate_schema_impl;
+use crate::writer::*;
 
 pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenStream {
     let name = &input.ident;
@@ -105,8 +105,14 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
         &inline_dyn_indices,
         is_tuple,
     );
-    let write_impl =
-        generate_write_impl(name, all_fields, &layout, &inline_dyn_indices, is_scoped, is_tuple);
+    let write_impl = generate_write_impl(
+        name,
+        all_fields,
+        &layout,
+        &inline_dyn_indices,
+        is_scoped,
+        is_tuple,
+    );
     let from_impl = generate_from_impl(name, &reader_name, all_fields, is_tuple);
     let reader_owned_impl = generate_reader_owned_impl(name, &reader_name, all_fields, is_tuple);
     let reader_ord_impl = generate_reader_ord_impl(name, &reader_name, all_fields, is_tuple);

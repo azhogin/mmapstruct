@@ -2,9 +2,9 @@
 
 use quote::quote;
 
-use crate::utils::*;
 use crate::category::*;
 use crate::field_info::*;
+use crate::utils::*;
 
 /// Generate the `impl From<Reader> for Struct` block.
 pub(crate) fn generate_from_impl(
@@ -18,7 +18,9 @@ pub(crate) fn generate_from_impl(
         .map(|fi| {
             let member = field_member(fi, is_tuple);
             let expr = match &fi.category {
-                FieldCategory::PodPrimitive | FieldCategory::PodCustom | FieldCategory::FixedArray { .. } => {
+                FieldCategory::PodPrimitive
+                | FieldCategory::PodCustom
+                | FieldCategory::FixedArray { .. } => {
                     quote! { *r.#member }
                 }
                 FieldCategory::DynamicOption { inner } => {
@@ -152,7 +154,10 @@ pub(crate) fn generate_default_impl(
     is_tuple: bool,
 ) -> proc_macro2::TokenStream {
     if is_tuple {
-        let defaults: Vec<_> = fields.iter().map(|_| quote! { Default::default() }).collect();
+        let defaults: Vec<_> = fields
+            .iter()
+            .map(|_| quote! { Default::default() })
+            .collect();
         quote! {
             impl Default for #name {
                 fn default() -> Self {

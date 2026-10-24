@@ -74,11 +74,7 @@ pub fn scalar_to_json<V: Copy>(r: &crate::EvalResult<V>) -> Json {
 }
 
 /// Render a buffer-backed value as JSON, summarizing large containers.
-pub fn value_to_json(
-    ctx: &RuntimeSchemaCtx<'_>,
-    val: &SchemaValue,
-    opts: &RenderOpts,
-) -> Json {
+pub fn value_to_json(ctx: &RuntimeSchemaCtx<'_>, val: &SchemaValue, opts: &RenderOpts) -> Json {
     let mut depth = 0usize;
     value_to_json_inner(ctx, val, opts, &mut depth)
 }
@@ -165,7 +161,10 @@ fn struct_json(
             let fname: &str = fd.name;
             match ctx.field_get(val, fname) {
                 Some(fv) => {
-                    obj.insert(fname.to_string(), value_to_json_inner(ctx, &fv, opts, depth));
+                    obj.insert(
+                        fname.to_string(),
+                        value_to_json_inner(ctx, &fv, opts, depth),
+                    );
                 }
                 None => {
                     obj.insert(fname.to_string(), Json::Null);
@@ -209,7 +208,10 @@ fn enum_json(
             let fname: &str = fd.name;
             match ctx.field_get(&shifted, fname) {
                 Some(fv) => {
-                    obj.insert(fname.to_string(), value_to_json_inner(ctx, &fv, opts, depth));
+                    obj.insert(
+                        fname.to_string(),
+                        value_to_json_inner(ctx, &fv, opts, depth),
+                    );
                 }
                 None => {
                     obj.insert(fname.to_string(), Json::Null);
@@ -232,7 +234,9 @@ fn array_json(
         TypeDefReader::Array { elem_type, layout } => {
             let scalar = matches!(
                 ctx.type_reader(**elem_type),
-                TypeDefReader::Primitive(_) | TypeDefReader::Str { .. } | TypeDefReader::PodStruct { .. }
+                TypeDefReader::Primitive(_)
+                    | TypeDefReader::Str { .. }
+                    | TypeDefReader::PodStruct { .. }
             );
             let tag = match layout {
                 ArrayLayoutDefReader::Pod { .. } => "pod",
@@ -355,8 +359,14 @@ pub fn type_name(ctx: &RuntimeSchemaCtx<'_>, type_idx: u32) -> String {
         }
         TypeDefReader::Option { inner_type } => format!("Option<{}>", type_name(ctx, **inner_type)),
         TypeDefReader::ByRef { inner_type } => format!("&{}", type_name(ctx, **inner_type)),
-        TypeDefReader::HashMap { key_type, val_type, .. } => {
-            format!("map<{}, {}>", type_name(ctx, **key_type), type_name(ctx, **val_type))
+        TypeDefReader::HashMap {
+            key_type, val_type, ..
+        } => {
+            format!(
+                "map<{}, {}>",
+                type_name(ctx, **key_type),
+                type_name(ctx, **val_type)
+            )
         }
     }
 }

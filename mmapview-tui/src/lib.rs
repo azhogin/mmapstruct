@@ -1,14 +1,14 @@
-pub mod log;
 pub mod app;
-pub mod search;
 pub mod input;
 pub mod joiner;
+pub mod log;
 pub mod navigate;
 pub mod overscan;
 pub mod path;
 pub mod print;
 pub mod scanner;
 pub mod schema;
+pub mod search;
 pub mod ui;
 pub mod view_node;
 pub mod viewport;

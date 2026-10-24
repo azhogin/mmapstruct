@@ -4,7 +4,7 @@ use axum::{
     routing::get,
     Router,
 };
-use mmapstruct::{SchemaCtx, DynValueType, Value};
+use mmapstruct::{DynValueType, SchemaCtx, Value};
 use mmapview::json_conv::{compute_stats, result_to_json, value_type_to_json};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -71,11 +71,7 @@ async fn query_handler(
     };
 
     let total = results.len();
-    let total_pages = if limit > 0 {
-        total.div_ceil(limit)
-    } else {
-        1
-    };
+    let total_pages = if limit > 0 { total.div_ceil(limit) } else { 1 };
 
     let slice: Vec<mmapview::EvalResult> = if total == 0 {
         vec![]

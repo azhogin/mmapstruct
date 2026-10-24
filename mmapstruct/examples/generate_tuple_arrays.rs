@@ -1,6 +1,6 @@
+use bytemuck::{Pod, Zeroable};
 use std::fs;
 use std::path::PathBuf;
-use bytemuck::{Pod, Zeroable};
 
 use mmapstruct::MmapStruct;
 
@@ -52,11 +52,23 @@ fn main() {
     let buckets = ["alpha", "beta", "gamma", "delta", "epsilon"];
 
     let colors: Vec<Rgb> = (0..count)
-        .map(|i| Rgb((i % 256) as u8, ((i * 3) % 256) as u8, ((i * 7) % 256) as u8))
+        .map(|i| {
+            Rgb(
+                (i % 256) as u8,
+                ((i * 3) % 256) as u8,
+                ((i * 7) % 256) as u8,
+            )
+        })
         .collect();
 
     let labels: Vec<LabelledPoint> = (0..count)
-        .map(|i| LabelledPoint(i as u32, (i * 2) as u32, buckets[i % buckets.len()].to_string()))
+        .map(|i| {
+            LabelledPoint(
+                i as u32,
+                (i * 2) as u32,
+                buckets[i % buckets.len()].to_string(),
+            )
+        })
         .collect();
 
     let points: Vec<TaggedPoint> = (0..count)
@@ -71,10 +83,12 @@ fn main() {
         .collect();
 
     let names: Vec<JustStrings> = (0..count)
-        .map(|i| JustStrings(
-            buckets[i % buckets.len()].to_string(),
-            format!("value_{}", i),
-        ))
+        .map(|i| {
+            JustStrings(
+                buckets[i % buckets.len()].to_string(),
+                format!("value_{}", i),
+            )
+        })
         .collect();
 
     let root = TupleArrays {
@@ -91,24 +105,51 @@ fn main() {
     let file_size = buf.len() as u64;
 
     // Expected payload bytes (element fixed-section sizes, no framing/overhead)
-    let colors_payload = count as u64 * 3;           // 3 bytes per Rgb
-    let labels_payload = count as u64 * 16;          // u32 + u32 + ByRefRange(8) = 16
-    let points_fixed = count as u64 * 4;             // u32 only in fixed section
-    let names_fixed = 0;                             // no fixed section
+    let colors_payload = count as u64 * 3; // 3 bytes per Rgb
+    let labels_payload = count as u64 * 16; // u32 + u32 + ByRefRange(8) = 16
+    let points_fixed = count as u64 * 4; // u32 only in fixed section
+    let names_fixed = 0; // no fixed section
 
     let total_fixed = colors_payload + labels_payload + points_fixed + names_fixed;
     let overhead = file_size - total_fixed;
 
-    println!("Written 4 tuple arrays × {count} elements to {}", path.display());
+    println!(
+        "Written 4 tuple arrays × {count} elements to {}",
+        path.display()
+    );
     println!("bucket cycles through 5 short names → byref+dedup stores each only once.\n");
 
     println!("{:<30} {:>14}", "Total file size", format_bytes(file_size));
-    println!("{:<30} {:>14}", "Expected raw payload (all fixed sections)", format_bytes(total_fixed));
-    println!("{:<30} {:>14}", "Overhead (schema + framing + postponed + extra)", format_bytes(overhead));
+    println!(
+        "{:<30} {:>14}",
+        "Expected raw payload (all fixed sections)",
+        format_bytes(total_fixed)
+    );
+    println!(
+        "{:<30} {:>14}",
+        "Overhead (schema + framing + postponed + extra)",
+        format_bytes(overhead)
+    );
     println!();
     println!("Section payload estimates:");
-    println!("  {:12}  {:>12} (3 B/elem)", "pod:", format_bytes(colors_payload));
-    println!("  {:12}  {:>12} (16 B/elem + dedup strings)", "fixed:", format_bytes(labels_payload));
-    println!("  {:12}  {:>12} (4 B/elem + avg 49.5 B extra + offset table)", "indexed(u32):", format_bytes(points_fixed));
-    println!("  {:12}  {:>12} (no fixed section; 2 dynamic strings + 24 B offset table per elem)", "indexed(str):", format_bytes(names_fixed));
+    println!(
+        "  {:12}  {:>12} (3 B/elem)",
+        "pod:",
+        format_bytes(colors_payload)
+    );
+    println!(
+        "  {:12}  {:>12} (16 B/elem + dedup strings)",
+        "fixed:",
+        format_bytes(labels_payload)
+    );
+    println!(
+        "  {:12}  {:>12} (4 B/elem + avg 49.5 B extra + offset table)",
+        "indexed(u32):",
+        format_bytes(points_fixed)
+    );
+    println!(
+        "  {:12}  {:>12} (no fixed section; 2 dynamic strings + 24 B offset table per elem)",
+        "indexed(str):",
+        format_bytes(names_fixed)
+    );
 }

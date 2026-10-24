@@ -77,7 +77,10 @@ pub(crate) fn is_pod_type(ty: &Type) -> bool {
 
 pub(crate) fn extract_fixed_array_inner(ty: &Type) -> Option<(Type, usize)> {
     if let Type::Array(arr) = ty {
-        if let Expr::Lit(ExprLit { lit: Lit::Int(lit), .. }) = &arr.len {
+        if let Expr::Lit(ExprLit {
+            lit: Lit::Int(lit), ..
+        }) = &arr.len
+        {
             let n: usize = lit.base10_parse().ok()?;
             Some((*arr.elem.clone(), n))
         } else {

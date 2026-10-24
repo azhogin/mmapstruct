@@ -19,7 +19,10 @@ pub struct ScanCursor {
 
 impl ScanCursor {
     pub fn new(end: Option<Path>) -> Self {
-        ScanCursor { end, effective_end_stack: Vec::new() }
+        ScanCursor {
+            end,
+            effective_end_stack: Vec::new(),
+        }
     }
 }
 
@@ -42,7 +45,11 @@ impl Overscan {
     /// decide which containers are expanded.
     pub fn build(scanner: Scanner, should_step_in: impl FnMut(SchemaValue) -> bool) -> Self {
         let (nodes, end_path) = build_view_nodes(&scanner, should_step_in);
-        Overscan { scanner, nodes, cursor: ScanCursor::new(end_path) }
+        Overscan {
+            scanner,
+            nodes,
+            cursor: ScanCursor::new(end_path),
+        }
     }
 
     /// Build a new `Overscan` from `prev`, reusing its expanded/collapsed
@@ -61,29 +68,34 @@ impl Overscan {
     /// traversed (e.g. an expanded array whose children are visible),
     /// the parent stays expanded in the new view.
     pub fn from_next(next: &Overscan, new_scanner: Scanner) -> Self {
-        let expanded_from_path: HashSet<(u64, u32)> = next.scanner.path
+        let expanded_from_path: HashSet<(u64, u32)> = next
+            .scanner
+            .path
             .iter()
             .map(|seg| (seg.val.mmap_begin, seg.val.type_idx))
             .collect();
 
         Overscan::build(new_scanner, |val| {
-            expanded_from_path.contains(&(val.mmap_begin, val.type_idx))
-                || next.is_expanded(&val)
+            expanded_from_path.contains(&(val.mmap_begin, val.type_idx)) || next.is_expanded(&val)
         })
     }
 
     /// Returns `true` if a node with the given value is marked as expanded
     /// in this view (linear search over `nodes`).
     pub fn is_expanded(&self, val: &SchemaValue) -> bool {
-        self.nodes
-            .iter()
-            .any(|n| n.value.mmap_begin == val.mmap_begin && n.value.type_idx == val.type_idx && n.expanded)
+        self.nodes.iter().any(|n| {
+            n.value.mmap_begin == val.mmap_begin && n.value.type_idx == val.type_idx && n.expanded
+        })
     }
 
     /// Return the current effective end — the top of `effective_end_stack`,
     /// or `cursor.end` if the stack is empty.
     pub fn effective_end(&self) -> Option<Path> {
-        self.cursor.effective_end_stack.last().cloned().or_else(|| self.cursor.end.clone())
+        self.cursor
+            .effective_end_stack
+            .last()
+            .cloned()
+            .or_else(|| self.cursor.end.clone())
     }
 
     /// Expand the node at `idx`, loading its children if not yet loaded.
@@ -98,19 +110,24 @@ impl Overscan {
             let child_count = children.len();
             for (child_val, child_idx) in children.into_iter().rev() {
                 let has_children = self.scanner.child_count(&child_val) > 0;
-                let display_text = self.scanner.format_display_text(&child_val, Some((parent_val, child_idx)));
+                let display_text = self
+                    .scanner
+                    .format_display_text(&child_val, Some((parent_val, child_idx)));
                 let shift = self.scanner.child_shift(&parent_val, child_idx);
-                self.nodes.insert(insert_before, ViewNode {
-                    value: child_val,
-                    depth,
-                    has_children,
-                    expanded: false,
-                    children_loaded: false,
-                    display_text,
-                    virtual_end: None,
-                    parent_val: Some(parent_val),
-                    shift: Some(shift),
-                });
+                self.nodes.insert(
+                    insert_before,
+                    ViewNode {
+                        value: child_val,
+                        depth,
+                        has_children,
+                        expanded: false,
+                        children_loaded: false,
+                        display_text,
+                        virtual_end: None,
+                        parent_val: Some(parent_val),
+                        shift: Some(shift),
+                    },
+                );
             }
             self.nodes[idx].children_loaded = true;
             self.nodes[idx].expanded = true;
@@ -162,7 +179,10 @@ impl Overscan {
     }
 
     fn fixup_cursor_end_on_collapse(&mut self, idx: usize, parent_path: Path) {
-        let inside = self.cursor.end.as_ref()
+        let inside = self
+            .cursor
+            .end
+            .as_ref()
             .is_some_and(|end| parent_path.is_path_prefix(end));
         if inside {
             // Save a clone to virtual_end so re-expand can restore it,
@@ -188,7 +208,11 @@ impl Overscan {
         let node = &self.nodes[idx];
         if node.collapsed_with_children() {
             let i = self.skip_loaded_children(idx);
-            if i >= self.nodes.len() { None } else { Some(i) }
+            if i >= self.nodes.len() {
+                None
+            } else {
+                Some(i)
+            }
         } else {
             let i = idx + 1;
             if i >= self.nodes.len() {
@@ -267,7 +291,10 @@ impl Overscan {
         let mut steps = 0;
         for _ in 0..n {
             match self.next_visible(idx) {
-                Some(i) => { idx = i; steps += 1; }
+                Some(i) => {
+                    idx = i;
+                    steps += 1;
+                }
                 None => break,
             }
         }
@@ -281,7 +308,10 @@ impl Overscan {
         let mut steps = 0;
         for _ in 0..n {
             match self.prev_visible(idx) {
-                Some(i) => { idx = i; steps += 1; }
+                Some(i) => {
+                    idx = i;
+                    steps += 1;
+                }
                 None => break,
             }
         }
@@ -318,7 +348,9 @@ impl Overscan {
     /// a node whose depth is exactly one less.
     pub fn parent_of(&self, idx: usize) -> Option<usize> {
         let d = self.nodes[idx].depth;
-        if d == 0 { return None; }
+        if d == 0 {
+            return None;
+        }
         (0..idx).rev().find(|&i| self.nodes[i].depth == d - 1)
     }
 
@@ -388,12 +420,8 @@ impl Overscan {
             // cursor.end was inside the collapsed subtree and got saved to
             // virtual_end — compute the path past the collapsed node.
             let node_path = self.path_of(idx);
-            let end = crate::scanner::Scanner::from_path(
-                self.scanner.ctx,
-                node_path,
-                1,
-            )
-            .do_steps(|_| {}, |_| false);
+            let end = crate::scanner::Scanner::from_path(self.scanner.ctx, node_path, 1)
+                .do_steps(|_| {}, |_| false);
             self.cursor.end = end;
         }
         if self.cursor.end.is_some() {
@@ -407,9 +435,7 @@ impl Overscan {
             None => return,
         };
 
-        let is_expanded = |val: SchemaValue| -> bool {
-            self.is_expanded(&val)
-        };
+        let is_expanded = |val: SchemaValue| -> bool { self.is_expanded(&val) };
 
         let should_step_in = |val: SchemaValue| -> bool {
             if !is_expanded(val) {
@@ -422,7 +448,8 @@ impl Overscan {
             })
         };
 
-        let new_scanner = crate::scanner::Scanner::from_path(self.scanner.ctx, end_path.clone(), steps);
+        let new_scanner =
+            crate::scanner::Scanner::from_path(self.scanner.ctx, end_path.clone(), steps);
         let mut new_nodes = Vec::new();
 
         let new_end = new_scanner.do_steps(
@@ -457,13 +484,13 @@ impl Overscan {
 mod tests {
     use super::*;
     use crate::scanner::Scanner;
-    use mmapstruct::MmapStruct;
+    use bytemuck::{Pod, Zeroable};
     use mmapstruct::schema::GetSchema;
     use mmapstruct::traits::{LayoutHash, MmapRead, MmapWrite};
-    use mmapstruct_schema::{write_to_file_with_embedded_schema, Schema};
+    use mmapstruct::MmapStruct;
     use mmapstruct_schema::context::RuntimeSchemaCtx;
     use mmapstruct_schema::SchemaValue;
-    use bytemuck::{Pod, Zeroable};
+    use mmapstruct_schema::{write_to_file_with_embedded_schema, Schema};
 
     #[derive(MmapStruct, Default, Clone, Copy, Debug, Pod, Zeroable)]
     #[repr(C)]
@@ -485,9 +512,8 @@ mod tests {
         let loaded = crate::schema::load_schema(&buf, None, None).unwrap();
         let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
         let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
-        let ctx: &'static RuntimeSchemaCtx<'static> = Box::leak(Box::new(
-            RuntimeSchemaCtx::new(data, schema_bytes),
-        ));
+        let ctx: &'static RuntimeSchemaCtx<'static> =
+            Box::leak(Box::new(RuntimeSchemaCtx::new(data, schema_bytes)));
         let schema_reader = <Schema as MmapRead>::read(schema_bytes, 0..schema_bytes.len());
         let root_type = *schema_reader.root_type;
         let root = SchemaValue::new(
@@ -500,7 +526,10 @@ mod tests {
 
     #[test]
     fn test_overscan_new() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 10);
         let os = Overscan::new(scanner);
@@ -512,7 +541,10 @@ mod tests {
 
     #[test]
     fn test_overscan_from_previous_preserves_expanded() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 10);
         let mut prev = Overscan::new(scanner);
@@ -533,7 +565,10 @@ mod tests {
 
     #[test]
     fn test_overscan_from_previous_toggle_expanded() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
 
         // Build first overscan with everything collapsed
@@ -553,7 +588,10 @@ mod tests {
 
     #[test]
     fn test_expand_node_inserts_children() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 10);
         let mut os = Overscan::new(scanner);
@@ -582,7 +620,10 @@ mod tests {
 
     #[test]
     fn test_collapse_node_does_not_remove_children() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 10);
         let mut os = Overscan::new(scanner);
@@ -602,7 +643,10 @@ mod tests {
 
     #[test]
     fn test_skip_loaded_children_skips_descendants() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 10);
         let mut os = Overscan::new(scanner);
@@ -619,7 +663,10 @@ mod tests {
 
     #[test]
     fn test_parent_of_basic() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 10);
         let mut os = Overscan::new(scanner);
@@ -640,7 +687,10 @@ mod tests {
 
     #[test]
     fn test_path_of_round_trip() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 10);
         let mut os = Overscan::new(scanner);
@@ -659,7 +709,10 @@ mod tests {
 
     #[test]
     fn test_continue_scan_appends_nodes() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 2); // only 2 items per batch
         let mut os = Overscan::new(scanner);
@@ -683,7 +736,10 @@ mod tests {
 
     #[test]
     fn test_expand_twice_is_idempotent() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 10);
         let mut os = Overscan::new(scanner);
@@ -701,7 +757,10 @@ mod tests {
 
     #[test]
     fn test_collapse_twice_is_idempotent() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let scanner = Scanner::new(ctx, root, 10);
         let mut os = Overscan::new(scanner);
@@ -727,7 +786,12 @@ mod tests {
     }
 
     fn setup_with_array() -> (&'static RuntimeSchemaCtx<'static>, SchemaValue) {
-        let val = WithArray { a: 1, b: 2, c: vec![10u32; 10], d: 3 };
+        let val = WithArray {
+            a: 1,
+            b: 2,
+            c: vec![10u32; 10],
+            d: 3,
+        };
         setup(&val)
     }
 

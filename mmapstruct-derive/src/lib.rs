@@ -1,20 +1,20 @@
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, Data, DeriveInput};
 
-mod utils;
 mod attrs;
 mod category;
+mod enum_handler;
 mod field_info;
-mod layout;
-mod reader;
-mod writer;
 mod from_default;
+mod layout;
 mod layout_hash;
+mod reader;
 #[cfg(feature = "dyn")]
 mod schema;
-mod write_helpers;
 mod struct_handler;
-mod enum_handler;
+mod utils;
+mod write_helpers;
+mod writer;
 
 #[proc_macro_derive(MmapStruct, attributes(mmap, pod, fixed))]
 pub fn derive_mmap_struct(input: TokenStream) -> TokenStream {

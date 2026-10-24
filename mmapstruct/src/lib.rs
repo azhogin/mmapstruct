@@ -53,7 +53,7 @@ pub use file_reader::{BufReader, MmapReader};
 pub use mmapstruct_derive::MmapStruct;
 #[cfg(feature = "dyn")]
 pub use schema::{
-    ArrayLayout, ArraySchema, SchemaCtx, DynValueType, FieldDescriptor, GetSchema, StructSchema,
+    ArrayLayout, ArraySchema, DynValueType, FieldDescriptor, GetSchema, SchemaCtx, StructSchema,
     Value,
 };
 pub use traits::{

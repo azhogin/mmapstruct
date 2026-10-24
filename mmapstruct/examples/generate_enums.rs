@@ -21,7 +21,9 @@ enum Color {
 }
 
 impl From<&Color> for Color {
-    fn from(v: &Color) -> Self { *v }
+    fn from(v: &Color) -> Self {
+        *v
+    }
 }
 
 #[derive(MmapStruct, Clone, Copy, Debug, Default, Pod, Zeroable)]
@@ -50,8 +52,13 @@ fn main() {
 
     let shapes: Vec<Shape> = (0..count)
         .map(|i| match i % 3 {
-            0 => Shape::Circle { radius: i as f64 * 0.1 },
-            1 => Shape::Rect { width: i as f64 * 0.5, height: (i + 1) as f64 * 0.3 },
+            0 => Shape::Circle {
+                radius: i as f64 * 0.1,
+            },
+            1 => Shape::Rect {
+                width: i as f64 * 0.5,
+                height: (i + 1) as f64 * 0.3,
+            },
             _ => Shape::Empty,
         })
         .collect();
@@ -69,7 +76,11 @@ fn main() {
         .map(|i| Point(i as u32, (i * 2) as u32))
         .collect();
 
-    let root = MyEnums { shapes, colors, points };
+    let root = MyEnums {
+        shapes,
+        colors,
+        points,
+    };
 
     let buf = mmapstruct_schema::write_to_file_with_embedded_schema(&root, false);
     let path = PathBuf::from("/tmp/enums.mms");
@@ -79,15 +90,30 @@ fn main() {
 
     let shape_byte_size = count as u64 * (1 + 8)    // tag + radius (Circle)
         + count as u64 * (1 + 8 + 8) / 3 * 2        // some Rect
-        + (count as u64) / 3;                     // some Empty (tag only)
-    let color_byte_size = count as u64 * 4;          // pod u32
+        + (count as u64) / 3; // some Empty (tag only)
+    let color_byte_size = count as u64 * 4; // pod u32
 
-    println!("Written enum arrays + tuple struct × {count} entries each to {}", path.display());
+    println!(
+        "Written enum arrays + tuple struct × {count} entries each to {}",
+        path.display()
+    );
     println!();
     let point_byte_size = count as u64 * 8; // two u32s
 
     println!("{:<30} {:>14}", "Total file size", format_bytes(file_size));
-    println!("{:<30} {:>14}", "shapes (Vec<Shape>)", format_bytes(shape_byte_size));
-    println!("{:<30} {:>14}", "colors (Vec<Color>)", format_bytes(color_byte_size));
-    println!("{:<30} {:>14}", "points (Vec<Point>)", format_bytes(point_byte_size));
+    println!(
+        "{:<30} {:>14}",
+        "shapes (Vec<Shape>)",
+        format_bytes(shape_byte_size)
+    );
+    println!(
+        "{:<30} {:>14}",
+        "colors (Vec<Color>)",
+        format_bytes(color_byte_size)
+    );
+    println!(
+        "{:<30} {:>14}",
+        "points (Vec<Point>)",
+        format_bytes(point_byte_size)
+    );
 }

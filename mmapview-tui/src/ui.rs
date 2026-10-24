@@ -51,7 +51,9 @@ pub fn draw_viewport(
                         let idx = node.shift.map(|s| s.index()).unwrap_or(0);
                         (pv, idx)
                     });
-                    overscan.scanner.format_preview_text(&node.value, parent, char_limit)
+                    overscan
+                        .scanner
+                        .format_preview_text(&node.value, parent, char_limit)
                         .unwrap_or_else(|| node.display_text.clone())
                 } else {
                     node.display_text.clone()
@@ -98,7 +100,12 @@ pub fn draw_viewport(
         msg.to_string()
     } else {
         let debug_info = if cfg!(debug_assertions) {
-            format!("sel={} scroll={} nodes={}  ", viewport.selected, viewport.scroll, overscan.nodes.len())
+            format!(
+                "sel={} scroll={} nodes={}  ",
+                viewport.selected,
+                viewport.scroll,
+                overscan.nodes.len()
+            )
         } else {
             String::new()
         };

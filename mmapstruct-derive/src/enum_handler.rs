@@ -2,16 +2,16 @@
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Fields, DeriveInput};
+use syn::{DeriveInput, Fields};
 
-use crate::utils::*;
 use crate::attrs::*;
 use crate::category::*;
 use crate::field_info::*;
 use crate::layout::*;
-use crate::write_helpers;
 #[cfg(feature = "dyn")]
 use crate::schema::generate_enum_schema_impl;
+use crate::utils::*;
+use crate::write_helpers;
 
 #[cfg(feature = "dyn")]
 fn repr_to_disc_size(repr_name: &str) -> proc_macro2::TokenStream {
@@ -55,8 +55,13 @@ fn handle_pod_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStream {
     let repr_name = find_repr_int(&input.attrs).expect("pod enum requires #[repr(Int)]");
 
     // First variant is the default (zero discriminant = Zeroable).
-    let first_variant = de.variants.iter().next()
-        .expect("pod enum must have at least one variant").ident.clone();
+    let first_variant = de
+        .variants
+        .iter()
+        .next()
+        .expect("pod enum must have at least one variant")
+        .ident
+        .clone();
 
     // Byte string for the repr tag in the hash.
     let repr_tag = format!("#[repr({})]", repr_name);
@@ -216,7 +221,9 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     if is_bool && !is_u32_type(&field.ty) {
                         panic!("#[mmap(bool)] is only supported on u32 fields");
                     }
-                    if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).is_some_and(|n| n == "bool") {
+                    if is_primitive_pod(&field.ty)
+                        && type_ident_name(&field.ty).is_some_and(|n| n == "bool")
+                    {
                         panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
                     }
 
@@ -240,7 +247,9 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     if is_bool && !is_u32_type(&field.ty) {
                         panic!("#[mmap(bool)] is only supported on u32 fields");
                     }
-                    if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).is_some_and(|n| n == "bool") {
+                    if is_primitive_pod(&field.ty)
+                        && type_ident_name(&field.ty).is_some_and(|n| n == "bool")
+                    {
                         panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
                     }
 
@@ -259,7 +268,9 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         }
 
         let inline_dyn_indices = collect_inline_dyn_indices(&all_fields);
-        let has_dynamic = all_fields.iter().any(|f| !is_pod_field(&f.category) || f.is_fixed_byref());
+        let has_dynamic = all_fields
+            .iter()
+            .any(|f| !is_pod_field(&f.category) || f.is_fixed_byref());
 
         // Fixed-section layout via const-eval — mirrors the struct path
         // (`generate_fixed_layout_consts`): real size_of/align_of for every
@@ -311,7 +322,11 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                 let idx = fixed_section_index(&all_fields, fi.name.as_str());
                 let ty = &fi.ty;
                 let expr = quote! { ::mmapstruct::bytemuck::from_bytes(&data[#rs + #fo_name[#idx] .. #rs + #fo_name[#idx] + std::mem::size_of::<#ty>()]) };
-                if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
+                if is_tuple {
+                    rinit.push(expr);
+                } else {
+                    rinit.push(quote! { #id: #expr });
+                }
             } else if is_inline_string {
                 let idx = fixed_section_index(&all_fields, fi.name.as_str());
                 let sz = match &fi.category {
@@ -319,7 +334,11 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     _ => unreachable!(),
                 };
                 let expr = quote! { <String as ::mmapstruct::traits::MmapRead>::read(data, #rs + #fo_name[#idx] .. #rs + #fo_name[#idx] + #sz) };
-                if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
+                if is_tuple {
+                    rinit.push(expr);
+                } else {
+                    rinit.push(quote! { #id: #expr });
+                }
             } else if fi.has_byref_attr {
                 let idx = fixed_section_index(&all_fields, fi.name.as_str());
                 match &fi.category {
@@ -330,7 +349,11 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                             if br.begin == 0 && br.end == 0 { None }
                             else { Some(<#inner as ::mmapstruct::traits::MmapRead>::read(data, br.range(base))) }
                         }};
-                        if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
+                        if is_tuple {
+                            rinit.push(expr);
+                        } else {
+                            rinit.push(quote! { #id: #expr });
+                        }
                     }
                     _ => {
                         let ty = &fi.ty;
@@ -338,7 +361,11 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                             let base = #rs;
                             ::mmapstruct::reader::read_by_ref::<#ty>(data, base, #rs + #fo_name[#idx] .. #rs + #fo_name[#idx] + 8)
                         }};
-                        if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
+                        if is_tuple {
+                            rinit.push(expr);
+                        } else {
+                            rinit.push(quote! { #id: #expr });
+                        }
                     }
                 }
             } else if is_fixed_arr {
@@ -349,7 +376,11 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                         &*(data.as_ptr().add(#rs + #fo_name[#idx]) as *const #ty)
                     }
                 };
-                if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
+                if is_tuple {
+                    rinit.push(expr);
+                } else {
+                    rinit.push(quote! { #id: #expr });
+                }
             } else {
                 let di = inline_dyn_indices
                     .iter()
@@ -368,11 +399,19 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                 match &fi.category {
                     FieldCategory::DynamicString => {
                         let expr = quote! { { let (s, e) = #rc; <#ty as ::mmapstruct::traits::MmapRead>::read(data, s..e) } };
-                        if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
+                        if is_tuple {
+                            rinit.push(expr);
+                        } else {
+                            rinit.push(quote! { #id: #expr });
+                        }
                     }
                     FieldCategory::DynamicVecByRef { .. } => {
                         let expr = quote! { { let base = #rs; let (s, e) = #rc; ::mmapstruct::byref_array::ByRefArrayReader::new(data, ::mmapstruct::traits::FileRange::new(s, e), base) } };
-                        if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
+                        if is_tuple {
+                            rinit.push(expr);
+                        } else {
+                            rinit.push(quote! { #id: #expr });
+                        }
                     }
                     FieldCategory::DynamicVec {
                         inner,
@@ -389,18 +428,34 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                                     ::mmapstruct::bytemuck::cast_slice(&data[s+8 .. s+8 + count * elem_size])
                                 }
                             };
-                            if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
+                            if is_tuple {
+                                rinit.push(expr);
+                            } else {
+                                rinit.push(quote! { #id: #expr });
+                            }
                         } else if *elem_fixed {
                             let expr = quote! { { let (s, e) = #rc; ::mmapstruct::fixed_array::FixedArrayReader::new(data, ::mmapstruct::traits::FileRange::new(s, e)) } };
-                            if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
+                            if is_tuple {
+                                rinit.push(expr);
+                            } else {
+                                rinit.push(quote! { #id: #expr });
+                            }
                         } else {
                             let expr = quote! { { let (s, e) = #rc; ::mmapstruct::indexed_array::IndexedArrayReader::new(data, ::mmapstruct::traits::FileRange::new(s, e)) } };
-                            if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
+                            if is_tuple {
+                                rinit.push(expr);
+                            } else {
+                                rinit.push(quote! { #id: #expr });
+                            }
                         }
                     }
                     _ => {
                         let expr = quote! { { let (s, e) = #rc; <#ty as ::mmapstruct::traits::MmapRead>::read(data, s..e) } };
-                        if is_tuple { rinit.push(expr); } else { rinit.push(quote! { #id: #expr }); }
+                        if is_tuple {
+                            rinit.push(expr);
+                        } else {
+                            rinit.push(quote! { #id: #expr });
+                        }
                     }
                 }
             }
@@ -408,7 +463,8 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
 
         let field_ref = |id: &proc_macro2::Ident| quote! { #id };
         let fw = write_helpers::generate_fixed_writes(&all_fields, field_ref);
-        let idb = write_helpers::generate_inline_dyn_writes(&all_fields, &inline_dyn_indices, field_ref);
+        let idb =
+            write_helpers::generate_inline_dyn_writes(&all_fields, &inline_dyn_indices, field_ref);
 
         let wbody = if !has_dynamic {
             let fw_pod = write_helpers::generate_fixed_writes(&all_fields, field_ref);
@@ -445,7 +501,9 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             .map(|fi| {
                 let id = &fi.ident;
                 let expr = match &fi.category {
-                    FieldCategory::PodPrimitive | FieldCategory::PodCustom | FieldCategory::FixedArray { .. } => {
+                    FieldCategory::PodPrimitive
+                    | FieldCategory::PodCustom
+                    | FieldCategory::FixedArray { .. } => {
                         quote! { *#id }
                     }
                     FieldCategory::DynamicOption { inner } => {

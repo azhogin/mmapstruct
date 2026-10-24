@@ -28,7 +28,9 @@ impl FieldInfo {
 
 pub(crate) fn reader_type(fi: &FieldInfo) -> proc_macro2::TokenStream {
     match &fi.category {
-        FieldCategory::PodPrimitive | FieldCategory::PodCustom | FieldCategory::FixedArray { .. } => {
+        FieldCategory::PodPrimitive
+        | FieldCategory::PodCustom
+        | FieldCategory::FixedArray { .. } => {
             let ty = &fi.ty;
             quote! { &'a #ty }
         }
@@ -88,10 +90,9 @@ fn analyze_named_fields(fields: &syn::Fields) -> FieldAnalysis {
         let (is_byref, dedup, _inline_size, is_bool) = parse_mmap_attrs(&field.attrs);
 
         // Validate #[mmap(bool)]
-        if is_bool
-            && !is_u32_type(&field.ty) {
-                panic!("#[mmap(bool)] is only supported on u32 fields");
-            }
+        if is_bool && !is_u32_type(&field.ty) {
+            panic!("#[mmap(bool)] is only supported on u32 fields");
+        }
         // Forbid bare bool type
         if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).is_some_and(|n| n == "bool") {
             panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
@@ -108,7 +109,9 @@ fn analyze_named_fields(fields: &syn::Fields) -> FieldAnalysis {
         });
     }
 
-    let has_dynamic = all_fields.iter().any(|f| !is_pod_field(&f.category) || f.is_fixed_byref());
+    let has_dynamic = all_fields
+        .iter()
+        .any(|f| !is_pod_field(&f.category) || f.is_fixed_byref());
     FieldAnalysis {
         fields: all_fields,
         has_dynamic,
@@ -129,10 +132,9 @@ fn analyze_unnamed_fields(fields: &syn::Fields) -> FieldAnalysis {
         let category = classify_field(field);
         let (is_byref, dedup, _inline_size, is_bool) = parse_mmap_attrs(&field.attrs);
 
-        if is_bool
-            && !is_u32_type(&field.ty) {
-                panic!("#[mmap(bool)] is only supported on u32 fields");
-            }
+        if is_bool && !is_u32_type(&field.ty) {
+            panic!("#[mmap(bool)] is only supported on u32 fields");
+        }
         if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).is_some_and(|n| n == "bool") {
             panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
         }
@@ -148,7 +150,9 @@ fn analyze_unnamed_fields(fields: &syn::Fields) -> FieldAnalysis {
         });
     }
 
-    let has_dynamic = all_fields.iter().any(|f| !is_pod_field(&f.category) || f.is_fixed_byref());
+    let has_dynamic = all_fields
+        .iter()
+        .any(|f| !is_pod_field(&f.category) || f.is_fixed_byref());
     FieldAnalysis {
         fields: all_fields,
         has_dynamic,
@@ -171,7 +175,10 @@ pub(crate) fn analyze_fields(fields: &syn::Fields) -> FieldAnalysis {
 /// Convert a FieldInfo to a syn::Member for field access.
 pub(crate) fn field_member(fi: &FieldInfo, is_tuple: bool) -> syn::Member {
     if is_tuple {
-        let idx: usize = fi.name.parse().expect("tuple field name should be a number");
+        let idx: usize = fi
+            .name
+            .parse()
+            .expect("tuple field name should be a number");
         syn::Member::Unnamed(syn::Index::from(idx))
     } else {
         syn::Member::Named(fi.ident.clone())

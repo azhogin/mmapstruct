@@ -43,12 +43,14 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                 .get(field_idx)
                 .is_some_and(|f| self.type_reader(*f.type_index).is_byref_kind()),
             TypeDefReader::Enum { .. } => {
-                let Some((variant, _)) = self.enum_variant(parent) else { return false };
+                let Some((variant, _)) = self.enum_variant(parent) else {
+                    return false;
+                };
                 let vt = self.type_reader(variant);
                 if let TypeDefReader::Struct { fields, .. } = vt {
-                    fields.get(field_idx).is_some_and(|f| {
-                        self.type_reader(*f.type_index).is_byref_kind()
-                    })
+                    fields
+                        .get(field_idx)
+                        .is_some_and(|f| self.type_reader(*f.type_index).is_byref_kind())
                 } else {
                     false
                 }
@@ -78,7 +80,12 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                 header_size: _,
                 inline_dyn_count: _,
             } => self.resolve_field_value(root, fields, name),
-            TypeDefReader::Enum { name: _, variants: _, variant_type_indices: _, disc_size: _ } => {
+            TypeDefReader::Enum {
+                name: _,
+                variants: _,
+                variant_type_indices: _,
+                disc_size: _,
+            } => {
                 let (variant, data_off) = self.enum_variant(root)?;
                 let variant_type = self.type_reader(variant);
                 if let TypeDefReader::Struct {
@@ -125,29 +132,39 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                     if let Some(dyn_idx) = f.inline_dyn_index {
                         let range = self.inline_dynamic_range(root, *dyn_idx)?;
                         if range.mmap_begin >= range.mmap_end {
-                            return Some((i, SchemaValue {
-                                mmap_begin: range.mmap_begin,
-                                mmap_end: range.mmap_begin,
-                                type_idx: *f.type_index,
-                            }));
+                            return Some((
+                                i,
+                                SchemaValue {
+                                    mmap_begin: range.mmap_begin,
+                                    mmap_end: range.mmap_begin,
+                                    type_idx: *f.type_index,
+                                },
+                            ));
                         }
                         let disc = self.data[range.mmap_begin as usize];
                         if disc == 0 {
-                            return Some((i, SchemaValue {
-                                mmap_begin: range.mmap_begin,
-                                mmap_end: range.mmap_begin,
-                                type_idx: *f.type_index,
-                            }));
+                            return Some((
+                                i,
+                                SchemaValue {
+                                    mmap_begin: range.mmap_begin,
+                                    mmap_end: range.mmap_begin,
+                                    type_idx: *f.type_index,
+                                },
+                            ));
                         }
                         // Some: skip past the u8 discriminant + alignment
                         let inner_type = self.unwrap_type(*f.type_index);
                         let inner_align = self.type_align(inner_type);
-                        let inner_start = (range.mmap_begin + 1 + inner_align - 1) & !(inner_align - 1);
-                        return Some((i, SchemaValue {
-                            mmap_begin: inner_start,
-                            mmap_end: range.mmap_end,
-                            type_idx: inner_type,
-                        }));
+                        let inner_start =
+                            (range.mmap_begin + 1 + inner_align - 1) & !(inner_align - 1);
+                        return Some((
+                            i,
+                            SchemaValue {
+                                mmap_begin: inner_start,
+                                mmap_end: range.mmap_end,
+                                type_idx: inner_type,
+                            },
+                        ));
                     }
                 }
 
@@ -155,17 +172,21 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                 // section; the actual data lives in the variable-data area.
                 if raw_type.is_byref_kind() {
                     let off = *f.offset_in_fixed as usize;
-                    let byref: ByRefRange =
-                        unsafe { mmap_read_pod::<ByRefRange>(&self.data[root.mmap_begin as usize + off..]) };
+                    let byref: ByRefRange = unsafe {
+                        mmap_read_pod::<ByRefRange>(&self.data[root.mmap_begin as usize + off..])
+                    };
                     let inner = match raw_type {
                         TypeDefReader::ByRef { inner_type } => **inner_type,
                         _ => unreachable!(),
                     };
-                    return Some((i, SchemaValue {
-                        mmap_begin: root.mmap_begin + byref.begin as u64,
-                        mmap_end: root.mmap_begin + byref.end as u64,
-                        type_idx: inner,
-                    }));
+                    return Some((
+                        i,
+                        SchemaValue {
+                            mmap_begin: root.mmap_begin + byref.begin as u64,
+                            mmap_end: root.mmap_begin + byref.end as u64,
+                            type_idx: inner,
+                        },
+                    ));
                 }
 
                 // Inline-dynamic (string, array, vec, etc.): look up offset table
@@ -177,11 +198,14 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                 let dyntype = self.type_reader(field_type);
                 if dyntype.is_fixed_size() {
                     if let Some(sz) = self.type_size(*f.type_index) {
-                        return Some((i, SchemaValue {
-                            mmap_begin: root.mmap_begin + *f.offset_in_fixed,
-                            mmap_end: root.mmap_begin + *f.offset_in_fixed + sz,
-                            type_idx: field_type,
-                        }));
+                        return Some((
+                            i,
+                            SchemaValue {
+                                mmap_begin: root.mmap_begin + *f.offset_in_fixed,
+                                mmap_end: root.mmap_begin + *f.offset_in_fixed + sz,
+                                type_idx: field_type,
+                            },
+                        ));
                     }
                 }
                 // PodStruct fallback? Not expected.
@@ -193,20 +217,17 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
 
     /// Compute the raw data range for an inline-dynamic field (without
     /// interpreting Option encoding).
-    fn inline_dynamic_range(
-        &self,
-        root: &SchemaValue,
-        dyn_idx: u32,
-    ) -> Option<SchemaValue> {
-        let (fixed_section_size, header_size, inline_dyn_count) = match self.type_reader(root.type_idx) {
-            TypeDefReader::Struct {
-                fixed_section_size,
-                header_size,
-                inline_dyn_count,
-                ..
-            } => (**fixed_section_size, **header_size, **inline_dyn_count),
-            _ => return None,
-        };
+    fn inline_dynamic_range(&self, root: &SchemaValue, dyn_idx: u32) -> Option<SchemaValue> {
+        let (fixed_section_size, header_size, inline_dyn_count) =
+            match self.type_reader(root.type_idx) {
+                TypeDefReader::Struct {
+                    fixed_section_size,
+                    header_size,
+                    inline_dyn_count,
+                    ..
+                } => (**fixed_section_size, **header_size, **inline_dyn_count),
+                _ => return None,
+            };
 
         let ot_start = root.mmap_begin as usize + fixed_section_size as usize;
         let vs = root.mmap_begin as usize + header_size as usize;
@@ -215,11 +236,20 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
         if ot_start + (dy + 1) * 8 > self.data.len() {
             return None;
         }
-        let off0 = (unsafe { mmap_read_pod::<u64>(&self.data[ot_start + dy * 8..ot_start + (dy + 1) * 8]) }) as usize;
+        let off0 = (unsafe {
+            mmap_read_pod::<u64>(&self.data[ot_start + dy * 8..ot_start + (dy + 1) * 8])
+        }) as usize;
         let off1 = if dy + 1 < inline_dyn_count as usize {
-            (unsafe { mmap_read_pod::<u64>(&self.data[ot_start + (dy + 1) * 8..ot_start + (dy + 2) * 8]) }) as usize
+            (unsafe {
+                mmap_read_pod::<u64>(&self.data[ot_start + (dy + 1) * 8..ot_start + (dy + 2) * 8])
+            }) as usize
         } else {
-            (unsafe { mmap_read_pod::<u64>(&self.data[ot_start + inline_dyn_count as usize * 8..ot_start + (inline_dyn_count as usize + 1) * 8]) }) as usize
+            (unsafe {
+                mmap_read_pod::<u64>(
+                    &self.data[ot_start + inline_dyn_count as usize * 8
+                        ..ot_start + (inline_dyn_count as usize + 1) * 8],
+                )
+            }) as usize
         };
 
         Some(SchemaValue {
@@ -241,15 +271,16 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
         dyn_idx: u32,
         field_type: u32,
     ) -> Option<SchemaValue> {
-        let (fixed_section_size, header_size, inline_dyn_count) = match self.type_reader(root.type_idx) {
-            TypeDefReader::Struct {
-                fixed_section_size,
-                header_size,
-                inline_dyn_count,
-                ..
-            } => (**fixed_section_size, **header_size, **inline_dyn_count),
-            _ => return None,
-        };
+        let (fixed_section_size, header_size, inline_dyn_count) =
+            match self.type_reader(root.type_idx) {
+                TypeDefReader::Struct {
+                    fixed_section_size,
+                    header_size,
+                    inline_dyn_count,
+                    ..
+                } => (**fixed_section_size, **header_size, **inline_dyn_count),
+                _ => return None,
+            };
 
         let ot_start = root.mmap_begin as usize + fixed_section_size as usize;
         let vs = root.mmap_begin as usize + header_size as usize;
@@ -258,11 +289,20 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
         if ot_start + (dy + 1) * 8 > self.data.len() {
             return None;
         }
-        let off0 = (unsafe { mmap_read_pod::<u64>(&self.data[ot_start + dy * 8..ot_start + (dy + 1) * 8]) }) as usize;
+        let off0 = (unsafe {
+            mmap_read_pod::<u64>(&self.data[ot_start + dy * 8..ot_start + (dy + 1) * 8])
+        }) as usize;
         let off1 = if dy + 1 < inline_dyn_count as usize {
-            (unsafe { mmap_read_pod::<u64>(&self.data[ot_start + (dy + 1) * 8..ot_start + (dy + 2) * 8]) }) as usize
+            (unsafe {
+                mmap_read_pod::<u64>(&self.data[ot_start + (dy + 1) * 8..ot_start + (dy + 2) * 8])
+            }) as usize
         } else {
-            (unsafe { mmap_read_pod::<u64>(&self.data[ot_start + inline_dyn_count as usize * 8..ot_start + (inline_dyn_count as usize + 1) * 8]) }) as usize
+            (unsafe {
+                mmap_read_pod::<u64>(
+                    &self.data[ot_start + inline_dyn_count as usize * 8
+                        ..ot_start + (inline_dyn_count as usize + 1) * 8],
+                )
+            }) as usize
         };
 
         Some(SchemaValue {

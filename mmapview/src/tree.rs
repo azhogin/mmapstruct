@@ -13,19 +13,23 @@ pub struct TreeOptions {
 
 impl Default for TreeOptions {
     fn default() -> Self {
-        Self { depth: 4, max_array: 20, max_string: 80, no_values: false }
+        Self {
+            depth: 4,
+            max_array: 20,
+            max_string: 80,
+            no_values: false,
+        }
     }
 }
 
 // Re-export shared schema types for backward compatibility
-pub use crate::schema::SchemaResult as SchemaLoadResult;
 pub use crate::schema::resolve_schema as load_schema_for_data;
+pub use crate::schema::SchemaResult as SchemaLoadResult;
 
 /// Render the entire file as a tree string.
 pub fn format_file(data: &[u8], opts: &TreeOptions) -> Result<String, String> {
     let loaded = load_schema_for_data(data)?;
-    let ctx =
-        mmapstruct_schema::context::RuntimeSchemaCtx::new(data, &loaded.schema_bytes);
+    let ctx = mmapstruct_schema::context::RuntimeSchemaCtx::new(data, &loaded.schema_bytes);
     let schema_reader = <mmapstruct_schema::Schema as mmapstruct::traits::MmapRead>::read(
         &loaded.schema_bytes,
         0..loaded.schema_bytes.len(),
@@ -109,8 +113,12 @@ fn write_value_inline(
             mmapstruct_schema::PrimitiveDef::I16 => out.push_str(&ctx.read_i16(val).to_string()),
             mmapstruct_schema::PrimitiveDef::U8 => out.push_str(&ctx.read_u8(val).to_string()),
             mmapstruct_schema::PrimitiveDef::I8 => out.push_str(&ctx.read_i8(val).to_string()),
-            mmapstruct_schema::PrimitiveDef::Usize => out.push_str(&ctx.read_usize(val).to_string()),
-            mmapstruct_schema::PrimitiveDef::Isize => out.push_str(&ctx.read_isize(val).to_string()),
+            mmapstruct_schema::PrimitiveDef::Usize => {
+                out.push_str(&ctx.read_usize(val).to_string())
+            }
+            mmapstruct_schema::PrimitiveDef::Isize => {
+                out.push_str(&ctx.read_isize(val).to_string())
+            }
         },
         mmapstruct_schema::TypeDefReader::Str { .. } => {
             let s = if val.mmap_end as usize <= ctx.data().len() {
@@ -119,7 +127,10 @@ fn write_value_inline(
                 "<bad str>".to_string()
             };
             if s.len() > opts.max_string {
-                out.push_str(&format!("\"{}...\"", &s[..opts.max_string.saturating_sub(3)]));
+                out.push_str(&format!(
+                    "\"{}...\"",
+                    &s[..opts.max_string.saturating_sub(3)]
+                ));
             } else {
                 out.push_str(&format!("\"{}\"", s));
             }
@@ -148,18 +159,16 @@ fn write_value_inline(
             if val.mmap_begin == val.mmap_end {
                 out.push_str("None");
             } else {
-                let inner_val = mmapstruct_schema::SchemaValue::new(
-                    val.mmap_begin, val.mmap_end, **inner_type,
-                );
+                let inner_val =
+                    mmapstruct_schema::SchemaValue::new(val.mmap_begin, val.mmap_end, **inner_type);
                 out.push_str("Some(");
                 write_value_inline(ctx, &inner_val, out, opts);
                 out.push(')');
             }
         }
         mmapstruct_schema::TypeDefReader::ByRef { inner_type } => {
-            let inner_val = mmapstruct_schema::SchemaValue::new(
-                val.mmap_begin, val.mmap_end, **inner_type,
-            );
+            let inner_val =
+                mmapstruct_schema::SchemaValue::new(val.mmap_begin, val.mmap_end, **inner_type);
             write_value_inline(ctx, &inner_val, out, opts);
         }
         mmapstruct_schema::TypeDefReader::HashMap { .. } => {
@@ -216,26 +225,48 @@ fn write_value_tree_prefix(
                 if let Some(fv) = fv {
                     let ft = ctx.type_reader(fv.type_idx);
                     write_type_annotation(ft, out);
-                    let can_expand = fv.mmap_begin < fv.mmap_end && fv.mmap_end as usize <= ctx.data().len();
+                    let can_expand =
+                        fv.mmap_begin < fv.mmap_end && fv.mmap_end as usize <= ctx.data().len();
                     if can_expand && depth < opts.depth {
                         match ft {
                             mmapstruct_schema::TypeDefReader::Struct { .. } => {
                                 out.push('\n');
-                                write_value_tree_prefix(ctx, &fv, out, &child_prefix, depth + 1, opts);
+                                write_value_tree_prefix(
+                                    ctx,
+                                    &fv,
+                                    out,
+                                    &child_prefix,
+                                    depth + 1,
+                                    opts,
+                                );
                                 continue;
                             }
                             mmapstruct_schema::TypeDefReader::Enum { .. } => {
                                 out.push_str(" = ");
                                 write_value_inline(ctx, &fv, out, opts);
                                 out.push('\n');
-                                write_value_tree_prefix(ctx, &fv, out, &child_prefix, depth + 1, opts);
+                                write_value_tree_prefix(
+                                    ctx,
+                                    &fv,
+                                    out,
+                                    &child_prefix,
+                                    depth + 1,
+                                    opts,
+                                );
                                 continue;
                             }
                             mmapstruct_schema::TypeDefReader::Array { .. } => {
                                 out.push_str(" = ");
                                 write_value_inline(ctx, &fv, out, opts);
                                 out.push('\n');
-                                write_value_tree_prefix(ctx, &fv, out, &child_prefix, depth + 1, opts);
+                                write_value_tree_prefix(
+                                    ctx,
+                                    &fv,
+                                    out,
+                                    &child_prefix,
+                                    depth + 1,
+                                    opts,
+                                );
                                 continue;
                             }
                             _ => {}
@@ -272,7 +303,8 @@ fn write_value_tree_prefix(
                         if let Some(fv) = fv {
                             let ft = ctx.type_reader(fv.type_idx);
                             write_type_annotation(ft, out);
-                            let can_expand = fv.mmap_begin < fv.mmap_end && fv.mmap_end as usize <= ctx.data().len();
+                            let can_expand = fv.mmap_begin < fv.mmap_end
+                                && fv.mmap_end as usize <= ctx.data().len();
                             if can_expand && depth < opts.depth {
                                 match ft {
                                     mmapstruct_schema::TypeDefReader::Struct { .. }
@@ -280,7 +312,14 @@ fn write_value_tree_prefix(
                                     | mmapstruct_schema::TypeDefReader::Array { .. }
                                     | mmapstruct_schema::TypeDefReader::Option { .. } => {
                                         out.push('\n');
-                                        write_value_tree_prefix(ctx, &fv, out, &child_prefix, depth + 1, opts);
+                                        write_value_tree_prefix(
+                                            ctx,
+                                            &fv,
+                                            out,
+                                            &child_prefix,
+                                            depth + 1,
+                                            opts,
+                                        );
                                         continue;
                                     }
                                     _ => {}
@@ -290,7 +329,14 @@ fn write_value_tree_prefix(
                             write_value_inline(ctx, &fv, out, opts);
                             out.push('\n');
                             if can_expand {
-                                write_value_tree_prefix(ctx, &fv, out, &child_prefix, depth + 1, opts);
+                                write_value_tree_prefix(
+                                    ctx,
+                                    &fv,
+                                    out,
+                                    &child_prefix,
+                                    depth + 1,
+                                    opts,
+                                );
                             }
                         } else {
                             out.push_str(" = <error>\n");
@@ -307,7 +353,11 @@ fn write_value_tree_prefix(
             let show = len.min(opts.max_array);
             for i in 0..show {
                 let elem_last = i + 1 == show && show == len;
-                let conn = if elem_last { "└── " } else { "├── " };
+                let conn = if elem_last {
+                    "└── "
+                } else {
+                    "├── "
+                };
                 let child_prefix = if elem_last {
                     format!("{}    ", prefix)
                 } else {
@@ -325,10 +375,7 @@ fn write_value_tree_prefix(
             }
             if len > opts.max_array {
                 let remaining = len - opts.max_array;
-                out.push_str(&format!(
-                    "{}    ... ({} more)\n",
-                    prefix, remaining
-                ));
+                out.push_str(&format!("{}    ... ({} more)\n", prefix, remaining));
             }
         }
         mmapstruct_schema::TypeDefReader::HashMap { .. } => {
@@ -359,7 +406,14 @@ fn write_value_tree_prefix(
                             | mmapstruct_schema::TypeDefReader::Enum { .. }
                             | mmapstruct_schema::TypeDefReader::Array { .. } => {
                                 out.push('\n');
-                                write_value_tree_prefix(ctx, &val_entry, out, &child_prefix, depth + 1, opts);
+                                write_value_tree_prefix(
+                                    ctx,
+                                    &val_entry,
+                                    out,
+                                    &child_prefix,
+                                    depth + 1,
+                                    opts,
+                                );
                                 continue;
                             }
                             _ => {}
@@ -369,7 +423,14 @@ fn write_value_tree_prefix(
                     write_value_inline(ctx, &val_entry, out, opts);
                     out.push('\n');
                     if can_expand {
-                        write_value_tree_prefix(ctx, &val_entry, out, &child_prefix, depth + 1, opts);
+                        write_value_tree_prefix(
+                            ctx,
+                            &val_entry,
+                            out,
+                            &child_prefix,
+                            depth + 1,
+                            opts,
+                        );
                     }
                 } else {
                     out.push_str(" = <error>\n");
@@ -381,12 +442,12 @@ fn write_value_tree_prefix(
             }
         }
         mmapstruct_schema::TypeDefReader::Option { inner_type }
-            if val.mmap_begin < val.mmap_end => {
-                let inner_val = mmapstruct_schema::SchemaValue::new(
-                    val.mmap_begin, val.mmap_end, **inner_type,
-                );
-                write_value_tree_prefix(ctx, &inner_val, out, prefix, depth, opts);
-            }
+            if val.mmap_begin < val.mmap_end =>
+        {
+            let inner_val =
+                mmapstruct_schema::SchemaValue::new(val.mmap_begin, val.mmap_end, **inner_type);
+            write_value_tree_prefix(ctx, &inner_val, out, prefix, depth, opts);
+        }
         _ => {}
     }
 }

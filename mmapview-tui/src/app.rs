@@ -94,10 +94,12 @@ impl App {
             // Already at file beginning — nothing to do
         } else {
             let overlap_lines = self.term_height * EXTENDED_WINDOW_MULTIPLIER / 3;
-            let (overscan, viewport) =
-                BottomUpJoiner::join(
-                    &self.overscan, overlap_lines, 1, self.viewport.display_height
-                );
+            let (overscan, viewport) = BottomUpJoiner::join(
+                &self.overscan,
+                overlap_lines,
+                1,
+                self.viewport.display_height,
+            );
             self.overscan = overscan;
             self.viewport = viewport;
         }
@@ -111,10 +113,12 @@ impl App {
         } else {
             if self.overscan.effective_end().is_some() {
                 let overlap_lines = self.term_height * EXTENDED_WINDOW_MULTIPLIER / 3;
-                let (overscan, viewport) =
-                    TopDownJoiner::join(
-                        &self.overscan, overlap_lines, 1, self.viewport.display_height
-                    );
+                let (overscan, viewport) = TopDownJoiner::join(
+                    &self.overscan,
+                    overlap_lines,
+                    1,
+                    self.viewport.display_height,
+                );
                 self.overscan = overscan;
                 self.viewport = viewport;
             }
@@ -123,7 +127,9 @@ impl App {
 
     fn ensure_selected_visible(&mut self) {
         let h = self.viewport.display_height;
-        let vis = self.overscan.visible_line_count_up_to(self.viewport.selected);
+        let vis = self
+            .overscan
+            .visible_line_count_up_to(self.viewport.selected);
         let vis_idx = vis.saturating_sub(1);
         if vis_idx < self.viewport.scroll {
             self.viewport.scroll = vis_idx;
@@ -136,7 +142,9 @@ impl App {
     /// Loads a prior overscan segment via BottomUpJoiner if needed.
     pub fn navigate_page_up(&mut self) {
         let page_size = self.viewport.display_height;
-        let (target, remaining) = self.overscan.nth_visible_backward(self.viewport.selected, page_size);
+        let (target, remaining) = self
+            .overscan
+            .nth_visible_backward(self.viewport.selected, page_size);
         if remaining == 0 {
             self.viewport.selected = target;
             self.ensure_selected_visible();
@@ -146,9 +154,7 @@ impl App {
         } else {
             let overlap_lines = self.term_height * EXTENDED_WINDOW_MULTIPLIER / 3;
             let (overscan, viewport) =
-                BottomUpJoiner::join(
-                    &self.overscan, overlap_lines, remaining, page_size
-                );
+                BottomUpJoiner::join(&self.overscan, overlap_lines, remaining, page_size);
             self.overscan = overscan;
             self.viewport = viewport;
         }
@@ -158,16 +164,16 @@ impl App {
     /// Loads a subsequent overscan segment via TopDownJoiner if needed.
     pub fn navigate_page_down(&mut self) {
         let page_size = self.viewport.display_height;
-        let (target, remaining) = self.overscan.nth_visible_forward(self.viewport.selected, page_size);
+        let (target, remaining) = self
+            .overscan
+            .nth_visible_forward(self.viewport.selected, page_size);
         if remaining == 0 {
             self.viewport.selected = target;
             self.ensure_selected_visible();
         } else if self.overscan.effective_end().is_some() {
             let overlap_lines = self.term_height * EXTENDED_WINDOW_MULTIPLIER / 3;
             let (overscan, viewport) =
-                TopDownJoiner::join(
-                    &self.overscan, overlap_lines, remaining, page_size
-                );
+                TopDownJoiner::join(&self.overscan, overlap_lines, remaining, page_size);
             self.overscan = overscan;
             self.viewport = viewport;
         } else if let Some(last) = self.overscan.last_visible() {
@@ -280,7 +286,10 @@ impl App {
         let ctx = self.overscan.scanner.ctx;
         let cur_path = self.overscan.path_of(self.viewport.selected);
         let pos = cur_path.iter().rposition(|seg| {
-            matches!(ctx.type_reader(seg.val.type_idx), TypeDefReader::Array { .. })
+            matches!(
+                ctx.type_reader(seg.val.type_idx),
+                TypeDefReader::Array { .. }
+            )
         })?;
         let arr = cur_path[pos].val;
         let prefix = Path(cur_path[..pos].to_vec());
@@ -291,7 +300,10 @@ impl App {
         let ctx = self.overscan.scanner.ctx;
         let cur_path = self.overscan.path_of(self.viewport.selected);
         let pos = cur_path.iter().rposition(|seg| {
-            matches!(ctx.type_reader(seg.val.type_idx), TypeDefReader::HashMap { .. })
+            matches!(
+                ctx.type_reader(seg.val.type_idx),
+                TypeDefReader::HashMap { .. }
+            )
         })?;
         let map_val = cur_path[pos].val;
         let prefix = Path(cur_path[..pos].to_vec());
@@ -301,7 +313,9 @@ impl App {
     /// Execute a text search from the current selection + 1.
     /// First tries fast-path (`field:number`), then text search.
     pub fn search_first(&mut self) {
-        let Some(pattern) = self.search.get_pattern() else { return };
+        let Some(pattern) = self.search.get_pattern() else {
+            return;
+        };
 
         // Fast-path: /id:42 → direct jump
         if let Some(fp) = self.search.parse_fast_path() {
@@ -315,7 +329,9 @@ impl App {
 
     /// Move to the next match (forward from current selection + 1).
     pub fn search_next(&mut self) {
-        let Some(pattern) = self.search.get_pattern() else { return };
+        let Some(pattern) = self.search.get_pattern() else {
+            return;
+        };
         self.search_impl(&pattern);
     }
 
@@ -354,10 +370,15 @@ impl App {
         self.overscan = Overscan::from_next(&self.overscan, new_scanner);
 
         // Find the match position in the new overscan
-        let match_pos = self.overscan.nodes.iter().position(|n| {
-            n.value.mmap_begin == mp.last().map(|s| s.val.mmap_begin).unwrap_or(0)
-                && n.value.type_idx == mp.last().map(|s| s.val.type_idx).unwrap_or(0)
-        }).unwrap_or(steps_taken);
+        let match_pos = self
+            .overscan
+            .nodes
+            .iter()
+            .position(|n| {
+                n.value.mmap_begin == mp.last().map(|s| s.val.mmap_begin).unwrap_or(0)
+                    && n.value.type_idx == mp.last().map(|s| s.val.type_idx).unwrap_or(0)
+            })
+            .unwrap_or(steps_taken);
 
         self.viewport.selected = match_pos;
         self.viewport.scroll = 0;
@@ -401,8 +422,14 @@ impl App {
         }
         // For containers, also check preview text (matches what the user sees)
         if node.has_children {
-            let parent = node.parent_val.map(|pv| (pv, node.shift.map(|s| s.index()).unwrap_or(0)));
-            if let Some(preview) = self.overscan.scanner.format_preview_text(&node.value, parent, 200) {
+            let parent = node
+                .parent_val
+                .map(|pv| (pv, node.shift.map(|s| s.index()).unwrap_or(0)));
+            if let Some(preview) =
+                self.overscan
+                    .scanner
+                    .format_preview_text(&node.value, parent, 200)
+            {
                 if preview.contains(pat) {
                     return true;
                 }
@@ -443,7 +470,11 @@ impl App {
     /// If no end marker exists (all data fits in one overscan), positions
     /// the viewport at `last_visible()` directly.
     pub fn navigate_end(&mut self) {
-        let end_path = match self.overscan.cursor.end.clone()
+        let end_path = match self
+            .overscan
+            .cursor
+            .end
+            .clone()
             .or_else(|| self.overscan.cursor.effective_end_stack.last().cloned())
         {
             Some(p) => p,
@@ -510,11 +541,8 @@ impl App {
 
         // Step back from last_path by OVERSCAN_STEPS - 1
         let back_scanner = Scanner::from_path(ctx, last_path.clone(), 0);
-        let (scan_start, steps) = back_scanner.do_steps_back(
-            &last_path,
-            OVERSCAN_STEPS - 1,
-            &should_step_in,
-        );
+        let (scan_start, steps) =
+            back_scanner.do_steps_back(&last_path, OVERSCAN_STEPS - 1, &should_step_in);
 
         debug_log!("  scan_start: {:?}  steps_back: {}", scan_start, steps);
 
@@ -535,6 +563,10 @@ impl App {
         let vis_idx = vis.saturating_sub(1);
         self.viewport.selected = sel;
         self.viewport.scroll = vis_idx.saturating_sub(self.viewport.display_height - 1);
-        debug_log!("  done — selected: {}  scroll: {}", sel, self.viewport.scroll);
+        debug_log!(
+            "  done — selected: {}  scroll: {}",
+            sel,
+            self.viewport.scroll
+        );
     }
 }

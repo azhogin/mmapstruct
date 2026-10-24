@@ -195,10 +195,7 @@ pub enum ArrayLayout {
         stride: u64,
     },
     /// Fixed-size pod array (`[T; N]`): known count at compile time.
-    FixedPod {
-        stride: u64,
-        count: u64,
-    },
+    FixedPod { stride: u64, count: u64 },
     /// Indexed array (default `Vec<T>`): `[count: u64, offsets: [u64; count], values...]`.
     Indexed,
     /// Fixed array (`#[fixed]` on `Vec<T>`): `[count: u64, total_size: u64, elements...]`.
@@ -243,19 +240,45 @@ impl<'a> SchemaCtx<'a> {
         unsafe { mmap_read_pod::<T>(&self.data[off..off + core::mem::size_of::<T>()]) }
     }
 
-    pub fn read_u32(&self, dv: &Value) -> u32 { self.read_pod(dv) }
-    pub fn read_u64(&self, dv: &Value) -> u64 { self.read_pod(dv) }
-    pub fn read_i32(&self, dv: &Value) -> i32 { self.read_pod(dv) }
-    pub fn read_i64(&self, dv: &Value) -> i64 { self.read_pod(dv) }
-    pub fn read_f32(&self, dv: &Value) -> f32 { self.read_pod(dv) }
-    pub fn read_f64(&self, dv: &Value) -> f64 { self.read_pod(dv) }
-    pub fn read_u16(&self, dv: &Value) -> u16 { self.read_pod(dv) }
-    pub fn read_i16(&self, dv: &Value) -> i16 { self.read_pod(dv) }
-    pub fn read_u8(&self, dv: &Value) -> u8 { self.read_pod(dv) }
-    pub fn read_i8(&self, dv: &Value) -> i8 { self.read_pod(dv) }
-    pub fn read_usize(&self, dv: &Value) -> usize { self.read_u64(dv) as usize }
-    pub fn read_isize(&self, dv: &Value) -> isize { self.read_i64(dv) as isize }
-    pub fn read_bool(&self, dv: &Value) -> bool { self.read_pod::<u32>(dv) != 0 }
+    pub fn read_u32(&self, dv: &Value) -> u32 {
+        self.read_pod(dv)
+    }
+    pub fn read_u64(&self, dv: &Value) -> u64 {
+        self.read_pod(dv)
+    }
+    pub fn read_i32(&self, dv: &Value) -> i32 {
+        self.read_pod(dv)
+    }
+    pub fn read_i64(&self, dv: &Value) -> i64 {
+        self.read_pod(dv)
+    }
+    pub fn read_f32(&self, dv: &Value) -> f32 {
+        self.read_pod(dv)
+    }
+    pub fn read_f64(&self, dv: &Value) -> f64 {
+        self.read_pod(dv)
+    }
+    pub fn read_u16(&self, dv: &Value) -> u16 {
+        self.read_pod(dv)
+    }
+    pub fn read_i16(&self, dv: &Value) -> i16 {
+        self.read_pod(dv)
+    }
+    pub fn read_u8(&self, dv: &Value) -> u8 {
+        self.read_pod(dv)
+    }
+    pub fn read_i8(&self, dv: &Value) -> i8 {
+        self.read_pod(dv)
+    }
+    pub fn read_usize(&self, dv: &Value) -> usize {
+        self.read_u64(dv) as usize
+    }
+    pub fn read_isize(&self, dv: &Value) -> isize {
+        self.read_i64(dv) as isize
+    }
+    pub fn read_bool(&self, dv: &Value) -> bool {
+        self.read_pod::<u32>(dv) != 0
+    }
 
     /// Read a string using the Value's offset..limit range.
     /// Trailing null bytes are trimmed (for `#[mmap(inline(N))]` strings).
@@ -724,9 +747,7 @@ pub fn dyn_value_align(vt: &DynValueType) -> usize {
         DynValueType::Option(inner) => dyn_value_align(inner).max(1),
         DynValueType::ByRef(inner) => dyn_value_align(inner),
         DynValueType::Array(layout) => match &layout.layout {
-            ArrayLayout::FixedPod { stride, .. } => {
-                (*stride as usize).min(8).next_power_of_two()
-            }
+            ArrayLayout::FixedPod { stride, .. } => (*stride as usize).min(8).next_power_of_two(),
             _ => 8,
         },
         DynValueType::HashMap(_) => 8,
@@ -756,7 +777,10 @@ pub(crate) const fn align_up(offset: usize, align: usize) -> usize {
 }
 
 fn is_byref_value_type(vt: &DynValueType) -> bool {
-    matches!(vt, DynValueType::ByRef(_) | DynValueType::Option(DynValueType::ByRef(_)))
+    matches!(
+        vt,
+        DynValueType::ByRef(_) | DynValueType::Option(DynValueType::ByRef(_))
+    )
 }
 
 impl DynValueType {

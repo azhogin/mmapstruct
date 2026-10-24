@@ -1,5 +1,5 @@
-use std::fs;
 use std::collections::HashMap;
+use std::fs;
 
 use mmapstruct::{bytemuck, MmapStruct};
 use mmapstruct_schema::write_to_file_with_embedded_schema;
@@ -41,7 +41,11 @@ struct ItemCatalog {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = if args.len() > 1 { &args[1] } else { "/tmp/mmv_test.mms" };
+    let path = if args.len() > 1 {
+        &args[1]
+    } else {
+        "/tmp/mmv_test.mms"
+    };
 
     let catalog = ItemCatalog {
         version: 42,
@@ -50,24 +54,37 @@ fn main() {
                 name: "Sword".into(),
                 price: 100,
                 tags: vec![
-                    TagInfo { name: "weapon".into(), count: 1 },
-                    TagInfo { name: "melee".into(), count: 2 },
+                    TagInfo {
+                        name: "weapon".into(),
+                        count: 1,
+                    },
+                    TagInfo {
+                        name: "melee".into(),
+                        count: 2,
+                    },
                 ],
                 category: Category::Weapon { damage: 50 },
             },
             Item {
                 name: "Shield".into(),
                 price: 200,
-                tags: vec![
-                    TagInfo { name: "armor".into(), count: 3 },
-                ],
-                category: Category::Consumable { heal: 0, charges: 1 },
+                tags: vec![TagInfo {
+                    name: "armor".into(),
+                    count: 3,
+                }],
+                category: Category::Consumable {
+                    heal: 0,
+                    charges: 1,
+                },
             },
             Item {
                 name: "Potion".into(),
                 price: 50,
                 tags: vec![],
-                category: Category::Consumable { heal: 30, charges: 3 },
+                category: Category::Consumable {
+                    heal: 30,
+                    charges: 3,
+                },
             },
         ],
         metadata: Metadata {

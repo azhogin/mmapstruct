@@ -1,4 +1,4 @@
-use mmapstruct::{SchemaCtx, DynValueType, Value};
+use mmapstruct::{DynValueType, SchemaCtx, Value};
 use mmapstruct_schema::context::RuntimeSchemaCtx;
 use mmapstruct_schema::schema::TypeDefReader;
 use mmapstruct_schema::SchemaValue;

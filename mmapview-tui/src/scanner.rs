@@ -44,17 +44,21 @@ impl Scanner {
         root_val: SchemaValue,
         steps: usize,
     ) -> Self {
-        let path = Path(vec![PathSegment { val: root_val, shift: PathShift::Field(0) }]);
+        let path = Path(vec![PathSegment {
+            val: root_val,
+            shift: PathShift::Field(0),
+        }]);
         Scanner::from_path(ctx, path, steps)
     }
 
-    pub fn from_path(
-        ctx: &'static RuntimeSchemaCtx<'static>,
-        path: Path,
-        steps: usize,
-    ) -> Self {
+    pub fn from_path(ctx: &'static RuntimeSchemaCtx<'static>, path: Path, steps: usize) -> Self {
         let lb = path.lines_begin();
-        Scanner { ctx, path, lines_begin: lb, steps }
+        Scanner {
+            ctx,
+            path,
+            lines_begin: lb,
+            steps,
+        }
     }
 
     /// Try to build a `Scanner` from a string path like `/items[0]/label`.
@@ -81,9 +85,15 @@ impl Scanner {
     }
 
     fn stack_to_path(stack: &[(SchemaValue, PathShift)]) -> Path {
-        Path(stack.iter()
-            .map(|(val, shift)| PathSegment { val: *val, shift: *shift })
-            .collect())
+        Path(
+            stack
+                .iter()
+                .map(|(val, shift)| PathSegment {
+                    val: *val,
+                    shift: *shift,
+                })
+                .collect(),
+        )
     }
 
     pub fn do_steps<F, P>(&self, mut callback: F, mut should_step_in: P) -> Option<Path>
@@ -96,10 +106,8 @@ impl Scanner {
             return Some(self.path.clone());
         }
         // Stack: [(parent, shift_into_parent)] — one entry per level
-        let mut stack: Vec<(SchemaValue, PathShift)> = self.path
-            .iter()
-            .map(|seg| (seg.val, seg.shift))
-            .collect();
+        let mut stack: Vec<(SchemaValue, PathShift)> =
+            self.path.iter().map(|seg| (seg.val, seg.shift)).collect();
 
         let (parent, shift) = stack.last()?;
         let idx = shift.index();
@@ -294,10 +302,7 @@ impl Scanner {
     /// returns `true`), descends into it recursively.  Stops at the
     /// first collapsed child (or the leaf of an expanded chain).
     /// Returns `None` if the root has no visible children.
-    pub fn last_visible_path(
-        &self,
-        should_step_in: &impl Fn(SchemaValue) -> bool,
-    ) -> Option<Path> {
+    pub fn last_visible_path(&self, should_step_in: &impl Fn(SchemaValue) -> bool) -> Option<Path> {
         let root_val = self.path[0].val;
         self.last_visible_recursive(root_val, should_step_in)
     }
@@ -342,8 +347,7 @@ impl Scanner {
             }
             TypeDefReader::Array { .. } => self.ctx.array_len(val) as usize,
             TypeDefReader::HashMap { .. } => self.ctx.hashmap_len(val),
-            TypeDefReader::Option { .. }
-                if val.mmap_begin < val.mmap_end => { 1 }
+            TypeDefReader::Option { .. } if val.mmap_begin < val.mmap_end => 1,
             _ => 0,
         }
     }
@@ -371,9 +375,7 @@ impl Scanner {
                 }
             }
             TypeDefReader::Array { .. } => self.ctx.array_get(val, idx as u64),
-            TypeDefReader::HashMap { .. } => {
-                self.ctx.hashmap_get_index(val, idx).map(|(_, v)| v)
-            }
+            TypeDefReader::HashMap { .. } => self.ctx.hashmap_get_index(val, idx).map(|(_, v)| v),
             TypeDefReader::Option { inner_type } => {
                 if idx == 0 && val.mmap_begin < val.mmap_end {
                     Some(SchemaValue::new(val.mmap_begin, val.mmap_end, **inner_type))
@@ -398,9 +400,18 @@ impl Scanner {
                 use std::fmt::Write;
                 let indent = "  ".repeat(ctx.depth);
                 let has_children = self.child_count(&ctx.val) > 0;
-                let arrow = if !has_children { " " } else if ctx.expand { "▼" } else { "▶" };
+                let arrow = if !has_children {
+                    " "
+                } else if ctx.expand {
+                    "▼"
+                } else {
+                    "▶"
+                };
                 if let Some((ref p, idx)) = ctx.parent {
-                    if matches!(self.ctx.type_reader(p.type_idx), TypeDefReader::Array { .. }) {
+                    if matches!(
+                        self.ctx.type_reader(p.type_idx),
+                        TypeDefReader::Array { .. }
+                    ) {
                         let inline = inline_value_text(self.ctx, &ctx.val);
                         writeln!(out, "{}{}[{}] = {}", indent, arrow, idx, inline).unwrap();
                         return;
@@ -412,11 +423,19 @@ impl Scanner {
                         return;
                     }
                 }
-                let name = ctx.parent.and_then(|(p, idx)| self.field_name(&p, idx)).unwrap_or_default();
+                let name = ctx
+                    .parent
+                    .and_then(|(p, idx)| self.field_name(&p, idx))
+                    .unwrap_or_default();
                 let type_ann = type_annotation(self.ctx.type_reader(ctx.val.type_idx));
                 let inline = inline_value_text(self.ctx, &ctx.val);
                 if name.is_empty() {
-                    writeln!(out, "{}{} type={}{} = {}", indent, arrow, ctx.val.type_idx, type_ann, inline).unwrap();
+                    writeln!(
+                        out,
+                        "{}{} type={}{} = {}",
+                        indent, arrow, ctx.val.type_idx, type_ann, inline
+                    )
+                    .unwrap();
                 } else {
                     writeln!(out, "{}{} {}{} = {}", indent, arrow, name, type_ann, inline).unwrap();
                 }
@@ -429,12 +448,18 @@ impl Scanner {
     /// Load up to `limit` direct children of `val` (one level, no recursion).
     /// Returns `(child_value, child_index)` pairs and an optional `virtual_end`
     /// path pointing to the first unloaded child (when `limit < child_count`).
-    pub fn load_children(&self, val: &SchemaValue, limit: usize) -> (Vec<(SchemaValue, usize)>, Option<Path>) {
+    pub fn load_children(
+        &self,
+        val: &SchemaValue,
+        limit: usize,
+    ) -> (Vec<(SchemaValue, usize)>, Option<Path>) {
         let n = self.child_count(val).min(limit);
-        let children: Vec<_> = (0..n).filter_map(|i| {
-            let child = self.child_at(val, i)?;
-            Some((child, i))
-        }).collect();
+        let children: Vec<_> = (0..n)
+            .filter_map(|i| {
+                let child = self.child_at(val, i)?;
+                Some((child, i))
+            })
+            .collect();
 
         let virtual_end = if n < self.child_count(val) {
             let shift = self.child_shift(val, n);
@@ -447,9 +472,16 @@ impl Scanner {
         (children, virtual_end)
     }
 
-    pub(crate) fn format_display_text(&self, val: &SchemaValue, parent: Option<(SchemaValue, usize)>) -> String {
+    pub(crate) fn format_display_text(
+        &self,
+        val: &SchemaValue,
+        parent: Option<(SchemaValue, usize)>,
+    ) -> String {
         if let Some((ref p, idx)) = parent {
-            if matches!(self.ctx.type_reader(p.type_idx), TypeDefReader::Array { .. }) {
+            if matches!(
+                self.ctx.type_reader(p.type_idx),
+                TypeDefReader::Array { .. }
+            ) {
                 let inline = inline_value_text(self.ctx, val);
                 let type_ann = type_annotation(self.ctx.type_reader(val.type_idx));
                 let text = format!("[{}]{} = {}", idx, type_ann, inline);
@@ -475,7 +507,9 @@ impl Scanner {
             .and_then(|(p, idx)| self.field_name(p, *idx))
             .unwrap_or_default();
         let type_ann = type_annotation(self.ctx.type_reader(val.type_idx));
-        let byref = parent.as_ref().is_some_and(|(p, idx)| self.ctx.is_field_byref(p, *idx));
+        let byref = parent
+            .as_ref()
+            .is_some_and(|(p, idx)| self.ctx.is_field_byref(p, *idx));
         let inline = if byref {
             format!("&{}", inline_value_text(self.ctx, val))
         } else {
@@ -505,7 +539,10 @@ impl Scanner {
         char_limit: usize,
     ) -> Option<String> {
         if let Some((ref p, idx)) = parent {
-            if matches!(self.ctx.type_reader(p.type_idx), TypeDefReader::Array { .. }) {
+            if matches!(
+                self.ctx.type_reader(p.type_idx),
+                TypeDefReader::Array { .. }
+            ) {
                 let prefix = format!("[{}] = ", idx);
                 let preview = preview_text(self.ctx, val, char_limit.saturating_sub(prefix.len()))?;
                 return Some(format!("{}{}", prefix, preview));
@@ -522,7 +559,9 @@ impl Scanner {
             .and_then(|(p, idx)| self.field_name(p, *idx))
             .unwrap_or_default();
         let type_ann = type_annotation(self.ctx.type_reader(val.type_idx));
-        let byref = parent.as_ref().is_some_and(|(p, idx)| self.ctx.is_field_byref(p, *idx));
+        let byref = parent
+            .as_ref()
+            .is_some_and(|(p, idx)| self.ctx.is_field_byref(p, *idx));
         let prefix_len = if name.is_empty() {
             format!("type={}{} = ", val.type_idx, type_ann).len()
         } else {
@@ -562,14 +601,16 @@ impl Scanner {
             return (None, None);
         }
 
-        let mut stack: Vec<(SchemaValue, PathShift)> = self.path
-            .iter()
-            .map(|seg| (seg.val, seg.shift))
-            .collect();
+        let mut stack: Vec<(SchemaValue, PathShift)> =
+            self.path.iter().map(|seg| (seg.val, seg.shift)).collect();
 
-        let Some((parent, shift)) = stack.last() else { return (None, None); };
+        let Some((parent, shift)) = stack.last() else {
+            return (None, None);
+        };
         let idx = shift.index();
-        let Some(current) = self.child_at(parent, idx) else { return (None, None); };
+        let Some(current) = self.child_at(parent, idx) else {
+            return (None, None);
+        };
         let mut current = current;
         let mut expand = should_step_in(current);
 
@@ -581,7 +622,9 @@ impl Scanner {
 
         for _ in 1..n {
             if expand && self.child_count(&current) > 0 {
-                let Some(child) = self.child_at(&current, 0) else { return (None, None); };
+                let Some(child) = self.child_at(&current, 0) else {
+                    return (None, None);
+                };
                 stack.push((current, self.child_shift(&current, 0)));
                 current = child;
                 expand = should_step_in(current);
@@ -595,12 +638,16 @@ impl Scanner {
             }
 
             loop {
-                let Some(last) = stack.len().checked_sub(1) else { return (None, None); };
+                let Some(last) = stack.len().checked_sub(1) else {
+                    return (None, None);
+                };
                 let idx = stack[last].1.index();
                 if idx + 1 < self.child_count(&stack[last].0) {
                     let new_shift = self.child_shift(&stack[last].0, idx + 1);
                     stack[last].1 = new_shift;
-                    let Some(child) = self.child_at(&stack[last].0, idx + 1) else { return (None, None); };
+                    let Some(child) = self.child_at(&stack[last].0, idx + 1) else {
+                        return (None, None);
+                    };
                     current = child;
                     expand = should_step_in(current);
 
@@ -621,7 +668,9 @@ impl Scanner {
                 if idx + 1 < self.child_count(&stack[last].0) {
                     let new_shift = self.child_shift(&stack[last].0, idx + 1);
                     stack[last].1 = new_shift;
-                    let Some(child) = self.child_at(&stack[last].0, idx + 1) else { return (None, None); };
+                    let Some(child) = self.child_at(&stack[last].0, idx + 1) else {
+                        return (None, None);
+                    };
                     current = child;
                     expand = should_step_in(current);
 
@@ -659,13 +708,13 @@ impl Scanner {
     /// Build the `Path` that, when used as a scanner start path, will
     /// visit `current` first (the element at `child_idx` of `stack`'s
     /// top-of-stack parent).
-    fn path_for_match(
-        &self,
-        stack: &[(SchemaValue, PathShift)],
-        child_idx: usize,
-    ) -> Path {
-        let mut segs: Vec<PathSegment> = stack.iter()
-            .map(|(val, shift)| PathSegment { val: *val, shift: *shift })
+    fn path_for_match(&self, stack: &[(SchemaValue, PathShift)], child_idx: usize) -> Path {
+        let mut segs: Vec<PathSegment> = stack
+            .iter()
+            .map(|(val, shift)| PathSegment {
+                val: *val,
+                shift: *shift,
+            })
             .collect();
         if let Some(last) = segs.last_mut() {
             last.shift = self.child_shift(&stack.last().unwrap().0, child_idx);
@@ -676,9 +725,7 @@ impl Scanner {
     pub(crate) fn field_name(&self, parent: &SchemaValue, idx: usize) -> Option<String> {
         let t = self.ctx.type_reader(parent.type_idx);
         match t {
-            TypeDefReader::Struct { fields, .. } => {
-                fields.get(idx).map(|f| f.name.to_string())
-            }
+            TypeDefReader::Struct { fields, .. } => fields.get(idx).map(|f| f.name.to_string()),
             TypeDefReader::Enum { .. } => {
                 let (variant_type_idx, _) = self.ctx.enum_variant(parent)?;
                 let vt = self.ctx.type_reader(variant_type_idx);
@@ -698,10 +745,17 @@ impl Scanner {
 
     fn hashmap_prefix(&self, parent: &SchemaValue) -> Option<String> {
         let t = self.ctx.type_reader(parent.type_idx);
-        if let TypeDefReader::HashMap { key_type, val_type, .. } = t {
+        if let TypeDefReader::HashMap {
+            key_type, val_type, ..
+        } = t
+        {
             let kt = self.ctx.type_reader(**key_type);
             let vt = self.ctx.type_reader(**val_type);
-            Some(format!("({}→{}) ", type_name_short(kt), type_name_short(vt)))
+            Some(format!(
+                "({}→{}) ",
+                type_name_short(kt),
+                type_name_short(vt)
+            ))
         } else {
             None
         }
@@ -716,7 +770,11 @@ fn type_name_short<'a>(t: &'a TypeDefReader<'a>) -> &'a str {
         TypeDefReader::HashMap { .. } => "{}",
         _ => {
             let ann = type_annotation(t);
-            if ann.len() > 2 { &ann[2..] } else { "?" }
+            if ann.len() > 2 {
+                &ann[2..]
+            } else {
+                "?"
+            }
         }
     }
 }
@@ -724,11 +782,11 @@ fn type_name_short<'a>(t: &'a TypeDefReader<'a>) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mmapstruct::MmapStruct;
+    use bytemuck::{Pod, Zeroable};
     use mmapstruct::schema::GetSchema;
     use mmapstruct::traits::{LayoutHash, MmapRead, MmapWrite};
+    use mmapstruct::MmapStruct;
     use mmapstruct_schema::{write_to_file_with_embedded_schema, Schema};
-    use bytemuck::{Pod, Zeroable};
 
     #[derive(MmapStruct, Default, Clone, Copy, Debug, Pod, Zeroable)]
     #[repr(C)]
@@ -757,9 +815,8 @@ mod tests {
         let loaded = crate::schema::load_schema(&buf, None, None).unwrap();
         let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
         let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
-        let ctx: &'static RuntimeSchemaCtx<'static> = Box::leak(Box::new(
-            RuntimeSchemaCtx::new(data, schema_bytes),
-        ));
+        let ctx: &'static RuntimeSchemaCtx<'static> =
+            Box::leak(Box::new(RuntimeSchemaCtx::new(data, schema_bytes)));
         let schema_reader = <Schema as MmapRead>::read(schema_bytes, 0..schema_bytes.len());
         let root_type = *schema_reader.root_type;
         let root = SchemaValue::new(
@@ -781,14 +838,22 @@ mod tests {
             |_| false,
         );
 
-        assert_eq!(items.len(), 2, "expected 2 items (2 fields), got {}", items.len());
+        assert_eq!(
+            items.len(),
+            2,
+            "expected 2 items (2 fields), got {}",
+            items.len()
+        );
         assert_eq!(items[0].1, Step::StepLine);
         assert_eq!(items[1].1, Step::StepLine);
     }
 
     #[test]
     fn test_do_steps_back_preserves_order() {
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let should_step_in = |v: SchemaValue| {
             let s = Scanner::new(ctx, root, 10);
@@ -799,10 +864,7 @@ mod tests {
         // the silent advance returns None (end of data).
         let forward_scanner = Scanner::new(ctx, root, 3);
         let mut forward = Vec::new();
-        forward_scanner.do_steps(
-            |ctx: StepContext| forward.push(ctx.val),
-            should_step_in,
-        );
+        forward_scanner.do_steps(|ctx: StepContext| forward.push(ctx.val), should_step_in);
 
         assert_eq!(forward.len(), 3);
 
@@ -835,13 +897,11 @@ mod tests {
         assert_eq!(steps, 0, "should be at beginning of data");
 
         // Verify that going back past the beginning returns 0 steps
-        let first_path = Scanner::new(ctx, root, 1).do_steps(
-            |_: StepContext| {},
-            should_step_in,
-        );
+        let first_path = Scanner::new(ctx, root, 1).do_steps(|_: StepContext| {}, should_step_in);
         // first_path is the continuation path after the first element
         // Walk back to get the first element's path, then try again
-        let (actual_first, steps) = forward_scanner.do_steps_back(&first_path.unwrap(), 1, &should_step_in);
+        let (actual_first, steps) =
+            forward_scanner.do_steps_back(&first_path.unwrap(), 1, &should_step_in);
         assert_eq!(steps, 1, "should be able to go back to first element");
         let (_, steps) = forward_scanner.do_steps_back(&actual_first, 1, &should_step_in);
         assert_eq!(steps, 0, "should be at beginning of data");
@@ -861,7 +921,10 @@ mod tests {
     #[test]
     fn test_print_outer_via_new() {
         // Scanner::new starts at Field(0) — depth=1, cursor on `inner`.
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         let (ctx, root) = setup(&o);
         let overscan = Scanner::new(ctx, root, 10);
         assert_eq!(
@@ -877,29 +940,43 @@ mod tests {
     #[test]
     fn test_print_outer_via_navigate_root() {
         // "/" → auto-step into root → same as Scanner::new
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
-        generic_print_test(&o, "/", concat!(
-            "  ▼ inner = Inner { ... }\n",
-            "      a: u32 = 7\n",
-            "    y: u32 = 99\n",
-        ));
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
+        generic_print_test(
+            &o,
+            "/",
+            concat!(
+                "  ▼ inner = Inner { ... }\n",
+                "      a: u32 = 7\n",
+                "    y: u32 = 99\n",
+            ),
+        );
     }
 
     #[test]
     fn test_print_outer_via_navigate_y() {
         // "/y" → field(1) of root, primitive → no auto-step
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
         generic_print_test(&o, "/y", "    y: u32 = 99\n");
     }
 
     #[test]
     fn test_print_outer_via_navigate_inner() {
         // "/inner" → field(0) of root, then auto-step into child 0
-        let o = Outer { inner: Inner { a: 7 }, y: 99 };
-        generic_print_test(&o, "/inner", concat!(
-            "      a: u32 = 7\n",
-            "    y: u32 = 99\n",
-        ));
+        let o = Outer {
+            inner: Inner { a: 7 },
+            y: 99,
+        };
+        generic_print_test(
+            &o,
+            "/inner",
+            concat!("      a: u32 = 7\n", "    y: u32 = 99\n",),
+        );
     }
 
     #[test]
@@ -915,10 +992,7 @@ mod tests {
         // Scan another from end — should get element 1 (the last one)
         let sc2 = Scanner::from_path(ctx, end.unwrap(), 1);
         let mut items = Vec::new();
-        let end2 = sc2.do_steps(
-            |ctx: StepContext| items.push(ctx.val),
-            |_| false,
-        );
+        let end2 = sc2.do_steps(|ctx: StepContext| items.push(ctx.val), |_| false);
         // After scanning y (last element), silent advance fails → end2 is None
         assert!(end2.is_none(), "end should be None after last element");
         assert_eq!(items.len(), 1, "should get 1 element");
@@ -933,10 +1007,7 @@ mod tests {
         // plus the silent advance will try to go past the end
         let sc = Scanner::new(ctx, root, 2);
         let mut items = Vec::new();
-        let end = sc.do_steps(
-            |ctx: StepContext| items.push(ctx.val),
-            |_| false,
-        );
+        let end = sc.do_steps(|ctx: StepContext| items.push(ctx.val), |_| false);
         assert_eq!(items.len(), 2, "should get 2 elements");
         // end is None because after scanning 2 elements of a 2-item struct,
         // there's nowhere left to advance
@@ -961,8 +1032,7 @@ mod tests {
         let _ = sc2.do_steps(|ctx: StepContext| second.push(ctx.val), |_| false);
         assert_eq!(second.len(), 1);
         assert!(
-            first[0].type_idx != second[0].type_idx
-                || first[0].mmap_begin != second[0].mmap_begin,
+            first[0].type_idx != second[0].type_idx || first[0].mmap_begin != second[0].mmap_begin,
             "first and second batch should be different elements"
         );
     }

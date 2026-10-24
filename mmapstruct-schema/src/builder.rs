@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use mmapstruct::{
-    compute_crc64, write_to_buf_raw, ArrayLayout, DynValueType, FileHeader, GetSchema, HEADER_SIZE,
-    LayoutHash, MmapWrite, StructSchema, schema::EnumSchema,
+    compute_crc64, schema::EnumSchema, write_to_buf_raw, ArrayLayout, DynValueType, FileHeader,
+    GetSchema, LayoutHash, MmapWrite, StructSchema, HEADER_SIZE,
 };
 
 use crate::schema;
@@ -79,9 +79,14 @@ impl Builder {
                 let elem_idx = self.visit(arr.elem_type);
                 let layout = match &arr.layout {
                     ArrayLayout::Pod { stride } => schema::ArrayLayoutDef::Pod { stride: *stride },
-                    ArrayLayout::FixedPod { stride, count } => schema::ArrayLayoutDef::FixedPod { stride: *stride, count: *count },
+                    ArrayLayout::FixedPod { stride, count } => schema::ArrayLayoutDef::FixedPod {
+                        stride: *stride,
+                        count: *count,
+                    },
                     ArrayLayout::Indexed => schema::ArrayLayoutDef::Indexed,
-                    ArrayLayout::Fixed { stride } => schema::ArrayLayoutDef::Fixed { stride: *stride },
+                    ArrayLayout::Fixed { stride } => {
+                        schema::ArrayLayoutDef::Fixed { stride: *stride }
+                    }
                 };
                 schema::TypeDef::Array {
                     elem_type: elem_idx,
@@ -162,15 +167,19 @@ impl Builder {
             // Create the Struct type for this variant in the types table
             let variant_type = schema::TypeDef::Struct {
                 name: vs.name.to_string(),
-                fields: vs.fields.iter().map(|fd| {
-                    let type_idx = self.visit(fd.value_type);
-                    schema::FieldDef {
-                        name: fd.name.to_string(),
-                        type_index: type_idx,
-                        offset_in_fixed: fd.offset_in_fixed,
-                        inline_dyn_index: fd.inline_dyn_index.map(|i| i as u32),
-                    }
-                }).collect(),
+                fields: vs
+                    .fields
+                    .iter()
+                    .map(|fd| {
+                        let type_idx = self.visit(fd.value_type);
+                        schema::FieldDef {
+                            name: fd.name.to_string(),
+                            type_index: type_idx,
+                            offset_in_fixed: fd.offset_in_fixed,
+                            inline_dyn_index: fd.inline_dyn_index.map(|i| i as u32),
+                        }
+                    })
+                    .collect(),
                 fixed_section_size: vs.fixed_section_size,
                 header_size: vs.header_size,
                 inline_dyn_count: vs.inline_dyn_count as u32,

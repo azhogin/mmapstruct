@@ -7,11 +7,10 @@ pub mod registry;
 pub mod schema;
 pub mod value;
 
-
 // Re-export key schema types for convenience
 pub use schema::{
-    ArrayLayoutDef, ArrayLayoutDefReader, FieldDef, FieldDefReader, PrimitiveDef,
-    Schema, SchemaReader, TypeDef, TypeDefReader, VariantDef, VariantDefReader,
+    ArrayLayoutDef, ArrayLayoutDefReader, FieldDef, FieldDefReader, PrimitiveDef, Schema,
+    SchemaReader, TypeDef, TypeDefReader, VariantDef, VariantDefReader,
 };
 
 // Re-export context public API
@@ -31,5 +30,3 @@ pub use builder::{
     build_serialized_schema, ensure_registry_schema, write_split, write_to_file_split,
     write_to_file_with_embedded_schema, write_with_schema,
 };
-
-

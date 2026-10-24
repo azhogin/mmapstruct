@@ -1,16 +1,16 @@
-use mmapstruct::{SchemaCtx, DynValueType, Value};
+use mmapstruct::{DynValueType, SchemaCtx, Value};
 
 mod interpreter;
 #[cfg(feature = "json")]
 pub mod json_conv;
 mod parser;
 pub use mmapstruct_schema::registry;
-pub mod schema;
-pub mod tree;
-mod tokenizer;
+pub mod describe;
 pub mod query_context;
 pub mod runtime_json;
-pub mod describe;
+pub mod schema;
+mod tokenizer;
+pub mod tree;
 
 pub use interpreter::interpret;
 pub use interpreter::{interpret_with_limits, QueryLimits};

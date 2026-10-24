@@ -50,7 +50,11 @@ impl SearchState {
 
     /// Returns `Some(pattern)` when the search pattern is non-empty, `None` otherwise.
     pub fn get_pattern(&self) -> Option<String> {
-        if self.pattern.is_empty() { None } else { Some(self.pattern.clone()) }
+        if self.pattern.is_empty() {
+            None
+        } else {
+            Some(self.pattern.clone())
+        }
     }
 
     /// Start a new search with `pattern`. Clears previous match.
@@ -74,6 +78,9 @@ impl SearchState {
         if target.is_empty() {
             return None;
         }
-        Some(FastPath { field, target_str: target })
+        Some(FastPath {
+            field,
+            target_str: target,
+        })
     }
 }

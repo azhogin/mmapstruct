@@ -397,10 +397,7 @@ fn expect_ident<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(&'a str, usize)
 
 /// Parse a filter field name: either a plain identifier or the `$variant`
 /// pseudo-field (tokenized as `Dollar` + `Ident("variant")`).
-fn expect_filter_field<'a>(
-    tokens: &[Token<'a>],
-    pos: usize,
-) -> Result<(&'a str, usize), String> {
+fn expect_filter_field<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(&'a str, usize), String> {
     if tokens.get(pos) == Some(&Token::Dollar) {
         return match tokens.get(pos + 1) {
             Some(Token::Ident(name)) if *name == "variant" => Ok(("$variant", pos + 2)),
