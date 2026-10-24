@@ -408,7 +408,7 @@ impl<'a> SchemaCtx<'a> {
             self.field_get_byref_off(base, desc)
         } else {
             // Pod or inline string in fixed section
-            let fixed_off = base + desc.offset_in_fixed as u64;
+            let fixed_off = base + desc.offset_in_fixed;
             // Resolve Lazy (pod custom types with GetSchema) to the concrete type.
             let vt = match desc.value_type {
                 DynValueType::Lazy(resolve) => resolve(),
@@ -417,7 +417,7 @@ impl<'a> SchemaCtx<'a> {
             let limit = match vt {
                 DynValueType::Str(Some(n)) => fixed_off + n,
                 DynValueType::PodStruct { size } => fixed_off + size,
-                DynValueType::Struct(resolve) => fixed_off + resolve().fixed_section_size as u64,
+                DynValueType::Struct(resolve) => fixed_off + resolve().fixed_section_size,
                 DynValueType::Enum(es) => fixed_off + es.disc_size,
                 _ => fixed_off + 8,
             };
@@ -435,8 +435,8 @@ impl<'a> SchemaCtx<'a> {
         desc: &FieldDescriptor,
         dyn_idx: usize,
     ) -> Option<Value> {
-        let ot_offset = base + schema.fixed_section_size as u64;
-        let values_offset = base + schema.header_size as u64;
+        let ot_offset = base + schema.fixed_section_size;
+        let values_offset = base + schema.header_size;
 
         let ot_start = ot_offset as usize;
         let off_i: u64 = unsafe { mmap_read_pod::<u64>(&self.data[ot_start + dyn_idx * 8..][..8]) };
@@ -456,7 +456,7 @@ impl<'a> SchemaCtx<'a> {
 
     /// Resolve a byref field: read ByRefRange, compute postponed offset.
     fn field_get_byref_off(&self, base: u64, desc: &FieldDescriptor) -> Option<Value> {
-        let off = base + desc.offset_in_fixed as u64;
+        let off = base + desc.offset_in_fixed;
         let br: crate::traits::ByRefRange =
             unsafe { mmap_read_pod(&self.data[off as usize..off as usize + 8]) };
         if br.begin == 0 && br.end == 0 {
@@ -542,7 +542,7 @@ impl<'a> SchemaCtx<'a> {
                 (off, limit)
             }
             ArrayLayout::Fixed { stride } => {
-                let off = dv.offset + array_schema.count_offset as u64 + 16 + index as u64 * stride;
+                let off = dv.offset + array_schema.count_offset + 16 + index as u64 * stride;
                 (off, off + stride)
             }
         };
@@ -556,7 +556,7 @@ impl<'a> SchemaCtx<'a> {
 
     /// Number of entries in a HashMap.
     pub fn hashmap_len(&self, dv: &Value) -> usize {
-        let _ = match dv.schema {
+        match dv.schema {
             DynValueType::HashMap(_) => (),
             _ => panic!("SchemaCtx::hashmap_len: value is not a hashmap"),
         };

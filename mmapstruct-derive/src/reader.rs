@@ -14,7 +14,7 @@ pub(crate) fn generate_reader_struct(
     is_tuple: bool,
 ) -> proc_macro2::TokenStream {
     if is_tuple {
-        let tys: Vec<_> = fields.iter().map(|fi| reader_type(fi)).collect();
+        let tys: Vec<_> = fields.iter().map(reader_type).collect();
         quote! { pub struct #reader_name<'a>(#(pub #tys),*); }
     } else {
         let decls: Vec<_> = fields
@@ -218,9 +218,7 @@ pub(crate) fn generate_reader_inits(
                 generate_inline_string_reader_init_expr(fi, struct_name, fields)
             } else if fi.is_fixed_byref() {
                 generate_byref_reader_init_expr(fi, struct_name, fields)
-            } else if is_fixed_array_field(&fi.category) {
-                generate_fixed_array_reader_init_expr(fi, struct_name, fields)
-            } else if is_pod_field(&fi.category) {
+            } else if is_fixed_array_field(&fi.category) || is_pod_field(&fi.category) {
                 generate_fixed_array_reader_init_expr(fi, struct_name, fields)
             } else {
                 generate_inline_dyn_reader_init_expr(fi, layout, struct_name, fields, inline_dyn_indices)

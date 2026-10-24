@@ -56,7 +56,7 @@ fn main() {
     fs::write(&path, &buf).expect("write file");
 
     let file_size = buf.len() as u64;
-    let entries = count as u64;
+    let entries = count;
 
     println!("Written 4 maps × {entries} entries to {}", path.display());
     println!("bucket cycles through 5 short names.\n");

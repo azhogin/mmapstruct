@@ -49,7 +49,7 @@ pub fn preview_text(
     let t = ctx.type_reader(val.type_idx);
     match t {
         TypeDefReader::Struct { name, fields, .. } => {
-            build_preview(ctx, val, name.as_ref(), fields.len(), |i| {
+            build_preview(ctx, val, name, fields.len(), |i| {
                 let f = fields.get(i)?;
                 let FieldInfo { val: child, is_byref } = ctx.field_get_with_info(val, f.name)?;
                 Some((f.name.to_string(), child, is_byref))
@@ -64,7 +64,7 @@ pub fn preview_text(
                     mmap_end: val.mmap_end,
                     type_idx: variant_type_idx,
                 };
-                build_preview(ctx, &shifted, name.as_ref(), fields.len(), |i| {
+                build_preview(ctx, &shifted, name, fields.len(), |i| {
                     let f = fields.get(i)?;
                     let FieldInfo { val: child, is_byref } = ctx.field_get_with_info(&shifted, f.name)?;
                     Some((f.name.to_string(), child, is_byref))

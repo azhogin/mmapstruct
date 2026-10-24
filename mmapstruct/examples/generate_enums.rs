@@ -79,7 +79,7 @@ fn main() {
 
     let shape_byte_size = count as u64 * (1 + 8)    // tag + radius (Circle)
         + count as u64 * (1 + 8 + 8) / 3 * 2        // some Rect
-        + count as u64 * 1 / 3;                     // some Empty (tag only)
+        + (count as u64) / 3;                     // some Empty (tag only)
     let color_byte_size = count as u64 * 4;          // pod u32
 
     println!("Written enum arrays + tuple struct × {count} entries each to {}", path.display());

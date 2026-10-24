@@ -80,11 +80,11 @@ pub fn navigate_path_segments(
 fn has_children(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> bool {
     let t = ctx.type_reader(ctx.unwrap_type(val.type_idx));
     match t {
-        TypeDefReader::Struct { fields, .. } => fields.len() > 0,
+        TypeDefReader::Struct { fields, .. } => !fields.is_empty(),
         TypeDefReader::Enum { .. } => {
             let (variant, _) = ctx.enum_variant(val).unwrap_or((0, 0));
             let vt = ctx.type_reader(variant);
-            matches!(vt, TypeDefReader::Struct { fields, .. } if fields.len() > 0)
+            matches!(vt, TypeDefReader::Struct { fields, .. } if !fields.is_empty())
         }
         TypeDefReader::Array { .. } => ctx.array_len(val) > 0,
         TypeDefReader::HashMap { .. } => ctx.hashmap_len(val) > 0,

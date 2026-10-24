@@ -3,7 +3,6 @@ use std::ops::Range;
 
 /// String storage: raw bytes (no length prefix — length from range bounds).
 /// Reader type is &str — zero-copy view into mmap.
-
 impl LayoutHash for String {
     const HASH: u64 = fnv1a(b"String");
 }

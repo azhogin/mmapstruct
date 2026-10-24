@@ -334,12 +334,12 @@ fn main() {
 
         let mut opts = mmapview::tree::TreeOptions::default();
         for arg in &args {
-            if arg.starts_with("--depth=") {
-                opts.depth = arg["--depth=".len()..].parse().unwrap_or(4);
-            } else if arg.starts_with("--max-array=") {
-                opts.max_array = arg["--max-array=".len()..].parse().unwrap_or(20);
-            } else if arg.starts_with("--max-string=") {
-                opts.max_string = arg["--max-string=".len()..].parse().unwrap_or(80);
+            if let Some(v) = arg.strip_prefix("--depth=") {
+                opts.depth = v.parse().unwrap_or(4);
+            } else if let Some(v) = arg.strip_prefix("--max-array=") {
+                opts.max_array = v.parse().unwrap_or(20);
+            } else if let Some(v) = arg.strip_prefix("--max-string=") {
+                opts.max_string = v.parse().unwrap_or(80);
             } else if arg == "--no-values" {
                 opts.no_values = true;
             }

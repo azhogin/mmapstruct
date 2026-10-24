@@ -162,7 +162,7 @@ fn struct_json(
     if let TypeDefReader::Struct { fields, .. } = ctx.type_reader(val.type_idx) {
         for i in 0..fields.len() {
             let fd = fields.get(i).unwrap();
-            let fname: &str = &fd.name;
+            let fname: &str = fd.name;
             match ctx.field_get(val, fname) {
                 Some(fv) => {
                     obj.insert(fname.to_string(), value_to_json_inner(ctx, &fv, opts, depth));
@@ -206,7 +206,7 @@ fn enum_json(
     if let TypeDefReader::Struct { fields, .. } = ctx.type_reader(variant_idx) {
         for i in 0..fields.len() {
             let fd = fields.get(i).unwrap();
-            let fname: &str = &fd.name;
+            let fname: &str = fd.name;
             match ctx.field_get(&shifted, fname) {
                 Some(fv) => {
                     obj.insert(fname.to_string(), value_to_json_inner(ctx, &fv, opts, depth));
@@ -251,7 +251,7 @@ fn array_json(
         let mut preview = Vec::with_capacity(preview_len as usize);
         *depth += 1;
         for i in 0..preview_len {
-            match ctx.array_get(val, i as u64) {
+            match ctx.array_get(val, i) {
                 Some(ev) => preview.push(value_to_json_inner(ctx, &ev, opts, depth)),
                 None => preview.push(Json::Null),
             }
@@ -264,7 +264,7 @@ fn array_json(
                 "elem": elem_ty,
                 "layout": layout_tag,
                 "preview": preview,
-                "hint": format!("slice with [i:j] to fetch more"),
+                "hint": "slice with [i:j] to fetch more".to_string(),
             }
         });
     }
@@ -272,7 +272,7 @@ fn array_json(
     let mut arr = Vec::with_capacity(len.min(64) as usize);
     *depth += 1;
     for i in 0..len {
-        match ctx.array_get(val, i as u64) {
+        match ctx.array_get(val, i) {
             Some(ev) => arr.push(value_to_json_inner(ctx, &ev, opts, depth)),
             None => arr.push(Json::Null),
         }

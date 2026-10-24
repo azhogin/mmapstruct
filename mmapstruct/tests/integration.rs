@@ -1,3 +1,8 @@
+// Test setup commonly starts from `Type::default()` and sets a few fields;
+// restructuring every such block into a full struct literal would be noisier
+// and more fragile than the pattern it replaces.
+#![allow(clippy::field_reassign_with_default)]
+
 use bytemuck::{Pod, Zeroable};
 use mmapstruct::file_reader::{BufReader, MmapReader};
 use mmapstruct::indexed_array::{write_indexed_array, IndexedArrayReader};
@@ -665,12 +670,12 @@ fn test_scoped_dedup_local_vs_global() {
         items: vec![
             ScopedRec {
                 id: 0,
-                name: long.clone().into(),
+                name: long.clone(),
                 city: "X".into(),
             },
             ScopedRec {
                 id: 1,
-                name: long.clone().into(),
+                name: long.clone(),
                 city: "Y".into(),
             },
         ],
@@ -968,13 +973,13 @@ fn test_enum_tuple_none() {
 
 #[test]
 fn test_enum_tuple_pod() {
-    let w = TupleEnum::Pod(3.14, 42);
+    let w = TupleEnum::Pod(3.25, 42);
     let buf = write_to_buf(&w, false);
     let r = BufReader::new(buf);
     let reader = r.read::<TupleEnum>();
     match reader {
         TupleEnumReader::Pod(p0, p1) => {
-            assert_eq!(*p0, 3.14);
+            assert_eq!(*p0, 3.25);
             assert_eq!(*p1, 42);
         }
         _ => panic!("expected Pod"),
@@ -1430,7 +1435,7 @@ fn test_dyn_pod_array_custom_struct_size() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_hashmap_access() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{SchemaCtx, GetSchema};
 
     #[derive(MmapStruct, Debug)]
     struct DynHashMapFile {
@@ -1968,15 +1973,15 @@ struct BoolFile {
 #[test]
 fn test_bool_getter_setter() {
     let mut b = BoolFile::default();
-    assert_eq!(b.enabled(), false);
+    assert!(!b.enabled());
     assert_eq!(b.id, 0);
 
     b.set_enabled(true);
-    assert_eq!(b.enabled(), true);
+    assert!(b.enabled());
     assert_eq!(b.enabled, 1);
 
     b.set_enabled(false);
-    assert_eq!(b.enabled(), false);
+    assert!(!b.enabled());
     assert_eq!(b.enabled, 0);
 }
 
@@ -2002,10 +2007,10 @@ struct MixedBoolFile {
 #[test]
 fn test_mixed_bool_write_read() {
     let mut w = MixedBoolFile::default();
-    assert_eq!(w.enabled(), false);
+    assert!(!w.enabled());
 
     w.set_enabled(true);
-    assert_eq!(w.enabled(), true);
+    assert!(w.enabled());
     w.name = "test".into();
     let buf = mmapstruct::write_to_buf(&w, false);
     let r = BufReader::new(buf);
@@ -2405,7 +2410,7 @@ fn test_fixed_array_byref_enum_beta() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_top_level() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{SchemaCtx, GetSchema};
 
     let w = TopLevelArray { arr: [1, 2, 3, 4] };
     let buf = mmapstruct::write_to_buf_raw(&w);
@@ -2431,7 +2436,7 @@ fn test_dyn_fixed_array_top_level() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_vec_fixed_array_pod() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{SchemaCtx, GetSchema};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct VecOfFixedArrays {
@@ -2474,7 +2479,7 @@ fn test_dyn_vec_fixed_array_pod() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_vec_fixed_array_fixed() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{SchemaCtx, GetSchema};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct TestFixedArr {
@@ -2511,7 +2516,7 @@ fn test_dyn_vec_fixed_array_fixed() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_vec_nested_fixed_array() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{SchemaCtx, GetSchema};
 
     #[derive(MmapStruct, Debug, PartialEq)]
     struct VecOfMatrices {
@@ -2734,7 +2739,7 @@ fn test_dyn_fixed_array_nested() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_podstruct() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{SchemaCtx, GetSchema};
 
     let w = WithPodStructArray {
         points: [
@@ -2767,7 +2772,7 @@ fn test_dyn_fixed_array_podstruct() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_enum() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{SchemaCtx, GetSchema};
     use mmapstruct::schema::Value;
 
     let w = SimpleEnumWithArray::Alpha {
@@ -2794,7 +2799,7 @@ fn test_dyn_fixed_array_enum() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_enum_beta() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{SchemaCtx, GetSchema};
     use mmapstruct::schema::Value;
 
     let w = SimpleEnumWithArray::Beta { val: 99 };
@@ -2811,7 +2816,7 @@ fn test_dyn_fixed_array_enum_beta() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_fixed_array_byref() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{SchemaCtx, GetSchema};
 
     let w = WithByrefArray {
         id: 42,
@@ -2910,7 +2915,7 @@ fn test_pod_vec_of_struct_with_enum() {
 
     let w = ComplexContainer {
         items: vec![
-            ComplexItem { id: 1, value: 3.14, kind: ItemKind::Alpha },
+            ComplexItem { id: 1, value: 3.25, kind: ItemKind::Alpha },
             ComplexItem { id: 2, value: 2.71, kind: ItemKind::Beta },
         ],
     };
@@ -2930,11 +2935,11 @@ fn test_pod_vec_of_struct_with_enum() {
 #[cfg(feature = "dyn")]
 #[test]
 fn test_dyn_pod_vec_of_struct_with_enum() {
-    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+    use mmapstruct::{SchemaCtx, GetSchema};
 
     let w = ComplexContainer {
         items: vec![
-            ComplexItem { id: 1, value: 3.14, kind: ItemKind::Alpha },
+            ComplexItem { id: 1, value: 3.25, kind: ItemKind::Alpha },
             ComplexItem { id: 2, value: 2.71, kind: ItemKind::Beta },
         ],
     };
@@ -2952,7 +2957,7 @@ fn test_dyn_pod_vec_of_struct_with_enum() {
     let id0 = ctx.field_get(&item0, "id").unwrap();
     assert_eq!(ctx.read_u32(&id0), 1);
     let val0 = ctx.field_get(&item0, "value").unwrap();
-    assert!((ctx.read_f32(&val0) - 3.14).abs() < 1e-6);
+    assert!((ctx.read_f32(&val0) - 3.25).abs() < 1e-6);
     let kind0 = ctx.field_get(&item0, "kind").unwrap();
     assert_eq!(ctx.read_u32(&kind0), 0);
 
@@ -3011,7 +3016,7 @@ fn resolve_vt(
 #[test]
 fn test_pod_field_rich_schema_when_derived() {
     use mmapstruct::schema::{DynValueType, SchemaCtx};
-    use mmapstruct::{write_to_buf_raw, GetSchema};
+    use mmapstruct::GetSchema;
 
     // The #[pod] field whose type has MmapStruct derive resolves to a Struct schema.
     let schema = <PodRichFile as GetSchema>::get_struct_schema();
@@ -3389,7 +3394,7 @@ fn test_enum_fixed_array_pod_custom_offset() {
 #[test]
 fn test_enum_podcustom_schema_field_get() {
     use mmapstruct::schema::Value;
-    use mmapstruct::{GetSchema, SchemaCtx, write_to_buf_raw};
+    use mmapstruct::{GetSchema, SchemaCtx};
 
     let log = PodCustomLogFile {
         records: vec![

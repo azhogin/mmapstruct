@@ -18,10 +18,10 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                         return 0;
                     }
                     // Pod arrays now carry an 8-byte element-count prefix.
-                    let count = unsafe {
+
+                    (unsafe {
                         mmap_read_pod::<u64>(&self.data[arr_range.start..arr_range.start + 8])
-                    } as u64;
-                    count
+                    } as u64)
                 }
                 ArrayLayoutDefReader::FixedPod { count, .. } => {
                     **count
@@ -30,15 +30,15 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                     if arr_range.len() < 8 {
                         return 0;
                     }
-                    let count = unsafe { mmap_read_pod::<u64>(&self.data[arr_range.start..arr_range.start + 8]) } as u64;
-                    count
+
+                    (unsafe { mmap_read_pod::<u64>(&self.data[arr_range.start..arr_range.start + 8]) } as u64)
                 }
                 ArrayLayoutDefReader::Fixed { .. } => {
                     if arr_range.len() < 8 {
                         return 0;
                     }
-                    let count = unsafe { mmap_read_pod::<u64>(&self.data[arr_range.start..arr_range.start + 8]) } as u64;
-                    count
+
+                    (unsafe { mmap_read_pod::<u64>(&self.data[arr_range.start..arr_range.start + 8]) } as u64)
                 }
             }
         } else {

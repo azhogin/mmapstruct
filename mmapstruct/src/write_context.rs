@@ -37,6 +37,12 @@ pub struct WriteContext<'data> {
     postponed: Vec<PostponedData<'data>>,
 }
 
+impl<'data> Default for WriteContext<'data> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'data> WriteContext<'data> {
     pub fn new() -> Self {
         Self {
@@ -210,12 +216,12 @@ impl<'data> WriteContext<'data> {
 
         // Group by hash
         let mut hash_to_indices: HashMap<u64, Vec<usize>> = HashMap::new();
-        for i in 0..dedup_items.len() {
-            hash_to_indices.entry(entries[i].hash).or_default().push(i);
+        for (i, e) in entries.iter().enumerate() {
+            hash_to_indices.entry(e.hash).or_default().push(i);
         }
 
         // Write unique values, backpatch all placeholders
-        for (_hash, indices) in &hash_to_indices {
+        for indices in hash_to_indices.values() {
             let leader = indices[0];
             let abs_begin = self.buf.len() as u32;
             self.buf.extend_from_slice(&entries[leader].bytes);

@@ -1,4 +1,3 @@
-use bytemuck::Pod;
 use mmapstruct::{MmapReader, MmapStruct};
 use mmapstruct_schema::{write_split, write_to_file_split};
 use std::fs;
@@ -35,7 +34,7 @@ fn split_roundtrip_embedded() {
 
     // headerless data file must NOT begin with the mmapstruct magic
     let raw = fs::read(&data_path).unwrap();
-    assert!(raw.len() > 0);
+    assert!(!raw.is_empty());
     assert_ne!(&raw[0..4], b"MMAP");
     // sidecar must begin with magic and carry an embedded schema
     let sb = fs::read(data_path.with_extension("mmshdr")).unwrap();

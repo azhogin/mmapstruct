@@ -27,7 +27,7 @@ impl<'a, T: MmapRead> FixedArrayReader<'a, T> {
             u64::from_le_bytes(data[range.start + 8..range.start + 16].try_into().unwrap())
                 as usize;
         let base = range.start + 16;
-        let stride = if count > 0 { total_size / count } else { 0 };
+        let stride = total_size.checked_div(count).unwrap_or(0);
         #[cfg(feature = "strict-validation")]
         if count > 0 {
             assert_eq!(

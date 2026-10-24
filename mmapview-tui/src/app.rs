@@ -385,11 +385,9 @@ impl App {
             if let Some(mp) = match_path {
                 return Some(mp);
             }
-            match cont {
-                Some(next_path) => {
-                    scanner = Scanner::from_path(ctx, next_path, OVERSCAN_STEPS);
-                }
-                None => return None,
+            {
+                let next_path = cont?;
+                scanner = Scanner::from_path(ctx, next_path, OVERSCAN_STEPS);
             }
         }
         None

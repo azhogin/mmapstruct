@@ -216,7 +216,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     if is_bool && !is_u32_type(&field.ty) {
                         panic!("#[mmap(bool)] is only supported on u32 fields");
                     }
-                    if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).map_or(false, |n| n == "bool") {
+                    if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).is_some_and(|n| n == "bool") {
                         panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
                     }
 
@@ -240,7 +240,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     if is_bool && !is_u32_type(&field.ty) {
                         panic!("#[mmap(bool)] is only supported on u32 fields");
                     }
-                    if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).map_or(false, |n| n == "bool") {
+                    if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).is_some_and(|n| n == "bool") {
                         panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
                     }
 
@@ -407,11 +407,11 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         }
 
         let field_ref = |id: &proc_macro2::Ident| quote! { #id };
-        let fw = write_helpers::generate_fixed_writes(&all_fields, &field_ref);
-        let idb = write_helpers::generate_inline_dyn_writes(&all_fields, &inline_dyn_indices, &field_ref);
+        let fw = write_helpers::generate_fixed_writes(&all_fields, field_ref);
+        let idb = write_helpers::generate_inline_dyn_writes(&all_fields, &inline_dyn_indices, field_ref);
 
         let wbody = if !has_dynamic {
-            let fw_pod = write_helpers::generate_fixed_writes(&all_fields, &field_ref);
+            let fw_pod = write_helpers::generate_fixed_writes(&all_fields, field_ref);
             quote! {
                 ctx.write_u32_le(#disc as u32);
                 ctx.align_to(8);

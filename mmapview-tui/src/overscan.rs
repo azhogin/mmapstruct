@@ -132,8 +132,7 @@ impl Overscan {
             // Re-push virtual_end onto the stack if this node had one.
             if let Some(ref ve) = self.nodes[idx].virtual_end {
                 // Avoid duplicate if the stack top already matches.
-                let should_push = self.cursor.effective_end_stack.last()
-                    .map_or(true, |top| top != ve);
+                let should_push = self.cursor.effective_end_stack.last() != Some(ve);
                 if should_push {
                     self.cursor.effective_end_stack.push(ve.clone());
                 }
@@ -164,7 +163,7 @@ impl Overscan {
 
     fn fixup_cursor_end_on_collapse(&mut self, idx: usize, parent_path: Path) {
         let inside = self.cursor.end.as_ref()
-            .map_or(false, |end| parent_path.is_path_prefix(end));
+            .is_some_and(|end| parent_path.is_path_prefix(end));
         if inside {
             // Save a clone to virtual_end so re-expand can restore it,
             // but keep cursor.end intact so effective_end() still works.
@@ -366,7 +365,7 @@ impl Overscan {
         let prefix = &self.scanner.path[0..remove];
 
         let mut path: Path = Path(prefix.to_vec());
-        path.0.extend(segments.into_iter());
+        path.0.extend(segments);
 
         // The rebuilt path might still be short if scanner.path didn't cover
         // all missing levels. This should not happen in practice.

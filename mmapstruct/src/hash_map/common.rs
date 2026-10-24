@@ -58,7 +58,7 @@ pub fn iter_offset_ranges<'a>(
     })
 }
 
-pub fn sort_pairs<'data, K: Ord, V>(map: &'data HashMap<K, V>) -> Vec<(&'data K, &'data V)> {
+pub fn sort_pairs<K: Ord, V>(map: &HashMap<K, V>) -> Vec<(&K, &V)> {
     let mut pairs: Vec<(&K, &V)> = map.iter().collect();
     pairs.sort_by(|a, b| a.0.cmp(b.0));
     pairs

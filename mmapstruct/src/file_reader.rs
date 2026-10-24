@@ -13,10 +13,12 @@ fn read_u32_le(data: &[u8]) -> u32 {
     u32::from_le_bytes([data[0], data[1], data[2], data[3]])
 }
 
+/// Parsed mmapstruct header: `(payload, optional_embedded_schema_range,
+/// layout_hash, crc64)`.  The schema range is `(start, end)` within `data`.
+pub type ParsedHeader<'a> = (&'a [u8], Option<(usize, usize)>, Option<u64>, Option<u64>);
+
 /// Parse a mmapstruct header (v0/v1/v2) from `data`.
-/// Returns `(payload, optional_embedded_schema_range, layout_hash, crc64)`.
-/// The schema range is `(start, end)` within `data`.
-pub fn parse_header<'a>(data: &'a [u8]) -> (&'a [u8], Option<(usize, usize)>, Option<u64>, Option<u64>) {
+pub fn parse_header(data: &[u8]) -> ParsedHeader<'_> {
     if data.len() < HEADER_SIZE {
         return (data, None, None, None);
     }

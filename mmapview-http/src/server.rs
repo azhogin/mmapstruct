@@ -72,7 +72,7 @@ async fn query_handler(
 
     let total = results.len();
     let total_pages = if limit > 0 {
-        (total + limit - 1) / limit
+        total.div_ceil(limit)
     } else {
         1
     };

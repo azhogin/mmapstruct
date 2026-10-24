@@ -29,7 +29,7 @@ pub fn describe(
 ) -> String {
     let mut out = String::new();
     let mut depth = 0usize;
-    walk(ctx, root, "/", &opts, &mut depth, &mut out);
+    walk(ctx, root, "/", opts, &mut depth, &mut out);
     out
 }
 
@@ -62,7 +62,7 @@ fn walk(
             *depth += 1;
             for i in 0..fields.len() {
                 let fd = fields.get(i).unwrap();
-                let fname: &str = &fd.name;
+                let fname: &str = fd.name;
                 indent(out, *depth);
                 match ctx.field_get(val, fname) {
                     Some(fv) => walk(ctx, &fv, &format!("/{fname}"), opts, depth, out),
@@ -84,7 +84,7 @@ fn walk(
                     *depth += 2;
                     for i in 0..fields.len() {
                         let fd = fields.get(i).unwrap();
-                        let fname: &str = &fd.name;
+                        let fname: &str = fd.name;
                         indent(out, *depth);
                         match ctx.field_get(val, fname) {
                             Some(fv) => walk(ctx, &fv, &format!("/{fname}"), opts, depth, out),

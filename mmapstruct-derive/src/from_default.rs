@@ -84,14 +84,14 @@ pub(crate) fn generate_reader_ord_impl(
     is_tuple: bool,
 ) -> proc_macro2::TokenStream {
     let is_simple_field = |cat: &FieldCategory| -> bool {
-        match cat {
+        matches!(
+            cat,
             FieldCategory::PodPrimitive
-            | FieldCategory::PodCustom
-            | FieldCategory::DynamicString
-            | FieldCategory::InlineString { .. } => true,
-            FieldCategory::DynamicOption { inner: _ } => true,
-            _ => false,
-        }
+                | FieldCategory::PodCustom
+                | FieldCategory::DynamicString
+                | FieldCategory::InlineString { .. }
+                | FieldCategory::DynamicOption { .. }
+        )
     };
     if fields.iter().any(|fi| !is_simple_field(&fi.category)) {
         return quote! {};

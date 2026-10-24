@@ -119,11 +119,11 @@ pub fn write_to_buf_with_schema<T: traits::MmapWrite + LayoutHash + crate::schem
     // Zero-pad to 8-byte alignment
     let pad = padded_schema - schema_bytes.len();
     if pad > 0 {
-        result.extend(std::iter::repeat(0u8).take(pad));
+        result.extend(std::iter::repeat_n(0u8, pad));
     }
     // Zero-pad header to 8-byte payload alignment
     if align_padding > 0 {
-        result.extend(std::iter::repeat(0u8).take(align_padding));
+        result.extend(std::iter::repeat_n(0u8, align_padding));
     }
     result.extend_from_slice(&buf);
 

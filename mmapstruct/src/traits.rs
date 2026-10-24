@@ -220,6 +220,13 @@ pub const ENC_POD_CUSTOM: u64 = fnv1a(b"POD_CUSTOM");
 ///
 /// Both paths use `core::ptr::read_unaligned` so there is no alignment
 /// requirement.  With `strict-validation` an additional size check is added.
+///
+/// # Safety
+///
+/// `data` must contain at least `size_of::<T>()` readable bytes.  Without
+/// the `strict-validation` feature the size is **not** asserted, so the
+/// caller is responsible for the bound; a short slice causes an out-of-bounds
+/// read.  `T` must be a `Pod` type, so any bit pattern in the range is valid.
 #[inline(always)]
 pub unsafe fn mmap_read_pod<T: Pod>(data: &[u8]) -> T {
     #[cfg(feature = "strict-validation")]

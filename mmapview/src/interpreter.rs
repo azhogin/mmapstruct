@@ -12,6 +12,7 @@ use crate::EvalResult;
 /// For pipelines the budget is approximate: it is consumed by intermediate
 /// steps, so `/items[a:b] | select(...)` may yield fewer than `max` rows.
 #[derive(Clone, Copy, Debug)]
+#[derive(Default)]
 pub struct QueryLimits {
     /// Number of initial candidate items to skip.
     pub skip: usize,
@@ -19,14 +20,6 @@ pub struct QueryLimits {
     pub max: Option<usize>,
 }
 
-impl Default for QueryLimits {
-    fn default() -> Self {
-        Self {
-            skip: 0,
-            max: None,
-        }
-    }
-}
 
 impl QueryLimits {
     /// Recommended default cap for AI-facing tools (`--limit`).
@@ -270,7 +263,7 @@ fn aggregate<'a, C: QueryContext<'a>>(
                 if let Some(elem) = ctx.array_get(val, i) {
                     if let Some(fv) = ctx.field_get(&elem, field) {
                         if let Some(n) = ctx.read_as_f64(&fv) {
-                            if min_val.map_or(true, |m| n < m) {
+                            if min_val.is_none_or(|m| n < m) {
                                 min_val = Some(n);
                             }
                         }
@@ -285,7 +278,7 @@ fn aggregate<'a, C: QueryContext<'a>>(
                 if let Some(elem) = ctx.array_get(val, i) {
                     if let Some(fv) = ctx.field_get(&elem, field) {
                         if let Some(n) = ctx.read_as_f64(&fv) {
-                            if max_val.map_or(true, |m| n > m) {
+                            if max_val.is_none_or(|m| n > m) {
                                 max_val = Some(n);
                             }
                         }
@@ -484,8 +477,6 @@ fn compare_values<'a, C: QueryContext<'a>>(
 
 #[cfg(test)]
 mod chained_filter_tests {
-    use crate::query_context::QueryContext;
-    use crate::EvalResult;
     use mmapstruct::{GetSchema, MmapStruct};
 
     #[derive(MmapStruct, Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]

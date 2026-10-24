@@ -233,7 +233,7 @@ fn test_schema_write_with_schema_readback() {
             0..schema_bytes.len(),
         )
         .into();
-    assert!(schema.types.len() >= 1);
+    assert!(!schema.types.is_empty());
     assert_eq!(schema.root_type, 0);
 }
 

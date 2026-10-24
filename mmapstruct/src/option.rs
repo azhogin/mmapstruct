@@ -2,7 +2,6 @@ use crate::traits::{MmapRead, MmapWrite};
 use std::ops::Range;
 
 /// Layout for `Option<T>`: `[present: u8, data_if_present...]`
-
 impl<T: MmapRead> MmapRead for Option<T> {
     type Reader<'a>
         = Option<T::Reader<'a>>
@@ -10,7 +9,7 @@ impl<T: MmapRead> MmapRead for Option<T> {
         T: 'a;
 
     fn read<'a>(data: &'a [u8], range: Range<usize>) -> Self::Reader<'a> {
-        if range.len() < 1 || data[range.start] == 0 {
+        if range.is_empty() || data[range.start] == 0 {
             None
         } else {
             let val_start = (range.start + 1 + std::mem::align_of::<T>() - 1) & !(std::mem::align_of::<T>() - 1);

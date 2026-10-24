@@ -1,7 +1,6 @@
 use std::fs;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::OnceLock;
 
 static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 

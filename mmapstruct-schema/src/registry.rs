@@ -7,15 +7,15 @@
 use std::path::PathBuf;
 
 fn registry_dir() -> PathBuf {
-    let base = std::env::var("MMAPSTRUCT_SCHEMA_DIR")
+
+    std::env::var("MMAPSTRUCT_SCHEMA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             let home = std::env::var("HOME")
                 .or_else(|_| std::env::var("USERPROFILE"))
                 .unwrap_or_else(|_| ".".into());
             PathBuf::from(home).join(".config/mmapstruct/schemas")
-        });
-    base
+        })
 }
 
 /// Save a serialized schema to the registry, keyed by `layout_hash`.

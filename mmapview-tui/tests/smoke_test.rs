@@ -478,7 +478,7 @@ struct Splittable {
 
 #[test]
 fn test_load_schema_sidecar() {
-    let v = Splittable { x: 123, y: 3.14 };
+    let v = Splittable { x: 123, y: 3.25 };
     let path = std::env::temp_dir().join("sidecar_test.mms");
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(path.with_extension("mmshdr"));

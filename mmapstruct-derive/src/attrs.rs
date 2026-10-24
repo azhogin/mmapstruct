@@ -35,11 +35,9 @@ fn has_struct_mmap_ident(attrs: &[syn::Attribute], ident: &str) -> bool {
                     }
                 }
             }
-        } else if let Ok(m) = attr.parse_args::<Meta>() {
-            if let Meta::Path(p) = &m {
-                if p.is_ident(ident) {
-                    return true;
-                }
+        } else if let Ok(Meta::Path(p)) = attr.parse_args::<Meta>() {
+            if p.is_ident(ident) {
+                return true;
             }
         }
     }
@@ -155,14 +153,12 @@ pub(crate) fn parse_mmap_attrs(attrs: &[syn::Attribute]) -> (bool, bool, Option<
                     }
                 }
             }
-        } else if let Ok(m) = attr.parse_args::<Meta>() {
-            if let Meta::Path(p) = &m {
-                if p.is_ident("byref") {
-                    byref = true;
-                }
-                if p.is_ident("bool") {
-                    is_bool = true;
-                }
+        } else if let Ok(Meta::Path(p)) = attr.parse_args::<Meta>() {
+            if p.is_ident("byref") {
+                byref = true;
+            }
+            if p.is_ident("bool") {
+                is_bool = true;
             }
         }
     }

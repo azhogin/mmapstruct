@@ -44,7 +44,7 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                 1 => self.read_u8(root) as u64,
                 2 => self.read_u16(root) as u64,
                 4 => self.read_u32(root) as u64,
-                8 => self.read_u64(root) as u64,
+                8 => self.read_u64(root),
                 _ => return None,
             } as u32;
             let variant_idx = disc;

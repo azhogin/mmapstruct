@@ -120,15 +120,7 @@ pub(crate) fn generate_fixed_layout_consts(
                 fo_stmts.push(quote! { __off += #size; });
                 fs_stmts.push(quote! { __off += #size; });
             }
-        } else if is_fixed_array_field(&ff.category) {
-            let align = type_align_expr(&ff.ty);
-            let size = type_size_expr(&ff.ty);
-            fo_stmts.push(quote! { __off = (__off + #align - 1) & !(#align - 1); });
-            fs_stmts.push(quote! { __off = (__off + #align - 1) & !(#align - 1); });
-            fo_stmts.push(quote! { __fo[#i] = __off; });
-            fo_stmts.push(quote! { __off += #size; });
-            fs_stmts.push(quote! { __off += #size; });
-        } else if is_pod_field(&ff.category) {
+        } else if is_fixed_array_field(&ff.category) || is_pod_field(&ff.category) {
             let align = type_align_expr(&ff.ty);
             let size = type_size_expr(&ff.ty);
             fo_stmts.push(quote! { __off = (__off + #align - 1) & !(#align - 1); });

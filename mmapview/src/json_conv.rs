@@ -34,7 +34,7 @@ pub fn to_json<'a>(ctx: &SchemaCtx<'a>, val: &Value) -> serde_json::Value {
         }
         DynValueType::Array(_) => {
             let len = ctx.array_len(val);
-            let mut items = Vec::with_capacity(len as usize);
+            let mut items = Vec::with_capacity(len);
             for i in 0..len {
                 if let Some(elem) = ctx.array_get(val, i) {
                     items.push(to_json(ctx, &elem));
@@ -49,7 +49,7 @@ pub fn to_json<'a>(ctx: &SchemaCtx<'a>, val: &Value) -> serde_json::Value {
         }
         DynValueType::HashMap(_schema) => {
             let len = ctx.hashmap_len(val);
-            let mut items = Vec::with_capacity(len as usize);
+            let mut items = Vec::with_capacity(len);
             for i in 0..len {
                 if let Some((key, val)) = ctx.hashmap_get_index(val, i) {
                     items.push(serde_json::json!([to_json(ctx, &key), to_json(ctx, &val)]));

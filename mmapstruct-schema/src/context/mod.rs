@@ -219,13 +219,14 @@ impl<'a> RuntimeSchemaCtx<'a> {
             }
             TypeDefReader::Option { inner_type } => self.type_align(**inner_type).max(1),
             TypeDefReader::ByRef { inner_type } => self.type_align(**inner_type),
-            TypeDefReader::Array { layout, .. } => match layout {
-                ArrayLayoutDefReader::FixedPod { stride, .. } => {
-                    let s = **stride as usize;
-                    s.min(8).next_power_of_two() as u64
-                }
-                _ => 8,
-            },
+            TypeDefReader::Array {
+                layout: ArrayLayoutDefReader::FixedPod { stride, .. },
+                ..
+            } => {
+                let s = **stride as usize;
+                s.min(8).next_power_of_two() as u64
+            }
+            TypeDefReader::Array { .. } => 8,
             _ => 8,
         }
     }
@@ -237,7 +238,7 @@ impl<'a> RuntimeSchemaCtx<'a> {
         for i in 0..n {
             let f = fields.get(i).unwrap();
             let a = self.type_align(*f.type_index);
-            if m.map_or(true, |mm| a > mm) {
+            if m.is_none_or(|mm| a > mm) {
                 m = Some(a);
             }
         }
@@ -262,12 +263,11 @@ impl<'a> RuntimeSchemaCtx<'a> {
             TypeDefReader::Str { size } => {
                 size.map(|s| *s as u64)
             }
-            TypeDefReader::Array { layout, .. } => match layout {
-                ArrayLayoutDefReader::FixedPod { stride, count } => {
-                    Some(**stride * **count)
-                }
-                _ => None,
-            },
+            TypeDefReader::Array {
+                layout: ArrayLayoutDefReader::FixedPod { stride, count },
+                ..
+            } => Some(**stride * **count),
+            TypeDefReader::Array { .. } => None,
             TypeDefReader::Enum { disc_size, .. } => Some(**disc_size),
             // Pod struct (no inline-dynamic fields): raw blob of its fixed size.
             TypeDefReader::Struct {

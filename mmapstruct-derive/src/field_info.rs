@@ -88,13 +88,12 @@ fn analyze_named_fields(fields: &syn::Fields) -> FieldAnalysis {
         let (is_byref, dedup, _inline_size, is_bool) = parse_mmap_attrs(&field.attrs);
 
         // Validate #[mmap(bool)]
-        if is_bool {
-            if !is_u32_type(&field.ty) {
+        if is_bool
+            && !is_u32_type(&field.ty) {
                 panic!("#[mmap(bool)] is only supported on u32 fields");
             }
-        }
         // Forbid bare bool type
-        if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).map_or(false, |n| n == "bool") {
+        if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).is_some_and(|n| n == "bool") {
             panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
         }
 
@@ -130,12 +129,11 @@ fn analyze_unnamed_fields(fields: &syn::Fields) -> FieldAnalysis {
         let category = classify_field(field);
         let (is_byref, dedup, _inline_size, is_bool) = parse_mmap_attrs(&field.attrs);
 
-        if is_bool {
-            if !is_u32_type(&field.ty) {
+        if is_bool
+            && !is_u32_type(&field.ty) {
                 panic!("#[mmap(bool)] is only supported on u32 fields");
             }
-        }
-        if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).map_or(false, |n| n == "bool") {
+        if is_primitive_pod(&field.ty) && type_ident_name(&field.ty).is_some_and(|n| n == "bool") {
             panic!("bool field is not supported; use u32 with #[mmap(bool)] instead");
         }
 

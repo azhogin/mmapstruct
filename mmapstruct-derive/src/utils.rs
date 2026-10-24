@@ -129,7 +129,7 @@ pub(crate) fn type_size_expr(ty: &Type) -> proc_macro2::TokenStream {
 
 pub(crate) fn type_align_expr(ty: &Type) -> proc_macro2::TokenStream {
     if let Some(sz) = known_primitive_size(ty) {
-        let align = sz.min(8).max(1);
+        let align = sz.clamp(1, 8);
         quote! { #align }
     } else if let Some((inner, _)) = extract_fixed_array_inner(ty) {
         type_align_expr(&inner)

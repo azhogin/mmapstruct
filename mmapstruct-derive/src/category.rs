@@ -6,6 +6,10 @@ use crate::utils::*;
 use crate::attrs::*;
 
 #[derive(Clone)]
+// `syn::Type` is large and a derive-time value — boxing it would churn every
+// codegen pattern for no practical benefit (instances live for the duration
+// of one macro expansion).
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum FieldCategory {
     PodPrimitive,
     PodCustom,

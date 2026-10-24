@@ -41,12 +41,12 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
         match t {
             TypeDefReader::Struct { fields, .. } => fields
                 .get(field_idx)
-                .map_or(false, |f| self.type_reader(*f.type_index).is_byref_kind()),
+                .is_some_and(|f| self.type_reader(*f.type_index).is_byref_kind()),
             TypeDefReader::Enum { .. } => {
                 let Some((variant, _)) = self.enum_variant(parent) else { return false };
                 let vt = self.type_reader(variant);
                 if let TypeDefReader::Struct { fields, .. } = vt {
-                    fields.get(field_idx).map_or(false, |f| {
+                    fields.get(field_idx).is_some_and(|f| {
                         self.type_reader(*f.type_index).is_byref_kind()
                     })
                 } else {

@@ -54,9 +54,9 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
     };
 
     if !has_dynamic {
-        let layout = compute_layout(&all_fields);
+        let layout = compute_layout(all_fields);
         let fixed_layout_consts =
-            generate_fixed_layout_consts(name, &all_fields, layout.inline_dyn_count);
+            generate_fixed_layout_consts(name, all_fields, layout.inline_dyn_count);
 
         let pod_impl = quote! { impl ::mmapstruct::traits::MmapPod for #name {} };
         let from_ref_impl = quote! {
@@ -66,12 +66,12 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
                 }
             }
         };
-        let layout_hash_impl = generate_layout_hash_impl(name, &all_fields);
+        let layout_hash_impl = generate_layout_hash_impl(name, all_fields);
 
         let schema_impl = {
             #[cfg(feature = "dyn")]
             {
-                generate_schema_impl(name, &all_fields)
+                generate_schema_impl(name, all_fields)
             }
             #[cfg(not(feature = "dyn"))]
             {
@@ -90,37 +90,37 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
         .into();
     }
 
-    let layout = compute_layout(&all_fields);
-    let inline_dyn_indices = collect_inline_dyn_indices(&all_fields);
+    let layout = compute_layout(all_fields);
+    let inline_dyn_indices = collect_inline_dyn_indices(all_fields);
 
     let fixed_layout_consts =
-        generate_fixed_layout_consts(name, &all_fields, layout.inline_dyn_count);
+        generate_fixed_layout_consts(name, all_fields, layout.inline_dyn_count);
 
-    let reader_struct = generate_reader_struct(&reader_name, &all_fields, is_tuple);
+    let reader_struct = generate_reader_struct(&reader_name, all_fields, is_tuple);
     let read_impl = generate_read_impl(
         name,
         &reader_name,
-        &all_fields,
+        all_fields,
         &layout,
         &inline_dyn_indices,
         is_tuple,
     );
     let write_impl =
-        generate_write_impl(name, &all_fields, &layout, &inline_dyn_indices, is_scoped, is_tuple);
-    let from_impl = generate_from_impl(name, &reader_name, &all_fields, is_tuple);
-    let reader_owned_impl = generate_reader_owned_impl(name, &reader_name, &all_fields, is_tuple);
-    let reader_ord_impl = generate_reader_ord_impl(name, &reader_name, &all_fields, is_tuple);
+        generate_write_impl(name, all_fields, &layout, &inline_dyn_indices, is_scoped, is_tuple);
+    let from_impl = generate_from_impl(name, &reader_name, all_fields, is_tuple);
+    let reader_owned_impl = generate_reader_owned_impl(name, &reader_name, all_fields, is_tuple);
+    let reader_ord_impl = generate_reader_ord_impl(name, &reader_name, all_fields, is_tuple);
     let default_impl = if !skip_default {
-        generate_default_impl(name, &all_fields, is_tuple)
+        generate_default_impl(name, all_fields, is_tuple)
     } else {
         quote! {}
     };
-    let layout_hash_impl = generate_layout_hash_impl(name, &all_fields);
+    let layout_hash_impl = generate_layout_hash_impl(name, all_fields);
 
     let schema_impl = {
         #[cfg(feature = "dyn")]
         {
-            generate_schema_impl(name, &all_fields)
+            generate_schema_impl(name, all_fields)
         }
         #[cfg(not(feature = "dyn"))]
         {

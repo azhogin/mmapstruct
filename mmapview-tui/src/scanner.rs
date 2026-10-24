@@ -101,12 +101,9 @@ impl Scanner {
             .map(|seg| (seg.val, seg.shift))
             .collect();
 
-        let Some((parent, shift)) = stack.last() else { return None; };
+        let (parent, shift) = stack.last()?;
         let idx = shift.index();
-        let mut current = match self.child_at(parent, idx) {
-            Some(v) => v,
-            None => return None,
-        };
+        let mut current = self.child_at(parent, idx)?;
         let mut expand = should_step_in(current);
         callback(StepContext {
             val: current,
@@ -134,10 +131,7 @@ impl Scanner {
 
             // Advance to next element — step out if needed
             loop {
-                let last = match stack.len().checked_sub(1) {
-                    Some(i) => i,
-                    None => return None,
-                };
+                let last = stack.len().checked_sub(1)?;
                 let idx = stack[last].1.index();
                 if idx + 1 < self.child_count(&stack[last].0) {
                     let new_shift = self.child_shift(&stack[last].0, idx + 1);
@@ -203,10 +197,7 @@ impl Scanner {
         }
 
         loop {
-            let last = match stack.len().checked_sub(1) {
-                Some(i) => i,
-                None => return None,
-            };
+            let last = stack.len().checked_sub(1)?;
             let idx = stack[last].1.index();
             if idx + 1 < self.child_count(&stack[last].0) {
                 let new_shift = self.child_shift(&stack[last].0, idx + 1);
@@ -320,7 +311,7 @@ impl Scanner {
         if count == 0 {
             return None;
         }
-        for i in (0..count).rev() {
+        if let Some(i) = (0..count).next_back() {
             let child = self.child_at(&val, i)?;
             let shift = self.child_shift(&val, i);
             if should_step_in(child) {
@@ -351,9 +342,8 @@ impl Scanner {
             }
             TypeDefReader::Array { .. } => self.ctx.array_len(val) as usize,
             TypeDefReader::HashMap { .. } => self.ctx.hashmap_len(val),
-            TypeDefReader::Option { .. } => {
-                if val.mmap_begin < val.mmap_end { 1 } else { 0 }
-            }
+            TypeDefReader::Option { .. }
+                if val.mmap_begin < val.mmap_end => { 1 }
             _ => 0,
         }
     }
@@ -485,7 +475,7 @@ impl Scanner {
             .and_then(|(p, idx)| self.field_name(p, *idx))
             .unwrap_or_default();
         let type_ann = type_annotation(self.ctx.type_reader(val.type_idx));
-        let byref = parent.as_ref().map_or(false, |(p, idx)| self.ctx.is_field_byref(p, *idx));
+        let byref = parent.as_ref().is_some_and(|(p, idx)| self.ctx.is_field_byref(p, *idx));
         let inline = if byref {
             format!("&{}", inline_value_text(self.ctx, val))
         } else {
@@ -532,7 +522,7 @@ impl Scanner {
             .and_then(|(p, idx)| self.field_name(p, *idx))
             .unwrap_or_default();
         let type_ann = type_annotation(self.ctx.type_reader(val.type_idx));
-        let byref = parent.as_ref().map_or(false, |(p, idx)| self.ctx.is_field_byref(p, *idx));
+        let byref = parent.as_ref().is_some_and(|(p, idx)| self.ctx.is_field_byref(p, *idx));
         let prefix_len = if name.is_empty() {
             format!("type={}{} = ", val.type_idx, type_ann).len()
         } else {
@@ -899,9 +889,7 @@ mod tests {
     fn test_print_outer_via_navigate_y() {
         // "/y" → field(1) of root, primitive → no auto-step
         let o = Outer { inner: Inner { a: 7 }, y: 99 };
-        generic_print_test(&o, "/y", concat!(
-            "    y: u32 = 99\n",
-        ));
+        generic_print_test(&o, "/y", "    y: u32 = 99\n");
     }
 
     #[test]
