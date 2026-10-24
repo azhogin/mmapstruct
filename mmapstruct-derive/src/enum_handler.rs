@@ -28,12 +28,12 @@ fn repr_to_disc_size(repr_name: &str) -> proc_macro2::TokenStream {
 pub(crate) struct VarGen {
     pub(crate) ident: proc_macro2::Ident,
     pub(crate) field_idents: Vec<proc_macro2::Ident>,
-    /// Used by `generate_enum_schema_impl` in `schema.rs` (only with `feature = "dyn"`).
-    #[allow(dead_code)]
+    /// Field list for `generate_enum_schema_impl` in `schema.rs`.  The
+    /// construction is unconditional (shared reader/writer codegen path),
+    /// but the fields are only read behind `feature = "dyn"` — hence the
+    /// conditional allow instead of a blanket `#[allow(dead_code)]`.
+    #[cfg_attr(not(feature = "dyn"), allow(dead_code))]
     pub(crate) fields: Vec<FieldInfo>,
-    /// Used by `generate_enum_schema_impl` in `schema.rs` (only with `feature = "dyn"`).
-    #[allow(dead_code)]
-    pub(crate) inline_dyn_indices: Vec<usize>,
     pub(crate) reader_fields: Vec<proc_macro2::TokenStream>,
     pub(crate) reader_init: proc_macro2::TokenStream,
     pub(crate) write_body: proc_macro2::TokenStream,
@@ -192,7 +192,6 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                 ident: vident.clone(),
                 field_idents: Vec::new(),
                 fields: Vec::new(),
-                inline_dyn_indices: Vec::new(),
                 reader_fields: Vec::new(),
                 reader_init: quote! { #reader_name::#vident },
                 write_body: quote! { ctx.write_u32_le(#disc as u32); ctx.align_to(8); },
@@ -583,7 +582,6 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             ident: vident.clone(),
             field_idents: fidents,
             fields: all_fields.clone(),
-            inline_dyn_indices: inline_dyn_indices.clone(),
             reader_fields: rfields,
             reader_init: if rinit.is_empty() {
                 quote! { #reader_name::#vident }

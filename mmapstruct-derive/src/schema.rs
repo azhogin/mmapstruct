@@ -416,6 +416,39 @@ fn build_field_schema(
     }
 }
 
+/// Emit the shared `FieldDescriptor` table + `StructSchema` static for a
+/// struct type or an enum variant — both schema paths use the same shape,
+/// differing only in the idents, the name expression and the size/align
+/// expressions (const-eval layout consts for real structs, literal zeros
+/// for empty variants).  `prefix` is the concatenated resolver fns +
+/// value-type statics emitted just before the schema statics.
+fn emit_struct_schema_statics(
+    schema_name: &proc_macro2::Ident,
+    field_statics_name: &proc_macro2::Ident,
+    schema_label: proc_macro2::TokenStream,
+    prefix: proc_macro2::TokenStream,
+    fs: &FieldSchema,
+    fs_size: proc_macro2::TokenStream,
+    hs_size: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let field_descriptors = &fs.descriptors;
+    let field_count = field_descriptors.len();
+    let inline_dyn_count = fs.inline_dyn_count;
+    quote! {
+        #prefix
+        #[allow(non_upper_case_globals)]
+        static #field_statics_name: [::mmapstruct::schema::FieldDescriptor; #field_count] = [#(#field_descriptors),*];
+        #[allow(non_upper_case_globals)]
+        static #schema_name: ::mmapstruct::schema::StructSchema = ::mmapstruct::schema::StructSchema {
+            name: #schema_label,
+            fields: &#field_statics_name,
+            fixed_section_size: #fs_size,
+            header_size: #hs_size,
+            inline_dyn_count: #inline_dyn_count,
+        };
+    }
+}
+
 /// Generate Schema + GetSchema for a struct type.
 pub(crate) fn generate_schema_impl(
     name: &proc_macro2::Ident,
@@ -426,21 +459,30 @@ pub(crate) fn generate_schema_impl(
 
     let fs = build_field_schema(fields, name, |flds, fi| fields_field_offset(name, flds, fi));
 
-    let inline_dyn_count = fs.inline_dyn_count;
     let fs_name = format_ident!("__MMAP_FS_{}", name);
     let hs_name = format_ident!("__MMAP_HS_{}", name);
     let name_str = name.to_string();
-    let field_descriptors = &fs.descriptors;
-    let field_count = fs.descriptors.len();
 
     let resolver_stream = fs
         .resolver_fns
-        .into_iter()
+        .iter()
+        .cloned()
         .collect::<proc_macro2::TokenStream>();
     let vt_stream = fs
         .value_type_statics
-        .into_iter()
+        .iter()
+        .cloned()
         .collect::<proc_macro2::TokenStream>();
+
+    let schema_statics = emit_struct_schema_statics(
+        &schema_name,
+        &field_statics_name,
+        quote! { #name_str },
+        quote! { #resolver_stream #vt_stream },
+        &fs,
+        quote! { #fs_name as u64 },
+        quote! { #hs_name as u64 },
+    );
 
     let root_vt_name = format_ident!("__mmap_ROOT_VT_{}", name);
     let root_resolve_name = format_ident!("__mmap_resolve_ROOT_{}", name);
@@ -457,18 +499,7 @@ pub(crate) fn generate_schema_impl(
     };
 
     quote! {
-        #resolver_stream
-        #vt_stream
-        #[allow(non_upper_case_globals)]
-        static #field_statics_name: [::mmapstruct::schema::FieldDescriptor; #field_count] = [#(#field_descriptors),*];
-        #[allow(non_upper_case_globals)]
-        static #schema_name: ::mmapstruct::schema::StructSchema = ::mmapstruct::schema::StructSchema {
-            name: #name_str,
-            fields: &#field_statics_name,
-            fixed_section_size: #fs_name as u64,
-            header_size: #hs_name as u64,
-            inline_dyn_count: #inline_dyn_count,
-        };
+        #schema_statics
         impl ::mmapstruct::schema::GetSchema for #name {
             fn get_struct_schema() -> &'static ::mmapstruct::schema::StructSchema {
                 &#schema_name
@@ -519,22 +550,26 @@ pub(crate) fn generate_enum_schema_impl(
 
     for v in vars.iter() {
         let vident = &v.ident;
+        let schema_name = format_ident!("__mmap_ENUMVAR_{}_{}", name, vident);
+        let field_statics_name = format_ident!("__mmap_ENUMVAR_FIELDS_{}_{}", name, vident);
 
         if v.fields.is_empty() {
-            let schema_name = format_ident!("__mmap_ENUMVAR_{}_{}", name, vident);
-            let field_statics_name = format_ident!("__mmap_ENUMVAR_FIELDS_{}_{}", name, vident);
-            variant_schema_statics.push(quote! {
-                #[allow(non_upper_case_globals)]
-                static #field_statics_name: [::mmapstruct::schema::FieldDescriptor; 0] = [];
-                #[allow(non_upper_case_globals)]
-                static #schema_name: ::mmapstruct::schema::StructSchema = ::mmapstruct::schema::StructSchema {
-                    name: concat!(#name_str, "::", stringify!(#vident)),
-                    fields: &#field_statics_name,
-                    fixed_section_size: 0u64,
-                    header_size: 0u64,
-                    inline_dyn_count: 0usize,
-                };
-            });
+            let empty_fs = FieldSchema {
+                descriptors: Vec::new(),
+                value_type_statics: Vec::new(),
+                resolver_fns: Vec::new(),
+                inline_dyn_count: 0,
+            };
+            let statics = emit_struct_schema_statics(
+                &schema_name,
+                &field_statics_name,
+                quote! { concat!(#name_str, "::", stringify!(#vident)) },
+                quote! {},
+                &empty_fs,
+                quote! { 0u64 },
+                quote! { 0u64 },
+            );
+            variant_schema_statics.push(statics);
             variant_schema_refs.push(quote! { &#schema_name });
             continue;
         }
@@ -550,35 +585,27 @@ pub(crate) fn generate_enum_schema_impl(
             variant_field_offset(&fo_name, flds, fi)
         });
 
-        let inline_dyn_count = fs.inline_dyn_count;
-        let schema_name = format_ident!("__mmap_ENUMVAR_{}_{}", name, vident);
-        let field_statics_name = format_ident!("__mmap_ENUMVAR_FIELDS_{}_{}", name, vident);
-        let field_descriptors = &fs.descriptors;
-        let field_count = fs.descriptors.len();
-        let vt_stream = fs
-            .value_type_statics
-            .into_iter()
-            .collect::<proc_macro2::TokenStream>();
         let resolver_stream = fs
             .resolver_fns
-            .into_iter()
+            .iter()
+            .cloned()
+            .collect::<proc_macro2::TokenStream>();
+        let vt_stream = fs
+            .value_type_statics
+            .iter()
+            .cloned()
             .collect::<proc_macro2::TokenStream>();
 
-        let variant_name_str = format!("{}::{}", name_str, vident);
-        variant_schema_statics.push(quote! {
-            #resolver_stream
-            #vt_stream
-            #[allow(non_upper_case_globals)]
-            static #field_statics_name: [::mmapstruct::schema::FieldDescriptor; #field_count] = [#(#field_descriptors),*];
-            #[allow(non_upper_case_globals)]
-            static #schema_name: ::mmapstruct::schema::StructSchema = ::mmapstruct::schema::StructSchema {
-                name: #variant_name_str,
-                fields: &#field_statics_name,
-                fixed_section_size: #fs_name as u64,
-                header_size: #hs_name as u64,
-                inline_dyn_count: #inline_dyn_count,
-            };
-        });
+        let statics = emit_struct_schema_statics(
+            &schema_name,
+            &field_statics_name,
+            quote! { concat!(#name_str, "::", stringify!(#vident)) },
+            quote! { #resolver_stream #vt_stream },
+            &fs,
+            quote! { #fs_name as u64 },
+            quote! { #hs_name as u64 },
+        );
+        variant_schema_statics.push(statics);
         variant_schema_refs.push(quote! { &#schema_name });
     }
 
