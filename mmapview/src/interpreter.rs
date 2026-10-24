@@ -357,12 +357,48 @@ fn eval_filter<'a, C: QueryContext<'a>>(
     filter: &FilterExpr<'_>,
 ) -> bool {
     match filter {
-        FilterExpr::Simple { field, op, value } => ctx
-            .field_get(element, field)
-            .map(|fv| compare_values(ctx, &fv, op, value))
-            .unwrap_or(false),
+        FilterExpr::Simple { field, op, value } => {
+            if *field == "$variant" {
+                return compare_variant_name(ctx, element, op, value);
+            }
+            ctx.field_get(element, field)
+                .map(|fv| compare_values(ctx, &fv, op, value))
+                .unwrap_or(false)
+        }
         FilterExpr::And(a, b) => eval_filter(ctx, element, a) && eval_filter(ctx, element, b),
         FilterExpr::Or(a, b) => eval_filter(ctx, element, a) || eval_filter(ctx, element, b),
+    }
+}
+
+/// `$variant` pseudo-field: compare against the active enum variant's name.
+///
+/// `=`/`!=` accept both the short name (`Probe`) and the full schema name
+/// (`Event::Probe`, needs quoting in a query); substring ops (`~`, `^`, `$`)
+/// match either form. Numeric comparisons never match; non-enum elements
+/// never match.
+fn compare_variant_name<'a, C: QueryContext<'a>>(
+    ctx: &C,
+    element: &C::Val,
+    op: &FilterOp,
+    expected: &FilterValue<'_>,
+) -> bool {
+    let Some(name) = ctx.variant_name(element) else {
+        return false;
+    };
+    let FilterValue::Str(expected_str) = expected else {
+        return false;
+    };
+    let short = name.rsplit("::").next().unwrap_or(name);
+    let eq = *expected_str == name || *expected_str == short;
+    match op {
+        FilterOp::Eq => eq,
+        FilterOp::Ne => !eq,
+        FilterOp::Contains => name.contains(*expected_str) || short.contains(*expected_str),
+        FilterOp::StartsWith => {
+            name.starts_with(*expected_str) || short.starts_with(*expected_str)
+        }
+        FilterOp::EndsWith => name.ends_with(*expected_str) || short.ends_with(*expected_str),
+        _ => false,
     }
 }
 
@@ -1878,5 +1914,232 @@ mod tests {
 
         let id_val = ctx.field_get(&root, "id").unwrap();
         assert_eq!(ctx.read_u32(&id_val), 7);
+    }
+
+    // -------------------------------------------------------------------
+    // Enum vector: filters over variant-specific fields (jq-like semantics)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_filter_enum_vec_variant_field() {
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+
+        #[derive(MmapStruct, Debug)]
+        enum Event {
+            Click { id: u32, x: u32, y: u32 },
+            Key { id: u32, code: u32 },
+            Probe { id: u32, test_field: u32, note: String },
+        }
+
+        #[derive(MmapStruct, Debug)]
+        struct EventFile {
+            events: Vec<Event>,
+        }
+
+        let w = EventFile {
+            events: vec![
+                Event::Click { id: 1, x: 10, y: 20 },
+                Event::Probe {
+                    id: 10,
+                    test_field: 5,
+                    note: "a".into(),
+                },
+                Event::Key { id: 2, code: 7 },
+                Event::Probe {
+                    id: 11,
+                    test_field: 0,
+                    note: "b".into(),
+                },
+                Event::Probe {
+                    id: 12,
+                    test_field: 42,
+                    note: "c".into(),
+                },
+            ],
+        };
+        let buf = write_to_buf_raw(&w);
+        let ctx = SchemaCtx::new(&buf);
+        let root = <EventFile as GetSchema>::root_value(buf.len() as u64);
+
+        // Variant-specific field present only on Probe: jq-style — elements
+        // whose active variant lacks the field simply do not match.
+        let result = query_from("/events[?test_field>0]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 2);
+        for r in &result {
+            let EvalResult::Buf(v) = r else {
+                panic!("expected Buf")
+            };
+            let tf = ctx.read_u32(&ctx.field_get(v, "test_field").unwrap());
+            assert!(tf > 0, "expected positive test_field, got {tf}");
+        }
+
+        // Equality on a variant field.
+        let result = query_from("/events[?test_field=5]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 1);
+        let EvalResult::Buf(v) = &result[0] else {
+            panic!("expected Buf")
+        };
+        assert_eq!(ctx.read_u32(&ctx.field_get(v, "test_field").unwrap()), 5);
+
+        // AND: common field + variant-specific field on the same element.
+        let result = query_from("/events[?id>10&test_field>0]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 1);
+        let EvalResult::Buf(v) = &result[0] else {
+            panic!("expected Buf")
+        };
+        assert_eq!(ctx.read_u32(&ctx.field_get(v, "id").unwrap()), 12);
+
+        // OR across different variants.
+        let result = query_from("/events[?code=7|test_field=42]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 2);
+
+        // Field missing in every variant: no matches, no error.
+        let result = query_from("/events[?no_such_field>0]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 0);
+
+        // select() pipe with a variant field.
+        let result = query_from("/events | select(.test_field>0)", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 2);
+
+        // Consecutive filters intersect on the same elements.
+        let result = query_from("/events[?test_field>0][?id=12]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_aggregate_enum_vec_variant_field() {
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+
+        #[derive(MmapStruct, Debug)]
+        enum Event {
+            Click { id: u32, x: u32, y: u32 },
+            Key { id: u32, code: u32 },
+            Probe { id: u32, test_field: u32, note: String },
+        }
+
+        #[derive(MmapStruct, Debug)]
+        struct EventFile {
+            events: Vec<Event>,
+        }
+
+        let w = EventFile {
+            events: vec![
+                Event::Click { id: 1, x: 10, y: 20 },
+                Event::Probe {
+                    id: 10,
+                    test_field: 5,
+                    note: "a".into(),
+                },
+                Event::Key { id: 2, code: 7 },
+                Event::Probe {
+                    id: 12,
+                    test_field: 42,
+                    note: "c".into(),
+                },
+            ],
+        };
+        let buf = write_to_buf_raw(&w);
+        let ctx = SchemaCtx::new(&buf);
+        let root = <EventFile as GetSchema>::root_value(buf.len() as u64);
+
+        // count() sees every element.
+        let result = query_from("/events | count()", &ctx, &root).unwrap();
+        assert!(matches!(result[0], EvalResult::U64(4)));
+
+        // max/avg skip elements whose variant lacks the field.
+        let result = query_from("/events | max(.test_field)", &ctx, &root).unwrap();
+        let EvalResult::F64(m) = result[0] else {
+            panic!("expected F64")
+        };
+        assert_eq!(m, 42.0);
+
+        let result = query_from("/events | avg(.test_field)", &ctx, &root).unwrap();
+        let EvalResult::F64(a) = result[0] else {
+            panic!("expected F64")
+        };
+        assert!((a - 23.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_filter_dollar_variant() {
+        use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema, MmapStruct};
+
+        #[derive(MmapStruct, Debug)]
+        enum Event {
+            Click { id: u32, x: u32, y: u32 },
+            Key { id: u32, code: u32 },
+            Probe { id: u32, test_field: u32, note: String },
+        }
+
+        #[derive(MmapStruct, Debug)]
+        struct EventFile {
+            events: Vec<Event>,
+        }
+
+        let w = EventFile {
+            events: vec![
+                Event::Click { id: 1, x: 10, y: 20 },
+                Event::Probe {
+                    id: 10,
+                    test_field: 5,
+                    note: "a".into(),
+                },
+                Event::Key { id: 2, code: 7 },
+                Event::Probe {
+                    id: 11,
+                    test_field: 0,
+                    note: "b".into(),
+                },
+                Event::Click { id: 3, x: 30, y: 40 },
+            ],
+        };
+        let buf = write_to_buf_raw(&w);
+        let ctx = SchemaCtx::new(&buf);
+        let root = <EventFile as GetSchema>::root_value(buf.len() as u64);
+
+        // Short name.
+        let result = query_from("/events[?$variant=Probe]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 2);
+        let EvalResult::Buf(v) = &result[0] else {
+            panic!("expected Buf")
+        };
+        assert_eq!(ctx.read_u32(&ctx.field_get(v, "id").unwrap()), 10);
+
+        // Full schema name (quoted).
+        let result = query_from(r#"/events[?$variant="Event::Key"]"#, &ctx, &root).unwrap();
+        assert_eq!(result.len(), 1);
+        let EvalResult::Buf(v) = &result[0] else {
+            panic!("expected Buf")
+        };
+        assert_eq!(ctx.read_u32(&ctx.field_get(v, "code").unwrap()), 7);
+
+        // Contains on the short form.
+        let result = query_from("/events[?$variant~Prob]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 2);
+
+        // Starts with the enum name (full form).
+        let result = query_from("/events[?$variant^Event]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 5);
+
+        // != matches non-matching variants.
+        let result = query_from("/events[?$variant!=Probe]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 3);
+
+        // Combined with a regular field: AND across variant + field.
+        let result = query_from("/events[?$variant=Click&id>1]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 1);
+        let EvalResult::Buf(v) = &result[0] else {
+            panic!("expected Buf")
+        };
+        assert_eq!(ctx.read_u32(&ctx.field_get(v, "id").unwrap()), 3);
+
+        // Non-enum elements never match; here every element IS an enum, but a
+        // missing variant name (shouldn't happen) yields no matches.
+        let result = query_from("/events[?$variant=NoSuch]", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 0);
+
+        // select() pipe form.
+        let result = query_from("/events | select(.$variant=Key)", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 1);
     }
 }

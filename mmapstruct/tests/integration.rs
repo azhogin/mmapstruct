@@ -3418,3 +3418,88 @@ fn test_enum_podcustom_schema_field_get() {
     assert_eq!(ctx.read_u32(&ctx.field_get(&r2, "src").unwrap()), 2);
     assert_eq!(ctx.read_u8(&ctx.field_get(&r2, "half").unwrap()), 9);
 }
+
+// ---------------------------------------------------------------------------
+// Enum vector: variant-specific field navigation (jq-like semantics)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "dyn")]
+#[test]
+fn test_dyn_enum_vec_variant_field_access() {
+    use mmapstruct::{write_to_buf_raw, SchemaCtx, GetSchema};
+
+    #[derive(MmapStruct, Debug)]
+    enum Event {
+        Click { id: u32, x: u32, y: u32 },
+        Key { id: u32, code: u32 },
+        Probe { id: u32, test_field: u32, note: String },
+    }
+
+    #[derive(MmapStruct, Debug)]
+    struct EventFile {
+        events: Vec<Event>,
+    }
+
+    let w = EventFile {
+        events: vec![
+            Event::Click { id: 1, x: 10, y: 20 },
+            Event::Probe {
+                id: 10,
+                test_field: 5,
+                note: "a".into(),
+            },
+            Event::Key { id: 2, code: 7 },
+            Event::Probe {
+                id: 11,
+                test_field: 0,
+                note: "b".into(),
+            },
+            Event::Probe {
+                id: 12,
+                test_field: 42,
+                note: "c".into(),
+            },
+        ],
+    };
+    let buf = write_to_buf_raw(&w);
+
+    // Roundtrip sanity: the derived reader must agree with the writer.
+    let r = BufReader::new(buf.clone());
+    let reader = r.read::<EventFile>();
+    let events: Vec<Event> = reader.events.into();
+    assert_eq!(events.len(), 5);
+    assert!(matches!(events[0], Event::Click { id: 1, .. }));
+    assert!(matches!(events[1], Event::Probe { test_field: 5, .. }));
+    assert!(matches!(events[2], Event::Key { code: 7, .. }));
+    assert!(matches!(events[4], Event::Probe { test_field: 42, .. }));
+
+    let ctx = SchemaCtx::new(&buf);
+    let root = <EventFile as GetSchema>::root_value(buf.len() as u64);
+
+    let ev_val = ctx.field_get(&root, "events").unwrap();
+    assert_eq!(ctx.array_len(&ev_val), 5);
+
+    // Variant-specific field: present only on Probe (disc 2).
+    let click = ctx.array_get(&ev_val, 0).unwrap();
+    assert!(ctx.field_get(&click, "test_field").is_none());
+
+    let probe0 = ctx.array_get(&ev_val, 1).unwrap();
+    let tf = ctx.field_get(&probe0, "test_field").unwrap();
+    assert_eq!(ctx.read_u32(&tf), 5);
+    // Common field present on every variant.
+    assert_eq!(ctx.read_u32(&ctx.field_get(&probe0, "id").unwrap()), 10);
+    // Inline-dyn field of the active variant.
+    assert_eq!(ctx.read_str(&ctx.field_get(&probe0, "note").unwrap()), "a");
+
+    let key = ctx.array_get(&ev_val, 2).unwrap();
+    assert!(ctx.field_get(&key, "test_field").is_none());
+    assert_eq!(ctx.read_u32(&ctx.field_get(&key, "code").unwrap()), 7);
+
+    // Last element at the buffer edge.
+    let probe2 = ctx.array_get(&ev_val, 4).unwrap();
+    assert_eq!(ctx.read_u32(&ctx.field_get(&probe2, "test_field").unwrap()), 42);
+    assert_eq!(ctx.read_str(&ctx.field_get(&probe2, "note").unwrap()), "c");
+
+    // Unknown field name on any variant.
+    assert!(ctx.field_get(&probe2, "no_such").is_none());
+}

@@ -343,11 +343,16 @@ impl<'a> SchemaCtx<'a> {
 
     /// Resolve the active variant of an enum value.
     ///
-    /// Reads the `u32` discriminant at `dv.offset` and returns the variant's
-    /// `StructSchema` together with the byte offset where variant data starts
-    /// (past the discriminant + padding).
+    /// Reads the discriminant at `dv.offset` (sized by the schema's
+    /// `disc_size`: 4 for data-carrying enums, `repr(Int)` size for pod
+    /// enums) and returns the variant's `StructSchema` together with the
+    /// byte offset where variant data starts (past the discriminant).
     ///
-    /// Returns `None` if the value is not an enum, or the discriminant is out of range.
+    /// Variant data starts at an **absolute** 8-byte boundary, mirroring the
+    /// writer's `write_u32_le(disc)` + `ctx.align_to(8)`.
+    ///
+    /// Returns `None` if the value is not an enum, the discriminant is out of
+    /// range, or the buffer is too short for the discriminant.
     pub fn enum_variant(&self, dv: &Value) -> Option<(&'static StructSchema, u64)> {
         let enum_schema = match dv.schema {
             DynValueType::Lazy(resolve) => match resolve() {
@@ -357,29 +362,24 @@ impl<'a> SchemaCtx<'a> {
             DynValueType::Enum(es) => es,
             _ => return None,
         };
-        let disc = u32::from_le_bytes(
-            self.data[dv.offset as usize..dv.offset as usize + 4]
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let variant_schema = *enum_schema.variants.get(disc)?;
-        // Data starts after 4-byte discriminant, aligned to variant's max alignment
-        let data_off = self.enum_variant_data_offset(dv, variant_schema);
-        Some((variant_schema, data_off))
-    }
-
-    /// Compute the data offset for the currently active enum variant.
-    /// Separated so it can be reused without re-reading the discriminant.
-    fn enum_variant_data_offset(&self, dv: &Value, variant_schema: &StructSchema) -> u64 {
-        let mut max_align = 4usize;
-        for f in variant_schema.fields {
-            let fa = dyn_value_align(f.value_type) as usize;
-            if fa > max_align {
-                max_align = fa;
-            }
+        let begin = dv.offset as usize;
+        let disc_byte_size = match enum_schema.disc_size {
+            1 | 2 | 4 | 8 => enum_schema.disc_size as usize,
+            _ => 4,
+        };
+        if begin + disc_byte_size > self.data.len() {
+            return None;
         }
-        let read_align = max_align.max(8);
-        align_up(dv.offset as usize + 4, read_align) as u64
+        let disc = match disc_byte_size {
+            1 => self.data[begin] as u64,
+            2 => u16::from_le_bytes(self.data[begin..begin + 2].try_into().unwrap()) as u64,
+            4 => u32::from_le_bytes(self.data[begin..begin + 4].try_into().unwrap()) as u64,
+            8 => u64::from_le_bytes(self.data[begin..begin + 8].try_into().unwrap()),
+            _ => return None,
+        } as usize;
+        let variant_schema = *enum_schema.variants.get(disc)?;
+        let data_off = align_up(begin + disc_byte_size, 8) as u64;
+        Some((variant_schema, data_off))
     }
 
     /// Navigate into a struct or enum field by name.
@@ -394,13 +394,8 @@ impl<'a> SchemaCtx<'a> {
             }
             DynValueType::Struct(resolve) => (resolve(), dv.offset),
             DynValueType::Enum(es) => {
-                let disc = u32::from_le_bytes(
-                    self.data[dv.offset as usize..dv.offset as usize + 4]
-                        .try_into()
-                        .unwrap(),
-                ) as usize;
-                let vs = *es.variants.get(disc)?;
-                let data_off = self.enum_variant_data_offset(dv, vs);
+                let _ = es;
+                let (vs, data_off) = self.enum_variant(dv)?;
                 (vs, data_off)
             }
             _ => return None,
@@ -688,7 +683,11 @@ pub fn dyn_value_align(vt: &DynValueType) -> usize {
         | DynValueType::F64
         | DynValueType::Usize
         | DynValueType::Isize => 8,
-        DynValueType::Str(_) => 1,
+        // `String`'s Rust alignment is 8 (it is a Vec<u8> wrapper); the writer
+        // aligns `Option<String>` inner data with `align_of::<String>()`,
+        // so the schema side must mirror that, not the raw-bytes layout.
+        DynValueType::Str(_) => 8,
+        // Opaque pod blob without field info: size-based heuristic.
         DynValueType::PodStruct { size } => {
             let s = *size as usize;
             if s == 0 {
@@ -697,12 +696,40 @@ pub fn dyn_value_align(vt: &DynValueType) -> usize {
                 s.min(8).next_power_of_two()
             }
         }
-        DynValueType::Struct(_)
-        | DynValueType::Array(_)
-        | DynValueType::Option(_)
-        | DynValueType::ByRef(_)
-        | DynValueType::HashMap(_)
-        | DynValueType::Enum(_) => 8,
+        DynValueType::Struct(resolve) => {
+            // Mirror Rust's align_of: max over the fields' own alignments
+            // (dyn fields contribute via their type: Vec/HashMap → 8,
+            // String → 1, Option<T> → max(1, align of T), …).
+            let s = resolve();
+            s.fields
+                .iter()
+                .map(|f| dyn_value_align(f.value_type))
+                .max()
+                .unwrap_or(1)
+        }
+        DynValueType::Enum(es) => {
+            // Mirror Rust's align_of::<Enum>: max over all variants' field
+            // alignments, floored by the discriminant's alignment.
+            let mut m = es.disc_size as usize;
+            for vs in es.variants.iter() {
+                for f in vs.fields {
+                    let a = dyn_value_align(f.value_type);
+                    if a > m {
+                        m = a;
+                    }
+                }
+            }
+            m
+        }
+        DynValueType::Option(inner) => dyn_value_align(inner).max(1),
+        DynValueType::ByRef(inner) => dyn_value_align(inner),
+        DynValueType::Array(layout) => match &layout.layout {
+            ArrayLayout::FixedPod { stride, .. } => {
+                (*stride as usize).min(8).next_power_of_two()
+            }
+            _ => 8,
+        },
+        DynValueType::HashMap(_) => 8,
         DynValueType::Lazy(resolve) => dyn_value_align(resolve()),
     }
 }

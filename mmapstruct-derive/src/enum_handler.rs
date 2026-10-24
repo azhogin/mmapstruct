@@ -658,6 +658,8 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         }
     };
 
+    let reader_ord_impl = generate_enum_reader_ord_impl(name, &reader_name, &vars);
+
     let schema_impl = {
         #[cfg(feature = "dyn")]
         {
@@ -679,8 +681,195 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         #from_impl
         #default_impl
         #layout_hash_impl
+        #reader_ord_impl
         #schema_impl
     };
 
     output.into()
+}
+
+/// Generate `impl ReaderOrd` for a data-carrying enum: compare the variant
+/// discriminant first, then the fields of the active variant (field-by-field,
+/// mirroring the mixed-struct impl in `from_default.rs`).
+///
+/// Skipped when any variant contains a field type without `ReaderOrd`
+/// (`Vec`, `HashMap`, `Option<complex>`, …) — same limitation as the struct
+/// path (see `ideas/idea_complex_zero_to_hero_cmp.md`).
+pub(crate) fn generate_enum_reader_ord_impl(
+    name: &proc_macro2::Ident,
+    reader_name: &proc_macro2::Ident,
+    vars: &[VarGen],
+) -> proc_macro2::TokenStream {
+    let is_simple = |cat: &FieldCategory| -> bool {
+        match cat {
+            // PodCustom is deliberately NOT simple here: the struct path's
+            // ReaderOrd requires `Ord` on pod-custom fields, and requiring it
+            // on enums would break code that compiled without `ReaderOrd`.
+            FieldCategory::PodPrimitive
+            | FieldCategory::DynamicString
+            | FieldCategory::InlineString { .. } => true,
+            FieldCategory::DynamicOption { inner } => {
+                is_primitive_pod(inner) || is_string_type(inner)
+            }
+            _ => false,
+        }
+    };
+    if vars
+        .iter()
+        .any(|v| v.fields.iter().any(|f| !is_simple(&f.category)))
+    {
+        return quote! {};
+    }
+
+    let disc_arms_reader: Vec<_> = vars
+        .iter()
+        .enumerate()
+        .map(|(disc, v)| {
+            let vi = &v.ident;
+            let d = disc as u32;
+            if v.is_tuple {
+                quote! { #reader_name::#vi(..) => #d, }
+            } else if v.field_idents.is_empty() {
+                quote! { #reader_name::#vi => #d, }
+            } else {
+                quote! { #reader_name::#vi { .. } => #d, }
+            }
+        })
+        .collect();
+    let disc_arms_key: Vec<_> = vars
+        .iter()
+        .enumerate()
+        .map(|(disc, v)| {
+            let vi = &v.ident;
+            let d = disc as u32;
+            if v.is_tuple {
+                quote! { #name::#vi(..) => #d, }
+            } else if v.field_idents.is_empty() {
+                quote! { #name::#vi => #d, }
+            } else {
+                quote! { #name::#vi { .. } => #d, }
+            }
+        })
+        .collect();
+
+    let pair_arms: Vec<_> = vars
+        .iter()
+        .map(|v| {
+            let vi = &v.ident;
+            let field_cmp = |fi: &FieldInfo, r: &proc_macro2::Ident, k: &proc_macro2::Ident| {
+                match &fi.category {
+                    FieldCategory::PodPrimitive | FieldCategory::PodCustom => {
+                        if is_f32_or_f64(&fi.ty) {
+                            quote! { (*#r).partial_cmp(#k).unwrap_or(std::cmp::Ordering::Equal) }
+                        } else {
+                            quote! { (*#r).cmp(#k) }
+                        }
+                    }
+                    FieldCategory::DynamicString | FieldCategory::InlineString { .. } => {
+                        quote! { (*#r).cmp(#k.as_str()) }
+                    }
+                    FieldCategory::DynamicOption { inner } => {
+                        quote! {
+                            match (#r, #k) {
+                                (Some(rr), Some(kk)) => <#inner as ::mmapstruct::traits::ReaderOrd>::cmp_reader(rr, kk),
+                                (None, None) => std::cmp::Ordering::Equal,
+                                (None, Some(_)) => std::cmp::Ordering::Less,
+                                (Some(_), None) => std::cmp::Ordering::Greater,
+                            }
+                        }
+                    }
+                    _ => quote! { std::cmp::Ordering::Equal },
+                }
+            };
+
+            if v.fields.is_empty() {
+                quote! { (#reader_name::#vi, #name::#vi) => std::cmp::Ordering::Equal, }
+            } else if v.is_tuple {
+                let rids: Vec<_> = v.field_idents.iter().map(|i| format_ident!("__r{}", i)).collect();
+                let kids: Vec<_> = v.field_idents.iter().map(|i| format_ident!("__k{}", i)).collect();
+                let cmps: Vec<_> = v
+                    .fields
+                    .iter()
+                    .zip(rids.iter().zip(kids.iter()))
+                    .map(|(fi, (r, k))| field_cmp(fi, r, k))
+                    .collect();
+                let body = if cmps.len() == 1 {
+                    cmps.into_iter().next().unwrap()
+                } else {
+                    let mut iter = cmps.into_iter();
+                    let first = iter.next().unwrap();
+                    iter.fold(first, |acc, cmp| quote! { #acc.then(#cmp) })
+                };
+                quote! {
+                    (#reader_name::#vi(#(#rids),*), #name::#vi(#(#kids),*)) => #body,
+                }
+            } else {
+                let rbinds: Vec<_> = v
+                    .fields
+                    .iter()
+                    .map(|fi| {
+                        let id = &fi.ident;
+                        let rb = format_ident!("__r_{}", fi.ident);
+                        quote! { #id: #rb }
+                    })
+                    .collect();
+                let kbinds: Vec<_> = v
+                    .fields
+                    .iter()
+                    .map(|fi| {
+                        let id = &fi.ident;
+                        let kb = format_ident!("__k_{}", fi.ident);
+                        quote! { #id: #kb }
+                    })
+                    .collect();
+                let cmps: Vec<_> = v
+                    .fields
+                    .iter()
+                    .map(|fi| {
+                        let r = format_ident!("__r_{}", fi.ident);
+                        let k = format_ident!("__k_{}", fi.ident);
+                        field_cmp(fi, &r, &k)
+                    })
+                    .collect();
+                let body = if cmps.len() == 1 {
+                    cmps.into_iter().next().unwrap()
+                } else {
+                    let mut iter = cmps.into_iter();
+                    let first = iter.next().unwrap();
+                    iter.fold(first, |acc, cmp| quote! { #acc.then(#cmp) })
+                };
+                quote! {
+                    (#reader_name::#vi { #(#rbinds),* }, #name::#vi { #(#kbinds),* }) => #body,
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        impl ::mmapstruct::traits::ReaderOrd for #name {
+            fn cmp_reader(reader: &#reader_name<'_>, key: &Self) -> std::cmp::Ordering {
+                fn __mmap_disc_reader(r: &#reader_name<'_>) -> u32 {
+                    match r {
+                        #(#disc_arms_reader)*
+                    }
+                }
+                fn __mmap_disc_key(k: &#name) -> u32 {
+                    match k {
+                        #(#disc_arms_key)*
+                    }
+                }
+                let dr = __mmap_disc_reader(reader);
+                let dk = __mmap_disc_key(key);
+                if dr != dk {
+                    return dr.cmp(&dk);
+                }
+                match (reader, key) {
+                    #(#pair_arms)*
+                    // Different variants were already ordered by the
+                    // discriminant comparison above; this arm is unreachable.
+                    _ => std::cmp::Ordering::Equal,
+                }
+            }
+        }
+    }
 }

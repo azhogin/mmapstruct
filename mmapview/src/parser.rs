@@ -289,7 +289,7 @@ fn parse_simple_filter<'a>(
     tokens: &[Token<'a>],
     pos: usize,
 ) -> Result<(FilterExpr<'a>, usize), String> {
-    let (field, pos) = expect_ident(tokens, pos)?;
+    let (field, pos) = expect_filter_field(tokens, pos)?;
     let (op, pos) = expect_filter_op(tokens, pos)?;
     let (value, pos) = expect_filter_value(tokens, pos)?;
     Ok((FilterExpr::simple(field, op, value), pos))
@@ -327,7 +327,7 @@ fn parse_select_body<'a>(
     pos: usize,
 ) -> Result<(FilterExpr<'a>, usize), String> {
     let pos = expect_token(tokens, pos, &Token::Dot)?;
-    let (field, pos) = expect_ident(tokens, pos)?;
+    let (field, pos) = expect_filter_field(tokens, pos)?;
     let (op, pos) = expect_filter_op(tokens, pos)?;
     let (value, pos) = expect_filter_value(tokens, pos)?;
     let mut filter = FilterExpr::simple(field, op, value);
@@ -393,6 +393,25 @@ fn expect_ident<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(&'a str, usize)
         Some(tok) => Err(format!("expected identifier, got {:?}", tok)),
         None => Err("expected identifier, got end of input".into()),
     }
+}
+
+/// Parse a filter field name: either a plain identifier or the `$variant`
+/// pseudo-field (tokenized as `Dollar` + `Ident("variant")`).
+fn expect_filter_field<'a>(
+    tokens: &[Token<'a>],
+    pos: usize,
+) -> Result<(&'a str, usize), String> {
+    if tokens.get(pos) == Some(&Token::Dollar) {
+        return match tokens.get(pos + 1) {
+            Some(Token::Ident(name)) if *name == "variant" => Ok(("$variant", pos + 2)),
+            Some(Token::Ident(name)) => Err(format!(
+                "unknown pseudo-field `${name}` (only `$variant` is supported)"
+            )),
+            Some(tok) => Err(format!("expected identifier after `$`, got {:?}", tok)),
+            None => Err("expected identifier after `$`, got end of input".into()),
+        };
+    }
+    expect_ident(tokens, pos)
 }
 
 fn expect_filter_op<'a>(tokens: &[Token<'a>], pos: usize) -> Result<(FilterOp, usize), String> {
@@ -484,6 +503,70 @@ mod tests {
                 }
             }
         ));
+    }
+
+    #[test]
+    fn test_parse_dollar_variant_filter() {
+        let t = tokenize("/events[?$variant=Probe]").unwrap();
+        let e = parse(&t).unwrap();
+        match e {
+            Expr::Path(ref segs) => {
+                assert!(matches!(
+                    segs[1],
+                    Segment::Filter(FilterExpr::Simple {
+                        field: "$variant",
+                        op: FilterOp::Eq,
+                        value: FilterValue::Str("Probe")
+                    })
+                ));
+            }
+            _ => panic!("expected Path"),
+        }
+    }
+
+    #[test]
+    fn test_parse_dollar_variant_quoted_full_name() {
+        let t = tokenize(r#"/events[?$variant="Event::Probe"]"#).unwrap();
+        let e = parse(&t).unwrap();
+        assert!(matches!(
+            &e,
+            Expr::Path(segs)
+                if matches!(
+                    segs[1],
+                    Segment::Filter(FilterExpr::Simple {
+                        field: "$variant",
+                        op: FilterOp::Eq,
+                        value: FilterValue::Str("Event::Probe")
+                    })
+                )
+        ));
+    }
+
+    #[test]
+    fn test_parse_dollar_variant_select() {
+        let t = tokenize("select(.$variant=Key&.id>1)").unwrap();
+        let e = parse(&t).unwrap();
+        assert!(matches!(
+            &e,
+            Expr::Select {
+                filter: FilterExpr::And(left, right)
+            }
+            if matches!(left.as_ref(), FilterExpr::Simple {
+                field: "$variant",
+                op: FilterOp::Eq,
+                value: FilterValue::Str("Key")
+            }) && matches!(right.as_ref(), FilterExpr::Simple {
+                field: "id",
+                op: FilterOp::Gt,
+                value: FilterValue::Int(1)
+            })
+        ));
+    }
+
+    #[test]
+    fn test_parse_dollar_unknown_pseudo_field_errors() {
+        let t = tokenize("/events[?$foo=1]").unwrap();
+        assert!(parse(&t).is_err());
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use mmapstruct::{MmapStruct, write_to_buf_raw};
 use mmapstruct::traits::MmapRead;
 use mmapstruct_schema::builder::build_serialized_schema;
+use mmapstruct_schema::schema::TypeDefReader;
 use mmapstruct_schema::{
     format_schema_value, navigate_path, RuntimeSchemaCtx, SchemaValue,
     write_with_schema,
@@ -1098,4 +1099,147 @@ fn test_schema_enum_podcustom_last_record() {
     assert_eq!(ctx.read_u64(&ctx.field_get(&r2, "id").unwrap()), 3);
     assert_eq!(ctx.read_u32(&ctx.field_get(&r2, "src").unwrap()), 0);
     assert_eq!(ctx.read_u8(&ctx.field_get(&r2, "half").unwrap()), 9);
+}
+
+// ---------------------------------------------------------------------------
+// Option<T> inner alignment: the schema must mirror the writer's real
+// `align_of::<T>()`, not a hardcoded 8.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_schema_option_enum_align4_inner_offset() {
+    // Enum with only u32 fields: Rust align_of = 4. `Option<Small>` inner
+    // data starts 4 bytes after the present byte (writer: align_to(4)); the
+    // old hardcoded align-8 schema read the discriminant 4 bytes too late.
+    #[derive(MmapStruct, Debug, PartialEq)]
+    enum Small {
+        A { x: u32 },
+        B { y: u32 },
+    }
+
+    #[derive(MmapStruct, Debug)]
+    struct OptEnumFile {
+        opt: Option<Small>,
+    }
+
+    let w = OptEnumFile {
+        opt: Some(Small::A { x: 7 }),
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<OptEnumFile>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let opt = ctx.field_get(&root, "opt").unwrap();
+    // resolve_field_value unwraps Some: variant A, x = 7.
+    let x = ctx.field_get(&opt, "x").unwrap();
+    assert_eq!(ctx.read_u32(&x), 7);
+
+    // None case still resolves to a zero-length value.
+    let w2 = OptEnumFile { opt: None };
+    let data2 = mmapstruct::write_to_buf_raw(&w2);
+    let ctx2 = RuntimeSchemaCtx::new(&data2, &schema_bytes);
+    let root2 = SchemaValue::new(0, data2.len() as u64, root_type);
+    let opt2 = ctx2.field_get(&root2, "opt").unwrap();
+    assert!(ctx2.field_get(&opt2, "x").is_none());
+}
+
+#[test]
+fn test_schema_option_pod_struct_align4() {
+    // Pod struct with align 4 (two u32s): Option<S> inner data at +4; the old
+    // size-based heuristic (size 8 → align 8) overestimated.
+    #[derive(MmapStruct, Debug, PartialEq, Eq, Ord, PartialOrd, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+    #[repr(C)]
+    struct Pair {
+        a: u32,
+        b: u32,
+    }
+
+    #[derive(MmapStruct, Debug)]
+    struct OptPodFile {
+        opt: Option<Pair>,
+    }
+
+    let w = OptPodFile {
+        opt: Some(Pair { a: 11, b: 22 }),
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<OptPodFile>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let opt = ctx.field_get(&root, "opt").unwrap();
+    assert_eq!(ctx.read_u32(&ctx.field_get(&opt, "a").unwrap()), 11);
+    assert_eq!(ctx.read_u32(&ctx.field_get(&opt, "b").unwrap()), 22);
+}
+
+// ---------------------------------------------------------------------------
+// Pod enum discriminant bounds: disc_size (repr(u8) → 1 byte) must be used
+// for the discriminant read, and a 1-byte enum at the very end of the buffer
+// must not panic or misread the neighbouring element's bytes.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_schema_pod_enum_disc_size_bounds() {
+    #[derive(MmapStruct, Debug, PartialEq, Clone, Copy)]
+    #[repr(u8)]
+    enum Mode {
+        Off = 0,
+        On = 1,
+        Auto = 2,
+    }
+
+    #[derive(MmapStruct, Debug)]
+    struct ModeFile {
+        #[pod]
+        modes: Vec<Mode>,
+    }
+
+    let w = ModeFile {
+        modes: vec![Mode::On, Mode::Auto],
+    };
+    let data = mmapstruct::write_to_buf_raw(&w);
+    let schema = build_serialized_schema::<ModeFile>();
+    let schema_bytes = mmapstruct::write_to_buf_raw(&schema);
+    let schema_reader = <mmapstruct_schema::schema::Schema as MmapRead>::read(
+        &schema_bytes,
+        0..schema_bytes.len(),
+    );
+    let root_type = *schema_reader.root_type;
+
+    let ctx = RuntimeSchemaCtx::new(&data, &schema_bytes);
+    let root = SchemaValue::new(0, data.len() as u64, root_type);
+
+    let modes = ctx.field_get(&root, "modes").unwrap();
+    assert_eq!(ctx.array_len(&modes), 2);
+
+    // The last element is a single byte at the payload edge: reading its
+    // variant name must not over-read (the old code read a full u32).
+    let last = ctx.array_get(&modes, 1).unwrap();
+    let (vt_last, _) = ctx.enum_variant(&last).unwrap();
+    let TypeDefReader::Struct { name, .. } = ctx.type_reader(vt_last) else {
+        panic!("expected variant struct type")
+    };
+    assert_eq!(*name, "Mode::Auto");
+
+    let first = ctx.array_get(&modes, 0).unwrap();
+    let (vt_first, _) = ctx.enum_variant(&first).unwrap();
+    let TypeDefReader::Struct { name, .. } = ctx.type_reader(vt_first) else {
+        panic!("expected variant struct type")
+    };
+    assert_eq!(*name, "Mode::On");
 }

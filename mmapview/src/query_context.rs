@@ -1,5 +1,6 @@
 use mmapstruct::{SchemaCtx, DynValueType, Value};
 use mmapstruct_schema::context::RuntimeSchemaCtx;
+use mmapstruct_schema::schema::TypeDefReader;
 use mmapstruct_schema::SchemaValue;
 
 /// Trait abstracting over `SchemaCtx` and `RuntimeSchemaCtx` for the
@@ -17,6 +18,12 @@ pub trait QueryContext<'a> {
     fn read_str_opt(&self, val: &Self::Val) -> Option<&'a str>;
     fn is_array_type(&self, val: &Self::Val) -> bool;
     fn is_str_type(&self, val: &Self::Val) -> bool;
+
+    /// Name of the active enum variant for `?$variant=...` filters.
+    ///
+    /// Returns the full name as stored in the schema (`"Enum::Variant"`).
+    /// `None` when the value is not an enum.
+    fn variant_name(&self, val: &Self::Val) -> Option<&'a str>;
 }
 
 impl<'a> QueryContext<'a> for SchemaCtx<'a> {
@@ -56,6 +63,10 @@ impl<'a> QueryContext<'a> for SchemaCtx<'a> {
 
     fn is_str_type(&self, val: &Value) -> bool {
         matches!(val.schema, DynValueType::Str(_))
+    }
+
+    fn variant_name(&self, val: &Value) -> Option<&'a str> {
+        SchemaCtx::enum_variant(self, val).map(|(schema, _)| schema.name)
     }
 }
 
@@ -100,5 +111,13 @@ impl<'a> QueryContext<'a> for RuntimeSchemaCtx<'a> {
 
     fn is_str_type(&self, val: &SchemaValue) -> bool {
         RuntimeSchemaCtx::is_str_type(self, val.type_idx)
+    }
+
+    fn variant_name(&self, val: &SchemaValue) -> Option<&'a str> {
+        let (variant_idx, _) = RuntimeSchemaCtx::enum_variant(self, val)?;
+        match self.type_reader(variant_idx) {
+            TypeDefReader::Struct { name, .. } => Some(*name),
+            _ => None,
+        }
     }
 }

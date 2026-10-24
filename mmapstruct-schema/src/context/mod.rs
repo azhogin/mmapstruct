@@ -13,7 +13,8 @@ mod variant;
 pub use mixed_struct::FieldInfo;
 
 use crate::value::SchemaValue;
-use crate::schema::{ArrayLayoutDefReader, PrimitiveDef, Schema, TypeDefReader};
+use crate::schema::{ArrayLayoutDefReader, FieldDef, PrimitiveDef, Schema, TypeDefReader};
+use mmapstruct::indexed_array::IndexedArrayReader;
 use mmapstruct::traits::{mmap_read_pod, MmapRead};
 
 // ---------------------------------------------------------------------------
@@ -160,6 +161,10 @@ impl<'a> RuntimeSchemaCtx<'a> {
         matches!(self.type_reader(type_idx), TypeDefReader::Str { .. })
     }
 
+    /// Natural alignment for a type index (mirrors `core::mem::align_of` for
+    /// concrete types).  Computed structurally for structs/enums/options so
+    /// that schema-side alignment matches the writer, which uses the real
+    /// Rust `align_of` (e.g. `Option<T>` inner data, HashMap value areas).
     pub(crate) fn type_align(&self, type_idx: u32) -> u64 {
         let t = self.type_reader(type_idx);
         match t {
@@ -174,6 +179,7 @@ impl<'a> RuntimeSchemaCtx<'a> {
                 | PrimitiveDef::Usize
                 | PrimitiveDef::Isize => 8,
             },
+            // Opaque pod blob without field info: size-based heuristic.
             TypeDefReader::PodStruct { size } => {
                 let s = **size as usize;
                 if s == 0 {
@@ -182,20 +188,60 @@ impl<'a> RuntimeSchemaCtx<'a> {
                     s.min(8).next_power_of_two() as u64
                 }
             }
-            TypeDefReader::Struct {
-                fixed_section_size,
-                inline_dyn_count,
+            // `String`'s Rust alignment is 8 (it is a Vec<u8> wrapper); the writer
+            // aligns `Option<String>` inner data with `align_of::<String>()`,
+            // so the schema side must mirror that, not the raw-bytes layout.
+            TypeDefReader::Str { .. } => 8,
+            TypeDefReader::Struct { fields, .. } => {
+                // Mirror Rust's align_of: max over the fields' own alignments
+                // (dyn fields contribute via their type: Vec/HashMap → 8,
+                // String → 1, Option<T> → max(1, align of T), …).
+                self.max_field_align(fields).unwrap_or(1)
+            }
+            TypeDefReader::Enum {
+                variant_type_indices,
+                disc_size,
                 ..
-            } if **inline_dyn_count == 0 => {
-                let s = **fixed_section_size as usize;
-                if s == 0 {
-                    1
-                } else {
+            } => {
+                // Mirror Rust's align_of::<Enum>: max over all variants'
+                // field alignments, floored by the discriminant's alignment.
+                let mut m = **disc_size;
+                for vt in variant_type_indices.iter() {
+                    if let TypeDefReader::Struct { fields, .. } = self.type_reader(*vt) {
+                        if let Some(a) = self.max_field_align(fields) {
+                            if a > m {
+                                m = a;
+                            }
+                        }
+                    }
+                }
+                m
+            }
+            TypeDefReader::Option { inner_type } => self.type_align(**inner_type).max(1),
+            TypeDefReader::ByRef { inner_type } => self.type_align(**inner_type),
+            TypeDefReader::Array { layout, .. } => match layout {
+                ArrayLayoutDefReader::FixedPod { stride, .. } => {
+                    let s = **stride as usize;
                     s.min(8).next_power_of_two() as u64
                 }
-            }
+                _ => 8,
+            },
             _ => 8,
         }
+    }
+
+    /// Max alignment over a field list (`None` for empty lists).
+    fn max_field_align(&self, fields: &IndexedArrayReader<'a, FieldDef>) -> Option<u64> {
+        let n = fields.len();
+        let mut m: Option<u64> = None;
+        for i in 0..n {
+            let f = fields.get(i).unwrap();
+            let a = self.type_align(*f.type_index);
+            if m.map_or(true, |mm| a > mm) {
+                m = Some(a);
+            }
+        }
+        m
     }
 
     fn type_size(&self, type_idx: u32) -> Option<u64> {

@@ -155,6 +155,14 @@ with embedded schema for zero-config viewing.
 /items[?x>1.0&y<5.0]           # AND
 /items[?tag="urgent"\|?tag="high"] # OR
 
+# Enum variants (Vec<Enum> elements)
+/events[?test_field>0]         # field present only in some variants —
+                               # elements whose active variant lacks the
+                               # field are silently skipped (jq-like)
+/events[?$variant=Probe]       # filter by active variant (short name)
+/events[?$variant="Event::Probe"]  # full schema name (quoted)
+/events[?$variant=Probe&id>10] # combine with regular fields
+
 # Aggregations
 /items \| count()
 /items \| avg(.price)
@@ -180,7 +188,8 @@ with embedded schema for zero-config viewing.
 - Recursive types (`Vec<Self>`) — needs `OnceLock` in schema
 - Error handling — currently panics on corrupt data (use `strict-validation` for asserts)
 - Diff utility (`src/diff.rs` — stub)
-- `ReaderOrd` for complex fields (`Vec`, `HashMap`, `Option<complex>`)
+- `ReaderOrd` for complex fields (`Vec`, `HashMap`, `Option<complex>`); enums
+  with simple variant fields are supported
 
 ## Tests
 
