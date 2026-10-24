@@ -39,7 +39,7 @@ fn handle_normal_key(key: KeyEvent, app: &mut App) {
             app.search_next();
         }
         KeyCode::Char('N') => {
-            // previous match — not yet implemented
+            app.search_prev();
         }
         KeyCode::Up | KeyCode::Char('k') => {
             app.navigate_up();

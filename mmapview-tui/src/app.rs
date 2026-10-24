@@ -335,12 +335,35 @@ impl App {
         self.search_impl(&pattern);
     }
 
+    /// Move to the previous match (backward from current selection - 1).
+    ///
+    /// Searches the currently loaded window only (backward scanning into
+    /// not-yet-loaded data is not implemented); if nothing matches there,
+    /// reports `Pattern not found`.
+    pub fn search_prev(&mut self) {
+        let Some(pattern) = self.search.get_pattern() else {
+            return;
+        };
+        let mut i = self.viewport.selected;
+        while let Some(j) = self.overscan.prev_visible(i) {
+            i = j;
+            if self.node_matches_search(&self.overscan.nodes[i], i, &pattern) {
+                self.jump_to_match(i);
+                self.search_message = None;
+                return;
+            }
+        }
+        self.search_message = Some("Pattern not found");
+    }
+
     /// Common search implementation used by both `search_first` and `search_next`.
-    /// Phase 1: scan currently loaded nodes from `self.viewport.selected + 1`.
+    /// Phase 1: scan currently loaded nodes from `self.viewport.selected + 1`,
+    /// skipping nodes hidden behind collapsed containers.
     /// Phase 2: scan forward into new data.
     fn search_impl(&mut self, pattern: &str) {
-        let start = self.viewport.selected + 1;
-        for i in start..self.overscan.nodes.len() {
+        let mut i = self.viewport.selected;
+        while let Some(j) = self.overscan.next_visible(i) {
+            i = j;
             if self.node_matches_search(&self.overscan.nodes[i], i, pattern) {
                 self.jump_to_match(i);
                 self.search_message = None;
@@ -570,5 +593,125 @@ impl App {
             sel,
             self.viewport.scroll
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mmapstruct::MmapStruct;
+    use mmapstruct::traits::MmapRead;
+    use mmapstruct_schema::context::RuntimeSchemaCtx;
+    use mmapstruct_schema::{write_to_file_with_embedded_schema, Schema};
+
+    #[derive(MmapStruct, Debug)]
+    struct Item {
+        name: String,
+        val: u32,
+    }
+
+    #[derive(MmapStruct, Debug)]
+    struct ItemsFile {
+        items: Vec<Item>,
+        tail: u32,
+    }
+
+    fn setup_items() -> (&'static RuntimeSchemaCtx<'static>, SchemaValue) {
+        let val = ItemsFile {
+            items: (0..10)
+                .map(|i| Item {
+                    name: format!("alpha_{i}"),
+                    val: i,
+                })
+                .collect(),
+            tail: 77,
+        };
+        let buf = write_to_file_with_embedded_schema(&val, false);
+        let loaded = crate::schema::load_schema(&buf, None, None).unwrap();
+        let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
+        let schema_bytes: &'static [u8] = Box::leak(loaded.schema_bytes.into_boxed_slice());
+        let ctx: &'static RuntimeSchemaCtx<'static> =
+            Box::leak(Box::new(RuntimeSchemaCtx::new(data, schema_bytes)));
+        let schema_reader = <Schema as MmapRead>::read(schema_bytes, 0..schema_bytes.len());
+        let root_type = *schema_reader.root_type;
+        let root = SchemaValue::new(
+            loaded.payload_range.start as u64,
+            loaded.payload_range.end as u64,
+            root_type,
+        );
+        (ctx, root)
+    }
+
+    /// Fresh app with the items container expanded (10 visible elements).
+    fn app_with_items_expanded() -> App {
+        let (ctx, root) = setup_items();
+        let os = Overscan::new(Scanner::new(ctx, root, 500));
+        let mut app = App::new(os, 40);
+        app.expand_selected(); // node 0 = items
+        app
+    }
+
+    #[test]
+    fn test_search_first_forward_match() {
+        let mut app = app_with_items_expanded();
+        // nodes: [items(0), item_i(1..=10), tail(11)]
+        app.search.start("alpha_3".into());
+        app.search_first();
+        assert_eq!(app.viewport.selected, 4, "item3 is node idx 4");
+        assert_eq!(app.search_message, None);
+    }
+
+    #[test]
+    fn test_search_skips_hidden_children_of_collapsed() {
+        let mut app = app_with_items_expanded();
+        app.search.start("alpha_3".into());
+        app.search_first();
+        assert_eq!(app.viewport.selected, 4);
+
+        // Collapse the container: children stay loaded but hidden.
+        app.viewport.selected = 0;
+        app.collapse_selected();
+
+        // Forward search must NOT land on the hidden item3 — the old code
+        // selected it invisibly (bugs/mmapview-tui-search-selects-hidden-nodes.md).
+        app.search_next();
+        assert_eq!(
+            app.search_message,
+            Some("Pattern not found"),
+            "hidden matches must be skipped in phase 1"
+        );
+        assert_eq!(
+            app.viewport.selected, 0,
+            "selection must not move to a hidden node"
+        );
+
+        // Re-expand: the match is visible again and prev finds it.
+        app.expand_selected();
+        app.viewport.selected = 6; // item5
+        app.search_prev();
+        assert_eq!(app.viewport.selected, 4, "prev match = item3");
+    }
+
+    #[test]
+    fn test_search_prev_steps_backward() {
+        let mut app = app_with_items_expanded();
+        app.search.start("alpha_".into());
+        app.search_first(); // item0 → idx 1
+        assert_eq!(app.viewport.selected, 1);
+        app.search_next();
+        assert_eq!(app.viewport.selected, 2);
+        app.search_next();
+        assert_eq!(app.viewport.selected, 3);
+        app.search_prev();
+        assert_eq!(app.viewport.selected, 2, "N goes back one match");
+        app.search_prev();
+        assert_eq!(app.viewport.selected, 1);
+        app.search_prev();
+        assert_eq!(
+            app.search_message,
+            Some("Pattern not found"),
+            "no matches before the first"
+        );
+        assert_eq!(app.viewport.selected, 1);
     }
 }

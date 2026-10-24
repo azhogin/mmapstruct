@@ -960,7 +960,6 @@ mod tests {
         let g2_idx = 3; // g0=1, g1=2, g2=3, g3=4
         next.expand_node(g2_idx, 100); // load name + nums
         assert_eq!(next.nodes.len(), 8);
-        let nums_idx = g2_idx + 2;
         next.collapse_node(g2_idx); // user collapses g2; children stay loaded
                                     // Path through g2: focus at its nums child.
         let nums_path = next.path_of(g2_idx + 2);
