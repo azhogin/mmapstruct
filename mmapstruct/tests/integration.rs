@@ -4,10 +4,13 @@
 #![allow(clippy::field_reassign_with_default)]
 
 use bytemuck::{Pod, Zeroable};
-use mmapstruct::file_reader::{BufReader, MmapReader};
+use mmapstruct::file_reader::{
+    stored_layout_hash, write_layout_hash, BufReader, MmapReader,
+};
 use mmapstruct::indexed_array::{write_indexed_array, IndexedArrayReader};
 use mmapstruct::pod_array::write_pod_array;
 use mmapstruct::{write_to_buf, write_to_file, MmapStruct, WriteContext};
+use std::path::Path;
 use tempfile::NamedTempFile;
 
 /// Example from the spec.
@@ -3599,4 +3602,72 @@ fn test_dyn_enum_vec_variant_field_access() {
 
     // Unknown field name on any variant.
     assert!(ctx.field_get(&probe2, "no_such").is_none());
+}
+
+// ---------------------------------------------------------------------------
+// IO errors include the file path (std io errors omit it)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_reader_error_includes_path() {
+    const MISSING: &str = "/nonexistent_dir_xyz/nope.mms";
+
+    // MmapReader::from_file
+    let err = MmapReader::from_file(MISSING).err().expect("expected Err");
+    assert!(err.to_string().contains(MISSING), "missing path in: {err}");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+    // MmapReader::from_file_raw
+    let err = MmapReader::from_file_raw(MISSING).err().expect("expected Err");
+    assert!(err.to_string().contains(MISSING), "missing path in: {err}");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+    // BufReader::from_file
+    let err = BufReader::from_file(MISSING).err().expect("expected Err");
+    assert!(err.to_string().contains(MISSING), "missing path in: {err}");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+    // sidecar variants. MmapReader reads the *sidecar* first → sidecar path in
+    // the message; BufReader reads the *data* file first → data path.
+    let err =
+        MmapReader::from_file_with_sidecar(MISSING).err().expect("expected Err");
+    assert!(
+        err.to_string().contains("nope.mmshdr"),
+        "missing sidecar path in: {err}"
+    );
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+    let err =
+        BufReader::from_file_with_sidecar(MISSING).err().expect("expected Err");
+    assert!(err.to_string().contains(MISSING), "missing path in: {err}");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+    // BufReader::from_file_with_sidecar with existing data but missing sidecar:
+    // the sidecar path is in the message.
+    let tmp = NamedTempFile::new().unwrap();
+    let err = BufReader::from_file_with_sidecar(tmp.path())
+        .err()
+        .expect("expected Err");
+    assert!(
+        err.to_string()
+            .contains(tmp.path().with_extension("mmshdr").to_str().unwrap()),
+        "missing sidecar path in: {err}"
+    );
+
+    // Hash patch helpers.
+    let err = stored_layout_hash(Path::new(MISSING)).unwrap_err();
+    assert!(err.to_string().contains(MISSING), "missing path in: {err}");
+    let err = write_layout_hash(Path::new(MISSING), 0).unwrap_err();
+    assert!(err.to_string().contains(MISSING), "missing path in: {err}");
+}
+
+#[test]
+fn test_writer_error_includes_path() {
+    let w = MyFile::default();
+    let err = write_to_file(&w, "/nonexistent_dir_xyz/nope.mms", false).unwrap_err();
+    assert!(
+        err.to_string().contains("/nonexistent_dir_xyz/nope.mms"),
+        "missing path in: {err}"
+    );
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 }

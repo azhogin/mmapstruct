@@ -335,8 +335,12 @@ pub fn write_to_file_split<T: GetSchema + MmapWrite + LayoutHash>(
     }
     let mut sidecar_path = path.as_ref().to_path_buf();
     sidecar_path.set_extension("mmshdr");
-    std::fs::write(path.as_ref(), &data)?;
-    std::fs::write(&sidecar_path, &sidecar)?;
+    let with_path = |p: &std::path::Path, e: std::io::Error| {
+        // Include the path in the error message (std io errors omit it).
+        std::io::Error::new(e.kind(), format!("{}: {e}", p.display()))
+    };
+    std::fs::write(path.as_ref(), &data).map_err(|e| with_path(path.as_ref(), e))?;
+    std::fs::write(&sidecar_path, &sidecar).map_err(|e| with_path(&sidecar_path, e))?;
     Ok(())
 }
 

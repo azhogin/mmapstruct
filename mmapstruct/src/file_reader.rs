@@ -13,6 +13,13 @@ fn read_u32_le(data: &[u8]) -> u32 {
     u32::from_le_bytes([data[0], data[1], data[2], data[3]])
 }
 
+/// Wrap an io error so its `Display` includes the file path (std io errors
+/// omit the path, e.g. `No such file or directory (os error 2)`).  The
+/// `ErrorKind` is preserved, so `err.kind()` matching keeps working.
+fn with_path(path: &Path, err: io::Error) -> io::Error {
+    io::Error::new(err.kind(), format!("{}: {err}", path.display()))
+}
+
 /// Parsed mmapstruct header: `(payload, optional_embedded_schema_range,
 /// layout_hash, crc64)`.  The schema range is `(start, end)` within `data`.
 pub type ParsedHeader<'a> = (&'a [u8], Option<(usize, usize)>, Option<u64>, Option<u64>);
@@ -108,8 +115,9 @@ impl MmapReader {
 
     /// Memory-map a file at `path` (standard embedded-header file).
     pub fn from_file(path: impl AsRef<Path>) -> io::Result<Self> {
-        let file = File::open(path.as_ref())?;
-        let mmap = unsafe { Mmap::map(&file)? };
+        let path = path.as_ref();
+        let file = File::open(path).map_err(|e| with_path(path, e))?;
+        let mmap = unsafe { Mmap::map(&file).map_err(|e| with_path(path, e))? };
         let (payload, schema, hash, crc) = parse_header(&mmap);
         let payload_start = payload.as_ptr() as usize - mmap.as_ptr() as usize;
         let payload_range = payload_start..payload_start + payload.len();
@@ -130,11 +138,12 @@ impl MmapReader {
         let path = path.as_ref();
         let mut sidecar_path = path.to_path_buf();
         sidecar_path.set_extension("mmshdr");
-        let sidecar = std::fs::read(&sidecar_path)?;
+        let sidecar =
+            std::fs::read(&sidecar_path).map_err(|e| with_path(&sidecar_path, e))?;
         let (_sp, schema, hash, crc) = parse_header(&sidecar);
         let embedded_schema = schema.map(|(s, e)| sidecar[s..e].to_vec());
-        let file = File::open(path)?;
-        let mmap = unsafe { Mmap::map(&file)? };
+        let file = File::open(path).map_err(|e| with_path(path, e))?;
+        let mmap = unsafe { Mmap::map(&file).map_err(|e| with_path(path, e))? };
         let payload_range = 0..mmap.len();
         Ok(Self::new_internal(
             mmap,
@@ -149,8 +158,9 @@ impl MmapReader {
     /// and the layout-hash/crc checks are skipped entirely (like the
     /// O_DIRECT expert-cache reads — the caller guarantees the layout).
     pub fn from_file_raw(path: impl AsRef<Path>) -> io::Result<Self> {
-        let file = File::open(path)?;
-        let mmap = unsafe { Mmap::map(&file)? };
+        let path = path.as_ref();
+        let file = File::open(path).map_err(|e| with_path(path, e))?;
+        let mmap = unsafe { Mmap::map(&file).map_err(|e| with_path(path, e))? };
         let payload_range = 0..mmap.len();
         Ok(Self::new_internal(mmap, payload_range, None, None, None))
     }
@@ -238,7 +248,8 @@ impl BufReader {
 
     /// Read file at `path` into memory (standard embedded-header file).
     pub fn from_file(path: impl AsRef<Path>) -> io::Result<Self> {
-        let buf = std::fs::read(path.as_ref())?;
+        let path = path.as_ref();
+        let buf = std::fs::read(path).map_err(|e| with_path(path, e))?;
         let (payload, schema, hash, crc) = parse_header(&buf);
         let payload_start = payload.as_ptr() as usize - buf.as_ptr() as usize;
         let payload_range = payload_start..payload_start + payload.len();
@@ -257,10 +268,11 @@ impl BufReader {
     /// (offset 0), so it is directly O_DIRECT-aligned.
     pub fn from_file_with_sidecar(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
-        let buf = std::fs::read(path)?;
+        let buf = std::fs::read(path).map_err(|e| with_path(path, e))?;
         let mut sidecar_path = path.to_path_buf();
         sidecar_path.set_extension("mmshdr");
-        let sidecar = std::fs::read(&sidecar_path)?;
+        let sidecar =
+            std::fs::read(&sidecar_path).map_err(|e| with_path(&sidecar_path, e))?;
         let (_sp, schema, hash, crc) = parse_header(&sidecar);
         let embedded_schema = schema.map(|(s, e)| sidecar[s..e].to_vec());
         let payload_range = 0..buf.len();
@@ -335,9 +347,9 @@ impl BufReader {
 /// versions, or headers without the hash flag.
 pub fn stored_layout_hash(path: &Path) -> io::Result<Option<u64>> {
     use std::io::Read;
-    let mut f = File::open(path)?;
+    let mut f = File::open(path).map_err(|e| with_path(path, e))?;
     let mut hdr = [0u8; HEADER_SIZE];
-    let n = f.read(&mut hdr)?;
+    let n = f.read(&mut hdr).map_err(|e| with_path(path, e))?;
     if n < HEADER_SIZE {
         return Ok(None);
     }
@@ -364,9 +376,13 @@ pub fn stored_layout_hash(path: &Path) -> io::Result<Option<u64>> {
 /// hash flag (raw / v0).
 pub fn write_layout_hash(path: &Path, new_hash: u64) -> io::Result<()> {
     use std::io::{Read, Seek, SeekFrom, Write};
-    let mut f = File::options().read(true).write(true).open(path)?;
+    let mut f = File::options()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| with_path(path, e))?;
     let mut hdr = [0u8; HEADER_SIZE];
-    f.read_exact(&mut hdr)?;
+    f.read_exact(&mut hdr).map_err(|e| with_path(path, e))?;
     let header: FileHeader = unsafe { mmap_read_pod(&hdr) };
     if header.magic != MMAP_MAGIC {
         return Err(io::Error::new(
@@ -386,9 +402,9 @@ pub fn write_layout_hash(path: &Path, new_hash: u64) -> io::Result<()> {
         ));
     }
     hdr[8..16].copy_from_slice(&new_hash.to_le_bytes());
-    f.seek(SeekFrom::Start(0))?;
-    f.write_all(&hdr)?;
-    f.sync_all()
+    f.seek(SeekFrom::Start(0)).map_err(|e| with_path(path, e))?;
+    f.write_all(&hdr).map_err(|e| with_path(path, e))?;
+    f.sync_all().map_err(|e| with_path(path, e))
 }
 
 /// Recompute [`LayoutHash::HASH`] for `T` and write it into the file header.

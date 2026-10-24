@@ -70,7 +70,11 @@ pub fn write_to_file<T: traits::MmapWrite + LayoutHash>(
     write_crc: bool,
 ) -> std::io::Result<()> {
     let buf = write_to_buf(value, write_crc);
-    std::fs::write(path, &buf)
+    let path = path.as_ref();
+    std::fs::write(path, &buf).map_err(|e| {
+        // Include the path in the error message (std io errors omit it).
+        std::io::Error::new(e.kind(), format!("{}: {e}", path.display()))
+    })
 }
 
 /// Serialize `value` with a 24-byte file header (magic + flags + layout_hash + crc64).
