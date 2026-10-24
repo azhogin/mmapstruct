@@ -156,3 +156,58 @@ async fn test_query_error_handling() {
     let json: serde_json::Value = resp.json().await.unwrap();
     assert!(json["error"].as_str().is_some());
 }
+
+#[tokio::test]
+async fn test_limit_validation_returns_400() {
+    let data = make_test_file();
+    let (_server, base) = spawn_server(data).await;
+
+    // limit = 0 → 400
+    let resp = reqwest::get(format!("{}/api/query?q=/id&limit=0", base))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert!(json["error"].as_str().unwrap().contains("limit"));
+
+    // limit > MAX_PAGE_LIMIT (1000) → 400
+    let resp = reqwest::get(format!("{}/api/query?q=/id&limit=1001", base))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // Boundary: limit = 1000 → OK
+    let resp = reqwest::get(format!("{}/api/query?q=/id&limit=1000", base))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+/// Corrupt the data so rendering "/" slices out of bounds → the handler
+/// must return a clean HTTP 500 (and the server must survive).
+#[tokio::test]
+async fn test_corrupt_data_panic_returns_500() {
+    let mut data = make_test_file();
+    // TestFile layout: fixed section = id (4 bytes) + ByRefRange placeholder
+    // for `comment` (8 bytes) at [4..12]; offset table for name/tags/sentinel
+    // at [12..36].  Overwrite the ByRefRange with begin = 0xFFFFFFFF → the
+    // byref resolution of `comment` produces an out-of-bounds Value →
+    // `read_str` panics while rendering "/".
+    data[4..12].copy_from_slice(&0x0000_FFFF_FFFF_FFFFu64.to_le_bytes());
+    let (_server, base) = spawn_server(data).await;
+
+    let resp = reqwest::get(format!("{}/api/query?q=/", base))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert!(json["error"].as_str().unwrap().contains("panic"));
+
+    // The server survived the panic: a benign query still answers 200.
+    let resp = reqwest::get(format!("{}/api/query?q=/id&limit=10", base))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(json["data"], serde_json::json!([42]));
+}

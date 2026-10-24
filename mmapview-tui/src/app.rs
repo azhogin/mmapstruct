@@ -599,8 +599,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mmapstruct::MmapStruct;
     use mmapstruct::traits::MmapRead;
+    use mmapstruct::MmapStruct;
     use mmapstruct_schema::context::RuntimeSchemaCtx;
     use mmapstruct_schema::{write_to_file_with_embedded_schema, Schema};
 
