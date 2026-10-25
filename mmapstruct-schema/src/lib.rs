@@ -27,6 +27,7 @@ pub use navigate::navigate_path;
 
 // Re-export builder public API
 pub use builder::{
-    build_serialized_schema, ensure_registry_schema, write_split, write_to_file_split,
-    write_to_file_with_embedded_schema, write_with_schema,
+    build_serialized_schema, ensure_registry_schema, write_split, write_split_with,
+    write_to_file_split, write_to_file_split_with, write_to_file_with_embedded_schema,
+    write_with_schema,
 };

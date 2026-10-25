@@ -7,6 +7,53 @@ pub trait PostponedWriter<'data> {
     fn write(&self, ctx: &mut WriteContext<'data>);
 }
 
+/// Per-field reserve amounts baked into a container block at write time.
+///
+/// `slots` — spare index/range-table entries appended to the table;
+/// `bytes` — spare data bytes placed after the field's values. Both make the
+/// field patchable in place later (see `crate::PatchSession`). Reserves are
+/// self-describing in the file (`BLOCK_FLAG_RESERVED` + a reserve word), so
+/// readers never need the plan; it is only a write-time input.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Reserve {
+    pub slots: u32,
+    pub bytes: u64,
+}
+
+impl Reserve {
+    pub const NONE: Reserve = Reserve { slots: 0, bytes: 0 };
+
+    pub fn is_none(&self) -> bool {
+        self.slots == 0 && self.bytes == 0
+    }
+}
+
+/// Field-name keyed reserve plan for a write.
+#[derive(Clone, Debug, Default)]
+pub struct ReservePlan {
+    map: std::collections::HashMap<String, Reserve>,
+}
+
+impl ReservePlan {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Reserve slack for the field with the given (Rust) name.
+    pub fn set(&mut self, field: impl Into<String>, reserve: Reserve) -> &mut Self {
+        self.map.insert(field.into(), reserve);
+        self
+    }
+
+    pub fn get(&self, field: &str) -> Reserve {
+        self.map.get(field).copied().unwrap_or(Reserve::NONE)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
+
 struct ByRefWriter<'data, T: MmapWrite> {
     value: &'data T,
 }
@@ -35,6 +82,7 @@ impl<'data> PostponedData<'data> {
 pub struct WriteContext<'data> {
     buf: Vec<u8>,
     postponed: Vec<PostponedData<'data>>,
+    reserve_plan: Option<ReservePlan>,
 }
 
 impl<'data> Default for WriteContext<'data> {
@@ -48,7 +96,28 @@ impl<'data> WriteContext<'data> {
         Self {
             buf: Vec::new(),
             postponed: Vec::new(),
+            reserve_plan: None,
         }
+    }
+
+    /// Attach a reserve plan: container helpers query it by field name and
+    /// bake the requested slack (flag + reserve word + spare slots + gap)
+    /// into the file.
+    pub fn with_reserve_plan(plan: ReservePlan) -> Self {
+        Self {
+            buf: Vec::new(),
+            postponed: Vec::new(),
+            reserve_plan: Some(plan),
+        }
+    }
+
+    /// Look up the reserve amounts for a field (NONE when no plan or no
+    /// entry).
+    pub fn field_reserve(&self, field: &str) -> Reserve {
+        self.reserve_plan
+            .as_ref()
+            .map(|p| p.get(field))
+            .unwrap_or(Reserve::NONE)
     }
 
     pub fn current_offset(&self) -> usize {

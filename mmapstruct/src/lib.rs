@@ -62,10 +62,10 @@ pub use schema::{
 };
 pub use traits::{
     combine_hashes, compute_crc64, fnv1a, mmap_read_pod, ByRefRange, FileHeader, FileRange,
-    LayoutHash, MmapLayout, MmapPod, MmapRead, MmapWrite, ReaderOrd, CRC64_TABLE, HEADER_SIZE,
-    MMAP_MAGIC,
+    LayoutHash, MmapLayout, MmapPod, MmapRead, MmapWrite, ReaderOrd, BLOCK_FLAG_RESERVED,
+    CRC64_TABLE, HEADER_SIZE, MMAP_MAGIC,
 };
-pub use write_context::WriteContext;
+pub use write_context::{Reserve, ReservePlan, WriteContext};
 
 use std::path::Path;
 
@@ -74,7 +74,19 @@ pub fn write_to_file<T: traits::MmapWrite + LayoutHash>(
     path: impl AsRef<Path>,
     write_crc: bool,
 ) -> std::io::Result<()> {
-    let buf = write_to_buf(value, write_crc);
+    write_to_file_with(value, path, write_crc, ReservePlan::new())
+}
+
+/// [`write_to_file`] with a per-field [`ReservePlan`]: reserved container
+/// blocks become patchable in place via [`PatchSession`] (see
+/// `append_pod_vec` / `append_indexed`).
+pub fn write_to_file_with<T: traits::MmapWrite + LayoutHash>(
+    value: &T,
+    path: impl AsRef<Path>,
+    write_crc: bool,
+    reserve: ReservePlan,
+) -> std::io::Result<()> {
+    let buf = write_to_buf_with(value, write_crc, reserve);
     let path = path.as_ref();
     std::fs::write(path, &buf).map_err(|e| {
         // Include the path in the error message (std io errors omit it).
@@ -86,7 +98,16 @@ pub fn write_to_file<T: traits::MmapWrite + LayoutHash>(
 /// If `write_crc` is true, computes and writes CRC-64-ECMA over the payload.
 /// If `write_crc` is false, the crc64 field is set to 0 (reader will skip CRC check).
 pub fn write_to_buf<T: traits::MmapWrite + LayoutHash>(value: &T, write_crc: bool) -> Vec<u8> {
-    let mut ctx = WriteContext::new();
+    write_to_buf_with(value, write_crc, ReservePlan::new())
+}
+
+/// [`write_to_buf`] with a per-field [`ReservePlan`].
+pub fn write_to_buf_with<T: traits::MmapWrite + LayoutHash>(
+    value: &T,
+    write_crc: bool,
+    reserve: ReservePlan,
+) -> Vec<u8> {
+    let mut ctx = WriteContext::with_reserve_plan(reserve);
     value.write(&mut ctx);
     let buf = ctx.finish();
     let mut result = Vec::with_capacity(HEADER_SIZE + buf.len());
@@ -146,7 +167,12 @@ pub fn write_to_buf_with_schema<T: traits::MmapWrite + LayoutHash + crate::schem
 
 /// Serialize `value` **without** a file header. For tests / raw data.
 pub fn write_to_buf_raw<T: traits::MmapWrite>(value: &T) -> Vec<u8> {
-    let mut ctx = WriteContext::new();
+    write_to_buf_raw_with(value, ReservePlan::new())
+}
+
+/// [`write_to_buf_raw`] with a per-field [`ReservePlan`].
+pub fn write_to_buf_raw_with<T: traits::MmapWrite>(value: &T, reserve: ReservePlan) -> Vec<u8> {
+    let mut ctx = WriteContext::with_reserve_plan(reserve);
     value.write(&mut ctx);
     ctx.finish()
 }

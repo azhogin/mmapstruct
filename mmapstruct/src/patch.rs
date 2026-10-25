@@ -281,22 +281,32 @@ impl PatchSession {
         Ok(())
     }
 
-    /// Update a count field (u64) that acts as the visibility switch.
+    /// Update a count word (u64) that acts as the visibility switch.
     ///
-    /// Written as two 4-byte halves, low dword first: a count only grows on
-    /// append, so while the high dwords are equal a torn read (between the
-    /// two stores) yields either the old or the new count, never a mix.
-    /// Counts crossing 2^32 are rejected as non-atomic.
-    fn patch_count_u64(&mut self, pos: usize, old: u64, new: u64) -> io::Result<()> {
-        if (old >> 32) != (new >> 32) {
+    /// `old_word` is the full current word (including a possible
+    /// [`BLOCK_FLAG_RESERVED`] bit — it is preserved), `new_count` is the new
+    /// element count without the flag. Written as two 4-byte halves, low dword
+    /// first: a count only grows on append, so while the count high dwords are
+    /// equal a torn read (between the two stores) yields either the old or the
+    /// new count, never a mix. Counts crossing 2^32 are rejected as
+    /// non-atomic.
+    fn patch_count_u64(&mut self, pos: usize, old_word: u64, new_count: u64) -> io::Result<()> {
+        let old_count = old_word & !crate::traits::BLOCK_FLAG_RESERVED;
+        if (old_count >> 32) != (new_count >> 32) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("count patch {old} -> {new} crosses the 2^32 boundary; not crash-atomic"),
+                format!("count patch {old_count} -> {new_count} crosses the 2^32 boundary; not crash-atomic"),
             ));
         }
+        let flag_hi = if old_word & crate::traits::BLOCK_FLAG_RESERVED != 0 {
+            0x8000_0000u32
+        } else {
+            0
+        };
+        let high = ((new_count >> 32) as u32) | flag_hi;
         let data = self.payload_mut();
-        data[pos..pos + 4].copy_from_slice(&(new as u32).to_le_bytes());
-        data[pos + 4..pos + 8].copy_from_slice(&((new >> 32) as u32).to_le_bytes());
+        data[pos..pos + 4].copy_from_slice(&(new_count as u32).to_le_bytes());
+        data[pos + 4..pos + 8].copy_from_slice(&high.to_le_bytes());
         Ok(())
     }
 
@@ -310,6 +320,25 @@ impl PatchSession {
         block_start: usize,
         block_end: usize,
     ) -> io::Result<(usize, u64)> {
+        let payload_len = self.payload_range.len();
+        if block_end != payload_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "container is not at the payload tail (block ends at {block_end}, payload ends at {payload_len}); tail-append requires the container to be the last dynamic value of the root struct, with no byref data after it"
+                ),
+            ));
+        }
+        self.layout_check::<R>(block_start)
+    }
+
+    /// Validate that a container block belongs to the root layout `R`:
+    /// dynamic-region placement, 4-byte alignment, and the offset-table
+    /// sentinel matching the payload size.
+    ///
+    /// Returns `(sentinel_pos, sentinel_value)` — the offset-table sentinel
+    /// (total dynamic-region size) that must be patched when a span grows.
+    fn layout_check<R: MmapLayout>(&self, block_start: usize) -> io::Result<(usize, u64)> {
         let payload_len = self.payload_range.len();
         let hs = R::HEADER_SIZE;
         if R::INLINE_DYN_COUNT == 0 || hs < 8 {
@@ -326,14 +355,6 @@ impl PatchSession {
                 ),
             ));
         }
-        if block_end != payload_len {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "container is not at the payload tail (block ends at {block_end}, payload ends at {payload_len}); tail-append requires the container to be the last dynamic value of the root struct, with no byref data after it"
-                ),
-            ));
-        }
         let sentinel_pos = hs - 8;
         let sentinel = u64::from_le_bytes(
             self.payload()[sentinel_pos..sentinel_pos + 8]
@@ -341,11 +362,14 @@ impl PatchSession {
                 .unwrap(),
         );
         let expected = (payload_len - hs) as u64;
-        if sentinel != expected {
+        // The sentinel counts only the inline dynamic values; byref (postponed)
+        // data lives after them, so `sentinel <= expected` for valid files
+        // (equality exactly when no byref data exists).
+        if sentinel > expected {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "offset-table sentinel is {sentinel:#x}, expected {expected:#x} (total dynamic size); the file does not match the root layout"
+                    "offset-table sentinel is {sentinel:#x}, larger than the payload allows ({expected:#x}); the file does not match the root layout"
                 ),
             ));
         }
@@ -391,18 +415,38 @@ impl PatchSession {
                 format!("elems_off {elems_off} is outside the payload range [8, {payload_len}]"),
             ));
         }
-        let block_start = elems_off - 8;
-        let count = u64::from_le_bytes(
-            self.payload()[block_start..block_start + 8]
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let block_end = elems_off
-            .checked_add(count.checked_mul(elem_size).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "element region size overflow")
-            })?)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "block end overflow"))?;
-        let (sentinel_pos, sentinel) = self.tail_block_check::<R>(block_start, block_end)?;
+        // Reserved (flagged) pod-vec blocks carry [count|FLAG][resv] before
+        // the elements (16-byte header), plain blocks only [count] (8 bytes).
+        // Disambiguate: the flagged probe must have the flag bit set AND the
+        // candidate block start must be an offset-table entry of the root
+        // (interior span positions never are, so the pair cannot falsely
+        // trigger on pod data that happens to have bit 63 set).
+        let (block_start, raw) = if elems_off >= 16 {
+            let probe = u64::from_le_bytes(
+                self.payload()[elems_off - 16..elems_off - 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            if probe & crate::traits::BLOCK_FLAG_RESERVED != 0
+                && self.span_end_for_block::<R>(elems_off - 16).is_ok()
+            {
+                (elems_off - 16, probe)
+            } else {
+                (
+                    elems_off - 8,
+                    u64::from_le_bytes(
+                        self.payload()[elems_off - 8..elems_off].try_into().unwrap(),
+                    ),
+                )
+            }
+        } else {
+            (
+                elems_off - 8,
+                u64::from_le_bytes(self.payload()[elems_off - 8..elems_off].try_into().unwrap()),
+            )
+        };
+        let flagged = raw & crate::traits::BLOCK_FLAG_RESERVED != 0;
+        let count = (raw & !crate::traits::BLOCK_FLAG_RESERVED) as usize;
         if !elems_off.is_multiple_of(std::mem::align_of::<T>()) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -416,6 +460,45 @@ impl PatchSession {
             return Ok(());
         }
         let add_bytes = std::mem::size_of_val(add);
+        if flagged {
+            // Reserved block: append in place into the data gap. The gap sits
+            // right after the current elements; the field's span (and thus
+            // the offset-table sentinel) does not change.
+            self.layout_check::<R>(block_start)?;
+            let resv = u64::from_le_bytes(
+                self.payload()[block_start + 8..block_start + 16]
+                    .try_into()
+                    .unwrap(),
+            );
+            let gap_bytes = (resv >> 32) as usize;
+            if add_bytes > gap_bytes {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "pod-vec data reserve exhausted: gap holds {gap_bytes} bytes, need {add_bytes}; rewrite the file with a larger reserve"
+                    ),
+                ));
+            }
+            let gap_start = elems_off + count * elem_size;
+            {
+                let p = self.payload_mut();
+                p[gap_start..gap_start + add_bytes].copy_from_slice(bytemuck::cast_slice(add));
+            }
+            // Count switch first (elements are already in place), then the
+            // reserve-word bookkeeping.
+            self.patch_count_u64(block_start, raw, (count + add.len()) as u64)?;
+            self.patch_u64_at(
+                block_start + 8,
+                (((gap_bytes - add_bytes) as u64) << 32) | (resv & 0xFFFF_FFFF),
+            )?;
+            return Ok(());
+        }
+        let block_end = elems_off
+            .checked_add(count.checked_mul(elem_size).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "element region size overflow")
+            })?)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "block end overflow"))?;
+        let (sentinel_pos, sentinel) = self.tail_block_check::<R>(block_start, block_end)?;
         self.grow(add_bytes)?;
         {
             let p = self.payload_mut();
@@ -423,7 +506,145 @@ impl PatchSession {
             p[start..].copy_from_slice(bytemuck::cast_slice(add));
         }
         self.patch_u64_at(sentinel_pos, sentinel + add_bytes as u64)?;
-        self.patch_count_u64(block_start, count as u64, (count + add.len()) as u64)?;
+        self.patch_count_u64(block_start, raw, (count + add.len()) as u64)?;
+        Ok(())
+    }
+
+    /// Locate the span end (exclusive) of the dynamic field whose block sits
+    /// at `block_off`, by scanning the root offset table of `R`.
+    ///
+    /// For the last dynamic field this is the payload end; otherwise the next
+    /// field's block start.
+    fn span_end_for_block<R: MmapLayout>(&self, block_off: usize) -> io::Result<usize> {
+        let hs = R::HEADER_SIZE;
+        if block_off < hs {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "block offset is before the dynamic region",
+            ));
+        }
+        let fs = R::FIXED_SECTION_SIZE;
+        let n = R::INLINE_DYN_COUNT;
+        let data = self.payload();
+        let target = (block_off - hs) as u64;
+        for i in 0..n {
+            let entry = u64::from_le_bytes(data[fs + i * 8..fs + i * 8 + 8].try_into().unwrap());
+            if entry == target {
+                return Ok(if i + 1 < n {
+                    (u64::from_le_bytes(
+                        data[fs + (i + 1) * 8..fs + (i + 1) * 8 + 8]
+                            .try_into()
+                            .unwrap(),
+                    ) as usize)
+                        + hs
+                } else {
+                    self.payload_range.len()
+                });
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "block is not referenced by the root offset table",
+        ))
+    }
+
+    /// Append one element to a reserved `Vec<T>` (non-fixed-size elements)
+    /// block anywhere in the file.
+    ///
+    /// Requires the block to be written with a reserve
+    /// (`ReservePlan`/`write_to_buf_with`): spare table slots make the slot
+    /// table extensible and the trailing data gap holds the new value bytes.
+    /// Fully in place — the file does not grow and the offset-table sentinel
+    /// is unchanged. The tail position is NOT required.
+    ///
+    /// Crash-consistency: value bytes and the new slot are written before the
+    /// count switch; between the count switch and the reserve-word update the
+    /// new element reads as zero-length (memory-safe), and a crash there
+    /// self-heals on the next append (the gap position is derived from the
+    /// stale reserve word).
+    pub fn append_indexed<R: MmapLayout, T: MmapWrite>(
+        &mut self,
+        block_off: usize,
+        value: &T,
+    ) -> io::Result<()> {
+        let payload_len = self.payload_range.len();
+        if !block_off.is_multiple_of(8) || block_off + 16 > payload_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("indexed block offset {block_off} is misaligned or too close to the payload end ({payload_len})"),
+            ));
+        }
+        let data = self.payload();
+        let raw = u64::from_le_bytes(data[block_off..block_off + 8].try_into().unwrap());
+        if raw & crate::traits::BLOCK_FLAG_RESERVED == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "indexed block has no reserve; without spare slots a crash-safe append is impossible — rewrite the file with a ReservePlan (write_to_buf_with)",
+            ));
+        }
+        let count = (raw & !crate::traits::BLOCK_FLAG_RESERVED) as usize;
+        let resv = u64::from_le_bytes(data[block_off + 8..block_off + 16].try_into().unwrap());
+        let spare_slots = (resv & 0xFFFF_FFFF) as usize;
+        let gap_bytes = (resv >> 32) as usize;
+        self.layout_check::<R>(block_off)?;
+        if spare_slots == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "indexed reserve exhausted: no spare table slots left; rewrite the file with a larger reserve",
+            ));
+        }
+        let span_end = self.span_end_for_block::<R>(block_off)?;
+        let mut ctx = WriteContext::new();
+        value.write(&mut ctx);
+        let vbytes = ctx.finish();
+        let vlen = vbytes.len();
+        // Land the value at its natural alignment inside the gap (the gap
+        // start itself is aligned at build time; later appends re-align).
+        // The alignment padding is charged to the reserve together with the
+        // value bytes, so the next append lands aligned again. For align-1
+        // elements (String, Vec<u8>) the content is exact; for larger
+        // alignments trailing pad bytes sit beyond the instance fields and
+        // never affect reads.
+        let align = std::mem::align_of::<T>().max(1);
+        let raw_start = span_end - gap_bytes;
+        let gap_start = if align > 1 {
+            (raw_start + align - 1) & !(align - 1)
+        } else {
+            raw_start
+        };
+        let consumed = (gap_start - raw_start) + vlen;
+        if consumed > gap_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "indexed data reserve exhausted: gap holds {gap_bytes} bytes, need {consumed}; rewrite the file with a larger reserve"
+                ),
+            ));
+        }
+        // Sanity: the gap must live after the slot table and the values.
+        let min_gap_start = block_off + 16 + (count + spare_slots) * 8;
+        if gap_start < min_gap_start {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "indexed block layout is inconsistent: gap start {gap_start} < {min_gap_start}"
+                ),
+            ));
+        }
+        {
+            let p = self.payload_mut();
+            p[gap_start..gap_start + vlen].copy_from_slice(&vbytes);
+            let slot_pos = block_off + 16 + count * 8;
+            let slot_value = (gap_start - block_off) as u64;
+            p[slot_pos..slot_pos + 8].copy_from_slice(&slot_value.to_le_bytes());
+        }
+        // Count is the visibility switch; the reserve word bookkeeping
+        // (one slot consumed, the data gap shrunk) follows.
+        self.patch_count_u64(block_off, raw, (count + 1) as u64)?;
+        self.patch_u64_at(
+            block_off + 8,
+            (((gap_bytes - consumed) as u64) << 32) | ((spare_slots - 1) as u64),
+        )?;
         Ok(())
     }
 

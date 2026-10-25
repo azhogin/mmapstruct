@@ -1,4 +1,5 @@
-use crate::traits::{FileRange, MmapRead};
+use crate::traits::{FileRange, MmapRead, BLOCK_FLAG_RESERVED};
+use crate::write_context::Reserve;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
@@ -7,19 +8,21 @@ pub struct IndexedArrayReader<'a, T> {
     #[allow(dead_code)]
     range: FileRange,
     count: usize,
+    /// Base for the stored offsets: block start for reserved (flagged)
+    /// blocks (offsets are block-relative there), values start for plain
+    /// blocks (offsets are values-relative).
+    base: usize,
     offset_bytes: &'a [u8],
+    /// Byte size of the values region relative to `base`.
     total_values_size: usize,
-    values_offset: usize,
     _phantom: PhantomData<T>,
 }
 
 impl<'a, T: MmapRead + 'a> IndexedArrayReader<'a, T> {
     pub fn new(data: &'a [u8], range: FileRange) -> Self {
-        let count = if range.len() < 8 {
-            0
-        } else {
-            u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap()) as usize
-        };
+        let raw = u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap());
+        let flagged = raw & BLOCK_FLAG_RESERVED != 0;
+        let count = (raw & !BLOCK_FLAG_RESERVED) as usize;
         #[cfg(feature = "strict-validation")]
         {
             let max_count = range.len() / 8;
@@ -31,18 +34,29 @@ impl<'a, T: MmapRead + 'a> IndexedArrayReader<'a, T> {
                 range.len()
             );
         }
-        let offsets_offset = range.start + 8;
-        let values_offset = offsets_offset + count * 8;
-        let offset_bytes = &data[offsets_offset..offsets_offset + count * 8];
-        let total_values_size = range.end - values_offset;
+        let slots_pos = range.start + if flagged { 16 } else { 8 };
+        let offset_bytes = &data[slots_pos..slots_pos + count * 8];
+        let (base, total_values_size) = if flagged {
+            let resv =
+                u64::from_le_bytes(data[range.start + 8..range.start + 16].try_into().unwrap());
+            let reserved_bytes = (resv >> 32) as usize;
+            // Reserved blocks store block-relative offsets; the implicit end
+            // of the values region is the span end minus the (possibly
+            // already partially consumed) data gap.
+            (range.start, range.len() - reserved_bytes)
+        } else {
+            let offsets_offset = range.start + 8;
+            let values_offset = offsets_offset + count * 8;
+            (values_offset, range.end - values_offset)
+        };
 
         Self {
             data,
             range,
             count,
+            base,
             offset_bytes,
             total_values_size,
-            values_offset,
             _phantom: PhantomData,
         }
     }
@@ -76,8 +90,8 @@ impl<'a, T: MmapRead + 'a> IndexedArrayReader<'a, T> {
         if index >= self.count {
             return None;
         }
-        let start = self.values_offset + self.offset(index);
-        let end = self.values_offset + self.offset(index + 1);
+        let start = self.base + self.offset(index);
+        let end = self.base + self.offset(index + 1);
         #[cfg(feature = "strict-validation")]
         {
             assert!(
@@ -101,7 +115,7 @@ impl<'a, T: MmapRead + 'a> IndexedArrayReader<'a, T> {
     pub fn iter(&self) -> IndexedArrayIter<'a, T> {
         IndexedArrayIter {
             data: self.data,
-            values_start: self.values_offset,
+            values_start: self.base,
             offset_bytes: self.offset_bytes,
             total_values_size: self.total_values_size,
             pos: 0,
@@ -192,4 +206,47 @@ pub fn write_indexed_array<'data, T: crate::traits::MmapWrite>(
         current_offset = (ctx.current_offset() - values_start) as u64;
     }
     ctx.write_u64_le_at(items.len() as u64, count_pos);
+}
+
+/// [`write_indexed_array`] with an optional reserve.
+///
+/// Reserved blocks are self-describing:
+/// `[count | BLOCK_FLAG_RESERVED][reserve word][count+slots offset slots][values][gap]`
+/// where the reserve word holds spare table slots in its low 32 bits and the
+/// spare data bytes in its high 32 bits. Offsets in reserved blocks are
+/// **block-relative** (the reader derives value positions from the block
+/// start, so appending values into the gap never invalidates existing
+/// slots), and the implicit end of the values region is the span end minus
+/// the remaining gap bytes. A patch session appends in place: value bytes →
+/// new slot → count switch → reserve-word update.
+pub fn write_indexed_array_r<'data, T: crate::traits::MmapWrite>(
+    items: &'data [T],
+    ctx: &mut crate::WriteContext<'data>,
+    reserve: Reserve,
+) {
+    if reserve.is_none() {
+        write_indexed_array(items, ctx);
+        return;
+    }
+    let count_pos = ctx.current_offset();
+    ctx.write_u64_le((items.len() as u64) | BLOCK_FLAG_RESERVED);
+    ctx.write_u64_le(((reserve.bytes << 32) | reserve.slots as u64) & !(1u64 << 63));
+    let offsets_pos = ctx.current_offset();
+    ctx.write_padding((items.len() + reserve.slots as usize) * 8);
+
+    // First value starts after the (count + spare) slot table, block-relative.
+    let mut current_offset: u64 =
+        ((offsets_pos - count_pos) + (items.len() + reserve.slots as usize) * 8) as u64;
+    for (i, elem) in items.iter().enumerate() {
+        ctx.write_u64_le_at(current_offset, offsets_pos + i * 8);
+        elem.write(ctx);
+        ctx.align_to(8);
+        // Block-relative offset (block starts at count_pos).
+        current_offset = (ctx.current_offset() - count_pos) as u64;
+    }
+    // Data gap after the values: patchable space for future elements.
+    if reserve.bytes > 0 {
+        ctx.write_padding(reserve.bytes as usize);
+    }
+    ctx.write_u64_le_at((items.len() as u64) | BLOCK_FLAG_RESERVED, count_pos);
 }

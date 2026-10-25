@@ -430,9 +430,12 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                             let expr = quote! {
                                 {
                                     let (s, _e) = #rc;
-                                    let count = u64::from_le_bytes(data[s..s+8].try_into().unwrap()) as usize;
+                                    let raw = u64::from_le_bytes(data[s..s+8].try_into().unwrap());
+                                    let flagged = raw & ::mmapstruct::traits::BLOCK_FLAG_RESERVED != 0;
+                                    let count = (raw & !::mmapstruct::traits::BLOCK_FLAG_RESERVED) as usize;
+                                    let base = s + if flagged { 16 } else { 8 };
                                     let elem_size = ::std::mem::size_of::<#inner>();
-                                    ::mmapstruct::bytemuck::cast_slice(&data[s+8 .. s+8 + count * elem_size])
+                                    ::mmapstruct::bytemuck::cast_slice(&data[base .. base + count * elem_size])
                                 }
                             };
                             if is_tuple {

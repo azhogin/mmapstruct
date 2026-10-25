@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use mmapstruct::{
-    compute_crc64, schema::EnumSchema, write_to_buf_raw, ArrayLayout, DynValueType, FileHeader,
-    GetSchema, LayoutHash, MmapWrite, StructSchema, HEADER_SIZE,
+    compute_crc64, schema::EnumSchema, write_to_buf_raw, write_to_buf_raw_with, ArrayLayout,
+    DynValueType, FileHeader, GetSchema, LayoutHash, MmapWrite, ReservePlan, StructSchema,
+    HEADER_SIZE,
 };
 
 use crate::schema;
@@ -297,7 +298,17 @@ pub fn write_split<T: GetSchema + MmapWrite + LayoutHash>(
     value: &T,
     embed_schema: bool,
 ) -> (Vec<u8>, Vec<u8>) {
-    let data = write_to_buf_raw(value);
+    write_split_with(value, embed_schema, ReservePlan::new())
+}
+
+/// [`write_split`] with a per-field [`ReservePlan`]: reserved container
+/// blocks become patchable in place via `mmapstruct::PatchSession`.
+pub fn write_split_with<T: GetSchema + MmapWrite + LayoutHash>(
+    value: &T,
+    embed_schema: bool,
+    reserve: ReservePlan,
+) -> (Vec<u8>, Vec<u8>) {
+    let data = write_to_buf_raw_with(value, reserve);
     let sidecar = if embed_schema {
         let schema = build_serialized_schema::<T>();
         let schema_bytes = write_to_buf_raw(&schema);
@@ -329,7 +340,18 @@ pub fn write_to_file_split<T: GetSchema + MmapWrite + LayoutHash>(
     write_crc: bool,
     embed_schema: bool,
 ) -> std::io::Result<()> {
-    let (data, mut sidecar) = write_split(value, embed_schema);
+    write_to_file_split_with(path, value, write_crc, embed_schema, ReservePlan::new())
+}
+
+/// [`write_to_file_split`] with a per-field [`ReservePlan`].
+pub fn write_to_file_split_with<T: GetSchema + MmapWrite + LayoutHash>(
+    path: impl AsRef<std::path::Path>,
+    value: &T,
+    write_crc: bool,
+    embed_schema: bool,
+    reserve: ReservePlan,
+) -> std::io::Result<()> {
+    let (data, mut sidecar) = write_split_with(value, embed_schema, reserve);
     if write_crc {
         let crc = compute_crc64(&data);
         sidecar[16..24].copy_from_slice(&crc.to_le_bytes());

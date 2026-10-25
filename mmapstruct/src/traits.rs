@@ -234,6 +234,13 @@ pub const ENC_FIXED_ARRAY: u64 = fnv1a(b"FIXED_ARRAY");
 pub const ENC_POD_CUSTOM: u64 = fnv1a(b"POD_CUSTOM");
 pub const ENC_LIST: u64 = fnv1a(b"LIST");
 
+/// High bit of a container's count word marking a *reserved* (self-describing)
+/// block: the word after the count holds the reserve amounts
+/// (`u32 slots | u32 bytes` for indexed blocks, `u32 bytes` for pod-vec
+/// blocks). Old (unflagged) blocks are unchanged and fully backward
+/// compatible; element counts below 2^63 never collide with the flag.
+pub const BLOCK_FLAG_RESERVED: u64 = 1u64 << 63;
+
 // ---------------------------------------------------------------------------
 // Pod I/O
 // ---------------------------------------------------------------------------

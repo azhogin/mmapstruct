@@ -111,7 +111,11 @@ where
                         ctx.align_from(vs, std::mem::align_of::<#inner>());
                         let before = (ctx.current_offset() - vs) as u64;
                         dyn_offsets.push(before);
-                        ::mmapstruct::pod_array::write_pod_vec(#field, ctx);
+                        ::mmapstruct::pod_array::write_pod_vec_r(
+                            #field,
+                            ctx,
+                            ctx.field_reserve(stringify!(#fident)),
+                        );
                     }
                 }
             }
@@ -127,7 +131,13 @@ where
                         if *elem_fixed {
                             quote! { ::mmapstruct::fixed_array::write_fixed_array(#field, ctx); }
                         } else {
-                            quote! { ::mmapstruct::indexed_array::write_indexed_array(#field, ctx); }
+                            quote! {
+                                ::mmapstruct::indexed_array::write_indexed_array_r(
+                                    #field,
+                                    ctx,
+                                    ctx.field_reserve(stringify!(#fident)),
+                                );
+                            }
                         }
                     }
                     FieldCategory::DynamicHashMap { key_layout, val_layout, .. } => {

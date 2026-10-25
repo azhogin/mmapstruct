@@ -519,12 +519,14 @@ impl<'a> SchemaCtx<'a> {
                 // Pod arrays now store an 8-byte element count prefix, followed
                 // by the contiguous elements. The count lives at `dv.offset`.
                 let count_off = dv.offset as usize;
-                (unsafe { mmap_read_pod::<u64>(&self.data[count_off..count_off + 8]) }) as usize
+                let raw = unsafe { mmap_read_pod::<u64>(&self.data[count_off..count_off + 8]) };
+                (raw & !crate::traits::BLOCK_FLAG_RESERVED) as usize
             }
             ArrayLayout::FixedPod { count, .. } => *count as usize,
             ArrayLayout::Indexed | ArrayLayout::Fixed { .. } => {
                 let count_off = (dv.offset + array_schema.count_offset) as usize;
-                (unsafe { mmap_read_pod::<u64>(&self.data[count_off..count_off + 8]) }) as usize
+                let raw = unsafe { mmap_read_pod::<u64>(&self.data[count_off..count_off + 8]) };
+                (raw & !crate::traits::BLOCK_FLAG_RESERVED) as usize
             }
             ArrayLayout::List => {
                 let count_off = dv.offset as usize;
@@ -548,8 +550,11 @@ impl<'a> SchemaCtx<'a> {
 
         let (elem_off, elem_limit) = match &array_schema.layout {
             ArrayLayout::Pod { stride } => {
-                // 8-byte count prefix precedes the element data.
-                let off = dv.offset + 8 + index as u64 * stride;
+                // 8-byte count prefix precedes the element data; reserved
+                // (flagged) blocks add a reserve word after the count.
+                let raw = unsafe { mmap_read_pod::<u64>(&self.data[dv.offset as usize..][..8]) };
+                let flagged = raw & crate::traits::BLOCK_FLAG_RESERVED != 0;
+                let off = dv.offset + if flagged { 16 } else { 8 } + index as u64 * stride;
                 (off, off + stride)
             }
             ArrayLayout::FixedPod { stride, .. } => {
@@ -558,20 +563,43 @@ impl<'a> SchemaCtx<'a> {
             }
             ArrayLayout::Indexed => {
                 let count_off = (dv.offset + array_schema.count_offset) as usize;
-                let ot_off = count_off + 8;
-                let elem_rel_offset: u64 =
-                    unsafe { mmap_read_pod::<u64>(&self.data[ot_off + index * 8..][..8]) };
-                let values_base = ot_off + count * 8;
-                let off = values_base as u64 + elem_rel_offset;
-                // End: either next offset or remaining values end
-                let next_rel: u64 = if index + 1 < count {
-                    unsafe { mmap_read_pod::<u64>(&self.data[ot_off + (index + 1) * 8..][..8]) }
+                let raw = unsafe { mmap_read_pod::<u64>(&self.data[count_off..][..8]) };
+                let flagged = raw & crate::traits::BLOCK_FLAG_RESERVED != 0;
+                let count = (raw & !crate::traits::BLOCK_FLAG_RESERVED) as usize;
+                if flagged {
+                    // Reserved block: block-relative offsets, spare slots and
+                    // a data gap; the implicit end is the span end minus the
+                    // remaining gap bytes.
+                    let block = dv.offset as usize;
+                    let resv = unsafe { mmap_read_pod::<u64>(&self.data[block + 8..][..8]) };
+                    let reserved_bytes = (resv >> 32) as usize;
+                    let off_rel: u64 =
+                        unsafe { mmap_read_pod::<u64>(&self.data[block + 16 + index * 8..][..8]) };
+                    let off = block as u64 + off_rel;
+                    let limit_rel = if index + 1 < count {
+                        unsafe {
+                            mmap_read_pod::<u64>(&self.data[block + 16 + (index + 1) * 8..][..8])
+                        }
+                    } else {
+                        dv.limit - dv.offset - reserved_bytes as u64
+                    };
+                    (off, block as u64 + limit_rel)
                 } else {
-                    // Total values size = sentinel at index `count` in offset table
-                    unsafe { mmap_read_pod::<u64>(&self.data[ot_off + count * 8..][..8]) }
-                };
-                let limit = values_base as u64 + next_rel;
-                (off, limit)
+                    let ot_off = count_off + 8;
+                    let elem_rel_offset: u64 =
+                        unsafe { mmap_read_pod::<u64>(&self.data[ot_off + index * 8..][..8]) };
+                    let values_base = ot_off + count * 8;
+                    let off = values_base as u64 + elem_rel_offset;
+                    // End: either next offset or remaining values end
+                    let next_rel: u64 = if index + 1 < count {
+                        unsafe { mmap_read_pod::<u64>(&self.data[ot_off + (index + 1) * 8..][..8]) }
+                    } else {
+                        // Total values size = sentinel at index `count` in offset table
+                        unsafe { mmap_read_pod::<u64>(&self.data[ot_off + count * 8..][..8]) }
+                    };
+                    let limit = values_base as u64 + next_rel;
+                    (off, limit)
+                }
             }
             ArrayLayout::Fixed { stride } => {
                 let off = dv.offset + array_schema.count_offset + 16 + index as u64 * stride;
