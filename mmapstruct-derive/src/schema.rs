@@ -96,8 +96,7 @@ fn field_value_type(
             let arr_static = quote! {
                 #[allow(non_upper_case_globals)]
                 static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
-                    count_offset: 0u64,
-                    elem_type: #elem_ref,
+                                        elem_type: #elem_ref,
                     layout: ::mmapstruct::schema::ArrayLayout::FixedPod { stride: (#stride) as u64, count: #count as u64 },
                 };
             };
@@ -145,8 +144,7 @@ fn field_value_type(
             let arr_static = quote! {
                 #[allow(non_upper_case_globals)]
                 static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
-                    count_offset: 0u64,
-                    elem_type: #elem_ref,
+                                        elem_type: #elem_ref,
                     layout: #layout_tok,
                 };
             };
@@ -167,8 +165,7 @@ fn field_value_type(
                 static #elem_byref_name: ::mmapstruct::schema::DynValueType = ::mmapstruct::schema::DynValueType::ByRef(#inner_ref);
                 #[allow(non_upper_case_globals)]
                 static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
-                    count_offset: 0u64,
-                    elem_type: &#elem_byref_name,
+                                        elem_type: &#elem_byref_name,
                     layout: ::mmapstruct::schema::ArrayLayout::Indexed,
                 };
             };
@@ -184,8 +181,7 @@ fn field_value_type(
             let arr_static = quote! {
                 #[allow(non_upper_case_globals)]
                 static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
-                    count_offset: 0u64,
-                    elem_type: #elem_ref,
+                                        elem_type: #elem_ref,
                     layout: ::mmapstruct::schema::ArrayLayout::List,
                 };
             };
@@ -277,8 +273,7 @@ fn inner_dyn_value_type(
         let arr_static = quote! {
             #[allow(non_upper_case_globals)]
             static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
-                count_offset: 0u64,
-                elem_type: #elem_ref,
+                                elem_type: #elem_ref,
                 layout: ::mmapstruct::schema::ArrayLayout::FixedPod { stride: (#stride) as u64, count: #count as u64 },
             };
         };
@@ -290,6 +285,22 @@ fn inner_dyn_value_type(
         };
         let mut all = extra;
         all.push(arr_static);
+        all.push(vt_static);
+        return (quote! { &#vt_name }, all);
+    }
+    // Option<T> as a nested type (e.g. a Vec's element): emit a real
+    // `Option(...)` node so interpreters can unwrap the present byte —
+    // the opaque PodStruct fallback would hide the Option-ness entirely.
+    if let Some(option_inner) = extract_option_inner(inner_ty) {
+        let opt_ident = format_ident!("{}_opt", field_ident);
+        let (elem_ref, elem_extra) = inner_dyn_value_type(struct_name, &opt_ident, &option_inner);
+        let vt_name = format_ident!("__mmap_VT_{}_{}_opt", struct_name, field_ident);
+        let vt_static = quote! {
+            #[allow(non_upper_case_globals)]
+            static #vt_name: ::mmapstruct::schema::DynValueType =
+                ::mmapstruct::schema::DynValueType::Option(#elem_ref);
+        };
+        let mut all = elem_extra;
         all.push(vt_static);
         return (quote! { &#vt_name }, all);
     }

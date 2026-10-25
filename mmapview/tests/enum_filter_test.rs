@@ -267,3 +267,63 @@ fn test_runtime_schema_option_enum_field_navigation() {
     let opt2 = ctx2.field_get(&root2, "opt").unwrap();
     assert!(ctx2.field_get(&opt2, "y").is_none());
 }
+
+#[derive(MmapStruct, Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct Rec {
+    test_field: u32,
+}
+
+#[derive(MmapStruct, Debug)]
+struct OptFile {
+    items: Vec<Option<Rec>>,
+}
+
+fn opt_sample() -> OptFile {
+    OptFile {
+        items: vec![
+            Some(Rec { test_field: 5 }),
+            None,
+            Some(Rec { test_field: 0 }),
+            Some(Rec { test_field: 7 }),
+        ],
+    }
+}
+
+#[test]
+fn test_runtime_schema_filter_vec_option_elems() {
+    let file = write_to_file_with_embedded_schema(&opt_sample(), false);
+    let (ctx, root) = setup(&file);
+
+    let ev = ctx.field_get(&root, "items").unwrap();
+    assert_eq!(ctx.array_len(&ev), 4);
+
+    // None elements and Some(0) must not match `>0`; Some(5)/Some(7) must.
+    let result = query_from_generic("/items[?test_field>0]", &ctx, &root).unwrap();
+    assert_eq!(result.len(), 2);
+    let mut seen = Vec::new();
+    for r in &result {
+        let EvalResult::Buf(v) = r else {
+            panic!("expected Buf")
+        };
+        seen.push(ctx.read_u32(&ctx.field_get(v, "test_field").unwrap()));
+    }
+    seen.sort_unstable();
+    assert_eq!(seen, vec![5, 7]);
+
+    // A Some element's field reads through the unwrapped inner type.
+    let result = query_from_generic("/items[0].test_field", &ctx, &root).unwrap();
+    assert_eq!(result.len(), 1);
+    let EvalResult::Buf(v) = &result[0] else {
+        panic!("expected Buf")
+    };
+    assert_eq!(ctx.read_u32(v), 5);
+
+    // A None element exposes no fields: the path query errors out (the same
+    // behavior as a missing enum-variant field in a path).
+    let err = match query_from_generic("/items[1].test_field", &ctx, &root) {
+        Err(e) => e,
+        Ok(_) => panic!("None elements expose no fields"),
+    };
+    assert!(err.contains("no such field"), "unexpected error: {err}");
+}

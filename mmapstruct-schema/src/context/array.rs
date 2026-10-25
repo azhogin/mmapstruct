@@ -1,3 +1,4 @@
+use crate::helpers::TypeDefReaderExt;
 use crate::schema::{ArrayLayoutDefReader, TypeDefReader};
 use crate::value::SchemaValue;
 use mmapstruct::traits::mmap_read_pod;
@@ -184,6 +185,39 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                     (node as u64 + 16, node as u64 + 16 + len)
                 }
             };
+            // Option<T> elements: unwrap the present byte + alignment
+            // (None -> empty range), mirroring field_get's Option handling
+            // in mixed_struct.rs. Applies to every layout: Option is always
+            // a dynamic element, but the unwrap is cheap and uniform.
+            let elem_type_idx = **elem_type;
+            if self.type_reader(elem_type_idx).is_option_kind() {
+                if elem_off >= elem_limit
+                    || elem_off as usize >= self.data.len()
+                    || self.data[elem_off as usize] == 0
+                {
+                    return Some(SchemaValue {
+                        mmap_begin: elem_off,
+                        mmap_end: elem_off,
+                        type_idx: elem_type_idx,
+                    });
+                }
+                let inner_type = self.unwrap_type(elem_type_idx);
+                let inner_align = self.type_align(inner_type);
+                let inner_start = (elem_off + 1 + inner_align - 1) & !(inner_align - 1);
+                if inner_start > elem_limit {
+                    // Corrupt storage: treat as None rather than a bogus range.
+                    return Some(SchemaValue {
+                        mmap_begin: elem_off,
+                        mmap_end: elem_off,
+                        type_idx: elem_type_idx,
+                    });
+                }
+                return Some(SchemaValue {
+                    mmap_begin: inner_start,
+                    mmap_end: elem_limit,
+                    type_idx: inner_type,
+                });
+            }
             Some(SchemaValue {
                 mmap_begin: elem_off,
                 mmap_end: elem_limit,

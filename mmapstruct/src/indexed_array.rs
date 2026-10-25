@@ -1,4 +1,4 @@
-use crate::traits::{FileRange, MmapRead, BLOCK_FLAG_RESERVED};
+use crate::traits::{FileRange, MmapRead, ReaderOwned, BLOCK_FLAG_RESERVED};
 use crate::write_context::Reserve;
 use std::marker::PhantomData;
 
@@ -178,12 +178,11 @@ impl<'a, T: MmapRead + 'a> Iterator for IndexedArrayIter<'a, T> {
     }
 }
 
-impl<'a, T: MmapRead + 'a> From<IndexedArrayReader<'a, T>> for Vec<T>
-where
-    <T as MmapRead>::Reader<'a>: Into<T>,
-{
+impl<'a, T: MmapRead + ReaderOwned + 'a> From<IndexedArrayReader<'a, T>> for Vec<T> {
     fn from(r: IndexedArrayReader<'a, T>) -> Self {
-        r.iter().map(|e| e.into()).collect()
+        r.iter()
+            .map(<T as crate::traits::ReaderOwned>::into_owned)
+            .collect()
     }
 }
 

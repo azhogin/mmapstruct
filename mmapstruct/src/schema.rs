@@ -180,8 +180,6 @@ pub struct FieldDescriptor {
 
 /// Describes the layout of a `Vec<T>` field.
 pub struct ArraySchema {
-    /// Byte offset of the element count (relative to the array's data offset).
-    pub count_offset: u64,
     /// The element type.
     pub elem_type: &'static DynValueType,
     /// Layout of elements.
@@ -478,7 +476,57 @@ impl<'a> SchemaCtx<'a> {
 
         let data_off = values_offset + off_i;
         let data_limit = values_offset + off_next;
-        Some(Value::new(data_off, data_limit, desc.value_type))
+        let vt = match desc.value_type {
+            DynValueType::Lazy(resolve) => resolve(),
+            other => other,
+        };
+        self.resolve_option_value(data_off, data_limit, vt)
+    }
+
+    /// Resolve an `Option<T>` storage range into a value.
+    ///
+    /// `None` (empty range or present byte `0`) keeps the `Option` schema
+    /// with an empty range — the same marker the runtime context uses, so
+    /// renderers emit `null` and filters naturally fail on it. `Some` skips
+    /// the present byte plus alignment and carries the inner schema.
+    fn resolve_option_value(
+        &self,
+        off: u64,
+        limit: u64,
+        vt: &'static DynValueType,
+    ) -> Option<Value> {
+        // Array element types for derived (pod) structs arrive as
+        // `Lazy(resolve)`; the resolver yields the concrete (possibly
+        // `Option`) type.
+        let vt = match vt {
+            DynValueType::Lazy(resolve) => resolve(),
+            other => other,
+        };
+        let inner = match vt {
+            DynValueType::Option(inner) => *inner,
+            other => return Some(Value::new(off, limit, other)),
+        };
+        if off >= limit || off as usize >= self.data.len() {
+            return Some(Value::new(off, off, vt));
+        }
+        let present = self.data[off as usize];
+        if present == 0 {
+            return Some(Value::new(off, off, vt));
+        }
+        // Resolve a Lazy inner for the alignment (and the returned schema):
+        // the writer aligns the inner value by its real `align_of`, which
+        // the schema knows only after resolution.
+        let inner = match inner {
+            DynValueType::Lazy(resolve) => resolve(),
+            other => other,
+        };
+        let align = dyn_value_align(inner).max(1) as u64;
+        let inner_start = (off + 1 + align - 1) & !(align - 1);
+        if inner_start > limit {
+            // Corrupt storage: treat as None rather than a bogus range.
+            return Some(Value::new(off, off, vt));
+        }
+        Some(Value::new(inner_start, limit, inner))
     }
 
     /// Resolve a byref field: read ByRefRange, compute postponed offset.
@@ -524,7 +572,7 @@ impl<'a> SchemaCtx<'a> {
             }
             ArrayLayout::FixedPod { count, .. } => *count as usize,
             ArrayLayout::Indexed | ArrayLayout::Fixed { .. } => {
-                let count_off = (dv.offset + array_schema.count_offset) as usize;
+                let count_off = dv.offset as usize;
                 let raw = unsafe { mmap_read_pod::<u64>(&self.data[count_off..count_off + 8]) };
                 (raw & !crate::traits::BLOCK_FLAG_RESERVED) as usize
             }
@@ -562,8 +610,7 @@ impl<'a> SchemaCtx<'a> {
                 (off, off + stride)
             }
             ArrayLayout::Indexed => {
-                let count_off = (dv.offset + array_schema.count_offset) as usize;
-                let raw = unsafe { mmap_read_pod::<u64>(&self.data[count_off..][..8]) };
+                let raw = unsafe { mmap_read_pod::<u64>(&self.data[dv.offset as usize..][..8]) };
                 let flagged = raw & crate::traits::BLOCK_FLAG_RESERVED != 0;
                 let count = (raw & !crate::traits::BLOCK_FLAG_RESERVED) as usize;
                 if flagged {
@@ -585,7 +632,7 @@ impl<'a> SchemaCtx<'a> {
                     };
                     (off, block as u64 + limit_rel)
                 } else {
-                    let ot_off = count_off + 8;
+                    let ot_off = dv.offset as usize + 8;
                     let elem_rel_offset: u64 =
                         unsafe { mmap_read_pod::<u64>(&self.data[ot_off + index * 8..][..8]) };
                     let values_base = ot_off + count * 8;
@@ -602,7 +649,7 @@ impl<'a> SchemaCtx<'a> {
                 }
             }
             ArrayLayout::Fixed { stride } => {
-                let off = dv.offset + array_schema.count_offset + 16 + index as u64 * stride;
+                let off = dv.offset + 16 + index as u64 * stride;
                 (off, off + stride)
             }
             ArrayLayout::List => {
@@ -625,7 +672,7 @@ impl<'a> SchemaCtx<'a> {
             }
         };
 
-        Some(Value::new(elem_off, elem_limit, array_schema.elem_type))
+        self.resolve_option_value(elem_off, elem_limit, array_schema.elem_type)
     }
 
     // -----------------------------------------------------------------------

@@ -1917,6 +1917,66 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
+    // Vec<Option<T>>: Option elements are unwrapped by array_get — None
+    // elements carry an empty range (rendered as null, skipped by filters),
+    // Some elements resolve to the inner struct so field filters work.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_filter_vec_option_elems() {
+        use mmapstruct::{write_to_buf_raw, GetSchema, MmapStruct, SchemaCtx};
+
+        #[derive(MmapStruct, Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+        #[repr(C)]
+        struct Rec {
+            test_field: u32,
+        }
+
+        #[derive(MmapStruct, Debug)]
+        struct OptFile {
+            items: Vec<Option<Rec>>,
+        }
+
+        let w = OptFile {
+            items: vec![
+                Some(Rec { test_field: 5 }),
+                None,
+                Some(Rec { test_field: 0 }),
+                Some(Rec { test_field: 7 }),
+            ],
+        };
+        let buf = write_to_buf_raw(&w);
+        let ctx = SchemaCtx::new(&buf);
+        let root = OptFile::root_value(buf.len() as u64);
+
+        let cnt = query_from("/items | count()", &ctx, &root).unwrap();
+        assert!(matches!(cnt[0], crate::EvalResult::U64(4)));
+        let p0 = query_from("/items[0].test_field", &ctx, &root).unwrap();
+        let crate::EvalResult::Buf(fv) = &p0[0] else {
+            panic!("expected Buf for the field value")
+        };
+        assert_eq!(ctx.read_u32(fv), 5, "items[0].test_field must read as 5");
+        let result = query_from("/items[?test_field>0]", &ctx, &root).unwrap();
+        assert_eq!(
+            result.len(),
+            2,
+            "None and test_field=0 elements must not match"
+        );
+        for r in &result {
+            let v = match r {
+                crate::EvalResult::Buf(v) => v,
+                _ => panic!("expected Buf"),
+            };
+            let tf = ctx.read_u32(&ctx.field_get(v, "test_field").unwrap());
+            assert!(tf > 0, "expected positive test_field, got {tf}");
+        }
+
+        // The full array: 4 elements (None included) — count() sees all.
+        let result = query_from("/items | count()", &ctx, &root).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(matches!(result[0], crate::EvalResult::U64(4)));
+    }
+
     // Enum vector: filters over variant-specific fields (jq-like semantics)
     // -------------------------------------------------------------------
 

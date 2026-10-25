@@ -756,6 +756,14 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         }
     };
 
+    let reader_owned_impl = quote! {
+        impl ::mmapstruct::traits::ReaderOwned for #name {
+            fn into_owned(reader: Self::Reader<'_>) -> Self {
+                reader.into()
+            }
+        }
+    };
+
     let root_layout_impl = quote! {
         impl ::mmapstruct::traits::MmapRootLayout for #name {
             fn resolve_root_layout(
@@ -781,6 +789,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         #read_impl
         #write_impl
         #from_impl
+        #reader_owned_impl
         #default_impl
         #layout_hash_impl
         #reader_ord_impl

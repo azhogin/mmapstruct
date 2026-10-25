@@ -30,7 +30,7 @@
 //! at worst a phantom element hides until the next successful append
 //! re-patches the head.
 
-use crate::traits::{FileRange, MmapRead, MmapWrite};
+use crate::traits::{FileRange, MmapRead, MmapWrite, ReaderOwned};
 use crate::write_context::WriteContext;
 use std::marker::PhantomData;
 
@@ -296,13 +296,13 @@ impl<'a, T: MmapRead + 'a> IntoIterator for ListReader<'a, T> {
     }
 }
 
-impl<'a, T> From<ListReader<'a, T>> for List<T>
-where
-    T: MmapRead + 'a,
-    <T as MmapRead>::Reader<'a>: Into<T>,
-{
+impl<'a, T: MmapRead + ReaderOwned + 'a> From<ListReader<'a, T>> for List<T> {
     fn from(r: ListReader<'a, T>) -> Self {
-        List::from_vec(r.iter().map(|e| e.into()).collect())
+        List::from_vec(
+            r.iter()
+                .map(<T as crate::traits::ReaderOwned>::into_owned)
+                .collect(),
+        )
     }
 }
 

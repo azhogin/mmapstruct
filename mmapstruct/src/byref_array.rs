@@ -1,4 +1,4 @@
-use crate::traits::{mmap_read_pod, ByRefRange, FileRange, MmapRead};
+use crate::traits::{mmap_read_pod, ByRefRange, FileRange, MmapRead, ReaderOwned};
 use crate::WriteContext;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -145,12 +145,11 @@ impl<'a, T: MmapRead + 'a> IntoIterator for ByRefArrayReader<'a, T> {
     }
 }
 
-impl<'a, T: MmapRead + 'a> From<ByRefArrayReader<'a, T>> for Vec<T>
-where
-    <T as MmapRead>::Reader<'a>: Into<T>,
-{
+impl<'a, T: MmapRead + ReaderOwned + 'a> From<ByRefArrayReader<'a, T>> for Vec<T> {
     fn from(r: ByRefArrayReader<'a, T>) -> Self {
-        r.iter().map(|e| e.into()).collect()
+        r.iter()
+            .map(<T as crate::traits::ReaderOwned>::into_owned)
+            .collect()
     }
 }
 

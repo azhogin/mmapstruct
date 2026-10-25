@@ -70,6 +70,11 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
         root: &SchemaValue,
         name: &str,
     ) -> Option<(usize, SchemaValue)> {
+        // A `None` Option (empty range) exposes no fields: unwrap_type would
+        // otherwise peek into the inner type over an empty/garbage range.
+        if self.is_option_type(root.type_idx) && root.mmap_begin >= root.mmap_end {
+            return None;
+        }
         let type_idx = self.unwrap_type(root.type_idx);
         let t = self.type_reader(type_idx);
         match t {

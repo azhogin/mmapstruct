@@ -322,3 +322,93 @@ async fn spawn_server_with<T: GetSchema>(data: Vec<u8>) -> (tokio::task::JoinHan
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     (handle, format!("http://{}", addr))
 }
+
+// ---------------------------------------------------------------------------
+// Option fields through the compile-time SchemaCtx interpreter: Some reads
+// as the inner value, None renders as null, filters match Some only.
+// ---------------------------------------------------------------------------
+
+#[derive(MmapStruct, Debug)]
+struct OptHttpFile {
+    id: u32,
+    maybe: Option<String>,
+    n: Option<u64>,
+    items: Vec<Option<HttpRec>>,
+}
+
+#[derive(MmapStruct, Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct HttpRec {
+    test_field: u32,
+}
+
+fn make_opt_http_file() -> Vec<u8> {
+    write_to_buf_raw(&OptHttpFile {
+        id: 9,
+        maybe: Some("present".into()),
+        n: None,
+        items: vec![
+            Some(HttpRec { test_field: 5 }),
+            None,
+            Some(HttpRec { test_field: 0 }),
+            Some(HttpRec { test_field: 7 }),
+        ],
+    })
+}
+
+#[tokio::test]
+async fn test_query_option_fields() {
+    let data = make_opt_http_file();
+    let (_server, base) = spawn_server_with::<OptHttpFile>(data).await;
+
+    // Some<String> reads as the string.
+    let resp = reqwest::get(format!("{}/api/query?q=/maybe", base))
+        .await
+        .unwrap();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        json["data"],
+        serde_json::json!(["present"]),
+        "Some field: {json}"
+    );
+
+    // None renders as null.
+    let resp = reqwest::get(format!("{}/api/query?q=/n", base))
+        .await
+        .unwrap();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        json["data"],
+        serde_json::json!([null]),
+        "None field: {json}"
+    );
+
+    // Filters over Option fields: Some matches, None does not.
+    let resp = reqwest::get(format!(
+        "{}/api/query?q=/items[?test_field>0]&limit=10",
+        base
+    ))
+    .await
+    .unwrap();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    let arr = json["data"].as_array().unwrap();
+    assert_eq!(arr.len(), 2, "None and test_field=0 must not match: {json}");
+    assert_eq!(arr[0]["test_field"], 5);
+    assert_eq!(arr[1]["test_field"], 7);
+
+    // Vec<Option<Rec>> full read: None elements render as null.
+    let resp = reqwest::get(format!("{}/api/query?q=/items&limit=10", base))
+        .await
+        .unwrap();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        json["data"],
+        serde_json::json!([[
+            {"test_field": 5},
+            null,
+            {"test_field": 0},
+            {"test_field": 7}
+        ]]),
+        "full vec of options: {json}"
+    );
+}

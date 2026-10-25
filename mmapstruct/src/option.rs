@@ -1,4 +1,4 @@
-use crate::traits::{MmapRead, MmapWrite};
+use crate::traits::{MmapRead, MmapWrite, ReaderOwned};
 use std::ops::Range;
 
 /// Layout for `Option<T>`: `[present: u8, data_if_present...]`
@@ -31,5 +31,14 @@ impl<T: MmapWrite> MmapWrite for Option<T> {
                 ctx.write_u8(0u8);
             }
         }
+    }
+}
+
+/// Convert an `Option` of a reader view into an owned `Option` (elements of
+/// `Vec<Option<T>>` and friends). The present byte is already resolved by
+/// [`MmapRead::read`].
+impl<T: ReaderOwned> ReaderOwned for Option<T> {
+    fn into_owned(reader: Self::Reader<'_>) -> Self {
+        reader.map(T::into_owned)
     }
 }
