@@ -38,6 +38,7 @@ pub mod fixed_array;
 pub mod hash_map;
 pub mod indexed_array;
 pub mod option;
+pub mod patch;
 pub mod pod;
 pub mod pod_array;
 pub mod reader;
@@ -51,6 +52,7 @@ pub mod schema;
 pub use bytemuck;
 pub use file_reader::{BufReader, MmapReader};
 pub use mmapstruct_derive::MmapStruct;
+pub use patch::PatchSession;
 #[cfg(feature = "dyn")]
 pub use schema::{
     ArrayLayout, ArraySchema, DynValueType, FieldDescriptor, GetSchema, SchemaCtx, StructSchema,
