@@ -211,3 +211,114 @@ async fn test_corrupt_data_panic_returns_500() {
     let json: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(json["data"], serde_json::json!([42]));
 }
+
+// ---------------------------------------------------------------------------
+// List<T> (linked-node container) over the compile-time schema interpreter
+// ---------------------------------------------------------------------------
+
+#[derive(MmapStruct, Debug, PartialEq, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+#[repr(C)]
+struct Probe {
+    id: u64,
+    score: f64,
+}
+
+#[derive(MmapStruct, Debug)]
+struct ListFile {
+    id: u32,
+    tags: mmapstruct::List<String>,
+    events: mmapstruct::List<Probe>,
+}
+
+fn make_list_file() -> Vec<u8> {
+    write_to_buf_raw(&ListFile {
+        id: 1,
+        tags: mmapstruct::List::from_vec(vec!["alpha".into(), "beta".into()]),
+        events: mmapstruct::List::from_vec(vec![
+            Probe { id: 10, score: 1.5 },
+            Probe {
+                id: 20,
+                score: -2.5,
+            },
+            Probe {
+                id: 30,
+                score: 3.25,
+            },
+        ]),
+    })
+}
+
+#[tokio::test]
+async fn test_query_list_fields() {
+    let data = make_list_file();
+    let (_server, base) = spawn_server_with::<ListFile>(data).await;
+
+    // List of strings.
+    let resp = reqwest::get(format!("{}/api/query?q=/tags", base))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(json["data"], serde_json::json!([["alpha", "beta"]]));
+
+    // List of pod structs: full array and index access.
+    let resp = reqwest::get(format!("{}/api/query?q=/events", base))
+        .await
+        .unwrap();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(json["data"][0].as_array().unwrap().len(), 3);
+    assert_eq!(json["data"][0][1]["score"], -2.5);
+
+    let resp = reqwest::get(format!("{}/api/query?q=/events[1]", base))
+        .await
+        .unwrap();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(json["data"], serde_json::json!([{"id": 20, "score": -2.5}]));
+
+    // Filter and aggregate over a List.
+    let resp = reqwest::get(format!("{}/api/query?q=/events | select(.score > 0)", base))
+        .await
+        .unwrap();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    let arr = json["data"].as_array().unwrap();
+    assert_eq!(arr.len(), 2);
+    assert_eq!(arr[0]["id"], 10);
+    assert_eq!(arr[1]["id"], 30);
+
+    let resp = reqwest::get(format!("{}/api/query?q=/events | avg(.score)", base))
+        .await
+        .unwrap();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(json["data"], serde_json::json!([0.75]));
+}
+
+#[tokio::test]
+async fn test_list_schema_endpoint() {
+    let data = make_list_file();
+    let (_server, base) = spawn_server_with::<ListFile>(data).await;
+
+    let resp = reqwest::get(format!("{}/api/schema", base)).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.unwrap();
+    assert!(
+        text.contains("list"),
+        "schema should label List layout: {text}"
+    );
+}
+
+async fn spawn_server_with<T: GetSchema>(data: Vec<u8>) -> (tokio::task::JoinHandle<()>, String) {
+    let state = Arc::new(mmapview_http::AppState {
+        data: Arc::from(data),
+        root_schema: T::root_value_type(),
+    });
+    let app = mmapview_http::build_router(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    (handle, format!("http://{}", addr))
+}

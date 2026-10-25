@@ -9,8 +9,11 @@
 //! # File format
 //!
 //! The field's dynamic slot holds a 24-byte block:
-//! `[head: u64][tail: u64][count: u64]` — absolute payload offsets (0 =
-//! empty list) and the element count.
+//! `[head: u64][tail: u64][count: u64]` — offsets of the first/last node
+//! **relative to the block start** (0 = empty list) and the element count.
+//! Block-relative offsets keep the format base-independent: readers may map
+//! the file with any header/schema prefix (the mmapview-tui passes the whole
+//! file, the CLI passes the bare payload).
 //!
 //! Nodes follow the block (and may share the tail region with byref data of
 //! other fields; chains are explicit, so interleaving is safe). Each node is
@@ -121,10 +124,10 @@ impl<T: MmapWrite> MmapWrite for List<T> {
         for item in &self.items {
             ctx.align_to(8);
             let node_pos = ctx.current_offset();
-            let node_abs = node_pos as u64;
+            let node_rel = (node_pos - block_pos) as u64;
             match prev_pos {
-                Some(prev) => ctx.write_u64_le_at(node_abs, prev),
-                None => head = node_abs,
+                Some(prev) => ctx.write_u64_le_at(node_rel, prev),
+                None => head = node_rel,
             }
             ctx.write_u64_le(0);
             let len_pos = ctx.current_offset();
@@ -137,7 +140,7 @@ impl<T: MmapWrite> MmapWrite for List<T> {
             });
             ctx.write_u32_le_at(len32, len_pos);
             prev_pos = Some(node_pos);
-            tail = node_abs;
+            tail = node_rel;
         }
         ctx.write_u64_le_at(head, block_pos);
         ctx.write_u64_le_at(tail, block_pos + 8);
@@ -152,7 +155,7 @@ pub struct ListReader<'a, T: MmapRead> {
     data: &'a [u8],
     /// File-relative range of the whole field span (block + nodes).
     range: FileRange,
-    head: u64,
+    head_rel: u64,
     count: u64,
     _phantom: PhantomData<T>,
 }
@@ -178,13 +181,13 @@ impl<'a, T: MmapRead + 'a> ListReader<'a, T> {
             "ListReader: block range len {} < {LIST_BLOCK_SIZE}",
             range.len()
         );
-        let head = u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap());
+        let head_rel = u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap());
         let count =
             u64::from_le_bytes(data[range.start + 16..range.start + 24].try_into().unwrap());
         Self {
             data,
             range,
-            head,
+            head_rel,
             count,
             _phantom: PhantomData,
         }
@@ -205,19 +208,21 @@ impl<'a, T: MmapRead + 'a> ListReader<'a, T> {
         self.count == 0
     }
 
-    /// Payload-relative offset of the element with `index` (O(index) walk).
+    /// Data-relative offset of the element with `index`'s node (O(index)
+    /// walk). Node offsets are stored relative to the block; this returns
+    /// the absolute position within `data`.
     pub fn node_offset(&self, index: usize) -> Option<usize> {
         if index >= self.len() {
             return None;
         }
-        let mut cur = self.head;
+        let mut cur = self.head_rel;
         for _ in 0..index {
             cur = self.next_of(cur)?;
         }
         if cur == 0 {
             return None;
         }
-        Some(cur as usize)
+        Some(self.block_base() + cur as usize)
     }
 
     /// Read the element with `index` (O(index) walk).
@@ -226,9 +231,16 @@ impl<'a, T: MmapRead + 'a> ListReader<'a, T> {
         Some(self.read_node(node))
     }
 
-    fn next_of(&self, node: u64) -> Option<u64> {
-        let p = node as usize;
-        if node == 0 || p + 8 > self.data.len() {
+    fn block_base(&self) -> usize {
+        self.range.start
+    }
+
+    fn next_of(&self, rel: u64) -> Option<u64> {
+        if rel == 0 {
+            return None;
+        }
+        let p = self.block_base() + rel as usize;
+        if p + 8 > self.data.len() {
             return None;
         }
         Some(u64::from_le_bytes(self.data[p..p + 8].try_into().unwrap()))
@@ -260,7 +272,8 @@ impl<'a, T: MmapRead + 'a> ListReader<'a, T> {
     pub fn iter(&self) -> ListIter<'a, T> {
         ListIter {
             data: self.data,
-            cur: self.head,
+            block_base: self.block_base(),
+            cur: self.head_rel,
             remaining: self.count,
             _phantom: PhantomData,
         }
@@ -295,6 +308,7 @@ where
 
 pub struct ListIter<'a, T: MmapRead> {
     data: &'a [u8],
+    block_base: usize,
     cur: u64,
     remaining: u64,
     _phantom: PhantomData<T>,
@@ -307,7 +321,7 @@ impl<'a, T: MmapRead + 'a> Iterator for ListIter<'a, T> {
         if self.remaining == 0 || self.cur == 0 {
             return None;
         }
-        let node = self.cur as usize;
+        let node = self.block_base + self.cur as usize;
         if node + LIST_NODE_HEADER > self.data.len() {
             self.remaining = 0;
             return None;

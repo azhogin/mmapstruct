@@ -216,7 +216,10 @@ impl NameHint for DynValueType {
             DynValueType::Str(_) => "string",
             DynValueType::PodStruct { .. } => "pod",
             DynValueType::Struct(resolve) => resolve().name,
-            DynValueType::Array(_arr) => "array",
+            DynValueType::Array(arr) => match arr.layout {
+                ArrayLayout::List => "list",
+                _ => "array",
+            },
             DynValueType::Option(_inner) => "option",
             DynValueType::ByRef(inner) => inner.name_hint(),
             DynValueType::HashMap(_) => "hashmap",

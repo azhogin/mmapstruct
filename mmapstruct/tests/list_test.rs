@@ -224,8 +224,10 @@ fn test_append_list_struct_elem() {
 }
 
 #[test]
-fn test_append_list_rejects_non_tail() {
-    // vals follows the list, so the list chain does not end at payload end.
+fn test_append_list_midfile() {
+    // The tags list sits mid-file (vals follows it); chains are explicit, so
+    // the new node is appended at the payload end and linked in — nothing
+    // existing moves and the sibling field stays intact.
     let tmp = NamedTempFile::new().unwrap();
     let f = TwoDynFile {
         tags: List::from_vec(vec!["t".into()]),
@@ -237,13 +239,43 @@ fn test_append_list_rejects_non_tail() {
     let reader = session.read::<TwoDynFile>().unwrap();
     let block_off = reader.tags.block_range().start;
 
-    let err = session
+    session
         .append_list::<TwoDynFile, String>(block_off, &"x".to_string())
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("not at the payload tail"),
-        "unexpected error: {err}"
-    );
+        .unwrap();
+    session.flush().unwrap();
+
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    let reader = r.read::<TwoDynFile>();
+    assert_eq!(reader.tags.len(), 2);
+    assert_eq!(reader.tags.get(0).unwrap(), "t");
+    assert_eq!(reader.tags.get(1).unwrap(), "x");
+    assert_eq!(reader.vals.len(), 3);
+    assert_eq!(reader.vals[2], 3);
+}
+
+#[test]
+fn test_append_list_midfile_from_empty() {
+    let tmp = NamedTempFile::new().unwrap();
+    let f = TwoDynFile {
+        tags: List::new(),
+        vals: vec![5],
+    };
+    write_to_file(&f, tmp.path(), false).unwrap();
+
+    let mut session = PatchSession::open_typed::<TwoDynFile>(tmp.path()).unwrap();
+    let reader = session.read::<TwoDynFile>().unwrap();
+    let block_off = reader.tags.block_range().start;
+
+    session
+        .append_list::<TwoDynFile, String>(block_off, &"first".to_string())
+        .unwrap();
+    session.flush().unwrap();
+
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    let reader = r.read::<TwoDynFile>();
+    assert_eq!(reader.tags.len(), 1);
+    assert_eq!(reader.tags.get(0).unwrap(), "first");
+    assert_eq!(reader.vals[0], 5);
 }
 
 #[test]

@@ -648,17 +648,18 @@ impl PatchSession {
         Ok(())
     }
 
-    /// Append one element to a `List<T>` block that occupies the tail of the
-    /// payload.
+    /// Append one element to a `List<T>` block.
     ///
     /// `block_off` is the payload-relative offset of the list block
-    /// (`[head][tail][count]`): `session.offset_of(&reader.list)` works
-    /// directly — the block is the first bytes of the field's slot — or use
-    /// `ListReader::block_range().start`.
+    /// (`[head][tail][count]`): use `ListReader::block_range().start`.
     ///
-    /// The block itself must be the last bytes of the payload (its nodes
-    /// trail the block; the tail check enforces that the whole chain ends at
-    /// payload end). Other dynamic fields may precede it freely.
+    /// The list block may sit anywhere in the file: chains are explicit, so
+    /// the new node is appended at the very end of the payload (after any
+    /// byref data) and linked in — nothing existing moves. When the chain
+    /// currently ends at the payload end (the list is the root's last inline
+    /// dynamic value) the offset-table sentinel is grown as well; for
+    /// mid-file lists the sentinel stays untouched (the node lives outside
+    /// the inline dynamic region).
     ///
     /// Crash-consistency: the new node is written first (orphaned until
     /// linked), then the chain link (`old_tail.next`, or `head` for an empty
@@ -681,35 +682,39 @@ impl PatchSession {
                 ),
             ));
         }
+        // head/tail are node offsets RELATIVE to the block start.
         let data = self.payload();
-        let head = u64::from_le_bytes(data[block_off..block_off + 8].try_into().unwrap());
-        let tail = u64::from_le_bytes(data[block_off + 8..block_off + 16].try_into().unwrap());
+        let head_rel = u64::from_le_bytes(data[block_off..block_off + 8].try_into().unwrap());
+        let tail_rel = u64::from_le_bytes(data[block_off + 8..block_off + 16].try_into().unwrap());
         let count = u64::from_le_bytes(data[block_off + 16..block_off + 24].try_into().unwrap());
-        if head == 0 && tail != 0 || head != 0 && tail == 0 {
+        if head_rel == 0 && tail_rel != 0 || head_rel != 0 && tail_rel == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "list head/tail pointers are inconsistent (one is zero, the other is not)",
             ));
         }
         // Where does the whole field span end?
-        let chain_end = if head == 0 {
+        let chain_end = if head_rel == 0 {
             block_off + LIST_BLOCK_SIZE
         } else {
-            let tail_pos = tail as usize;
-            if !tail_pos.is_multiple_of(8)
-                || tail_pos < block_off + LIST_BLOCK_SIZE
-                || tail_pos + LIST_NODE_HEADER > payload_len
+            if tail_rel < LIST_BLOCK_SIZE as u64
+                || !tail_rel.is_multiple_of(8)
+                || block_off + tail_rel as usize + LIST_NODE_HEADER > payload_len
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("list tail pointer {tail_pos} does not point at a plausible node"),
+                    format!(
+                        "list tail pointer (block-relative {tail_rel}) does not point at a plausible node"
+                    ),
                 ));
             }
+            let tail_pos = block_off + tail_rel as usize;
             let tail_len =
                 u32::from_le_bytes(data[tail_pos + 8..tail_pos + 12].try_into().unwrap()) as usize;
             tail_pos + LIST_NODE_HEADER + tail_len
         };
-        let (sentinel_pos, sentinel) = self.tail_block_check::<R>(block_off, chain_end)?;
+        let (sentinel_pos, sentinel) = self.layout_check::<R>(block_off)?;
+        let tail_case = chain_end == payload_len;
         // Serialize the element as a self-contained node payload.
         let mut ctx = WriteContext::new();
         value.write(&mut ctx);
@@ -732,17 +737,22 @@ impl PatchSession {
             p[len_pos..len_pos + 4].copy_from_slice(&vlen32.to_le_bytes());
             p[node + LIST_NODE_HEADER..].copy_from_slice(&vbytes);
         }
-        if head == 0 {
+        let node_rel = (node_base - block_off) as u64;
+        if head_rel == 0 {
             // Empty list: the head patch is the visibility switch.
-            self.patch_u64_at(block_off, node_base as u64)?;
-            self.patch_u64_at(block_off + 8, node_base as u64)?;
+            self.patch_u64_at(block_off, node_rel)?;
+            self.patch_u64_at(block_off + 8, node_rel)?;
         } else {
             // Non-empty: the old tail node's next-pointer is the switch.
-            let tail_pos = tail as usize;
-            self.patch_u64_at(tail_pos, node_base as u64)?;
-            self.patch_u64_at(block_off + 8, node_base as u64)?;
+            let tail_pos = block_off + tail_rel as usize;
+            self.patch_u64_at(tail_pos, node_rel)?;
+            self.patch_u64_at(block_off + 8, node_rel)?;
         }
-        self.patch_u64_at(sentinel_pos, sentinel + (pad + node_size) as u64)?;
+        if tail_case {
+            // The list is the root's last inline dynamic value: its span
+            // (and the offset-table sentinel) grows with the new node.
+            self.patch_u64_at(sentinel_pos, sentinel + (pad + node_size) as u64)?;
+        }
         self.patch_count_u64(block_off + 16, count, count + 1)?;
         Ok(())
     }

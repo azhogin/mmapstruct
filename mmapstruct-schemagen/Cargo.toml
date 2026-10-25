@@ -7,3 +7,8 @@ description = "Generates the self-schema of Schema (self-schema.mms) at build ti
 [build-dependencies]
 mmapstruct = { path = "../mmapstruct", features = ["dyn"] }
 mmapstruct-schema = { path = "../mmapstruct-schema" }
+
+[dependencies]
+mmapstruct = { path = "../mmapstruct", features = ["dyn"] }
+mmapstruct-schema = { path = "../mmapstruct-schema" }
+bytemuck = { version = "1", features = ["derive", "min_const_generics"] }

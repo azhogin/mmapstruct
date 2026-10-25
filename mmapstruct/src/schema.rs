@@ -606,19 +606,20 @@ impl<'a> SchemaCtx<'a> {
                 (off, off + stride)
             }
             ArrayLayout::List => {
-                // Walk the node chain from head (O(index)).
-                let head = unsafe { mmap_read_pod::<u64>(&self.data[dv.offset as usize..][..8]) };
-                let mut cur = head;
+                // Walk the node chain from head (O(index)); node offsets are
+                // relative to the list block start.
+                let block = dv.offset as usize;
+                let mut cur = unsafe { mmap_read_pod::<u64>(&self.data[block..][..8]) };
                 for _ in 0..index {
                     if cur == 0 {
                         return None;
                     }
-                    cur = unsafe { mmap_read_pod::<u64>(&self.data[cur as usize..][..8]) };
+                    cur = unsafe { mmap_read_pod::<u64>(&self.data[block + cur as usize..][..8]) };
                 }
                 if cur == 0 {
                     return None;
                 }
-                let node = cur as usize;
+                let node = block + cur as usize;
                 let len = unsafe { mmap_read_pod::<u32>(&self.data[node + 8..][..4]) } as u64;
                 (node as u64 + 16, node as u64 + 16 + len)
             }
