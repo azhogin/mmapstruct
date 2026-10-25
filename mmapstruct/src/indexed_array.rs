@@ -54,6 +54,15 @@ impl<'a, T: MmapRead + 'a> IndexedArrayReader<'a, T> {
         self.count == 0
     }
 
+    /// File-relative range of the whole block
+    /// (`[count u64][offset slots][values]`).
+    ///
+    /// `start` is the position of the count field — the anchor for
+    /// append-style patching of a block that occupies the payload tail.
+    pub fn block_range(&self) -> FileRange {
+        self.range
+    }
+
     fn offset(&self, i: usize) -> usize {
         if i < self.count {
             let pos = i * 8;

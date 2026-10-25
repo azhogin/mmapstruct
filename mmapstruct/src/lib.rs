@@ -60,7 +60,8 @@ pub use schema::{
 };
 pub use traits::{
     combine_hashes, compute_crc64, fnv1a, mmap_read_pod, ByRefRange, FileHeader, FileRange,
-    LayoutHash, MmapPod, MmapRead, MmapWrite, ReaderOrd, CRC64_TABLE, HEADER_SIZE, MMAP_MAGIC,
+    LayoutHash, MmapLayout, MmapPod, MmapRead, MmapWrite, ReaderOrd, CRC64_TABLE, HEADER_SIZE,
+    MMAP_MAGIC,
 };
 pub use write_context::WriteContext;
 

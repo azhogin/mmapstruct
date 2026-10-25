@@ -159,6 +159,23 @@ pub(crate) fn generate_fixed_layout_consts(
     }
 }
 
+/// Generate the `impl MmapLayout for X` referencing the `__MMAP_FS/HS`
+/// consts emitted next to it (same module scope).
+pub(crate) fn generate_layout_impl(
+    struct_name: &proc_macro2::Ident,
+    inline_dyn_count: usize,
+) -> proc_macro2::TokenStream {
+    let fs_name = format_ident!("__MMAP_FS_{}", struct_name);
+    let hs_name = format_ident!("__MMAP_HS_{}", struct_name);
+    quote! {
+        impl ::mmapstruct::traits::MmapLayout for #struct_name {
+            const FIXED_SECTION_SIZE: usize = #fs_name;
+            const HEADER_SIZE: usize = #hs_name;
+            const INLINE_DYN_COUNT: usize = #inline_dyn_count;
+        }
+    }
+}
+
 /// Generate reader field init code for a dynamic field
 pub(crate) fn gen_dyn_reader_init(
     dyn_idx: usize,

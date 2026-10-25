@@ -161,6 +161,25 @@ pub trait LayoutHash {
     const HASH: u64;
 }
 
+/// Compile-time layout facts of a struct's mmap representation, emitted by
+/// `#[derive(MmapStruct)]` for structs (not enums: enum variants have
+/// per-variant layouts).
+///
+/// Lets patching tools locate the instance's inline-dyn offset table:
+/// the table starts at `FIXED_SECTION_SIZE` and holds
+/// `INLINE_DYN_COUNT + 1` u64 entries (the last one is the sentinel with
+/// the total dynamic-region size), so the payload layout is
+/// `[fixed: FIXED_SECTION_SIZE][offset table][dynamic values]` and the
+/// sentinel lives at `HEADER_SIZE - 8`.
+pub trait MmapLayout {
+    /// Size of the fixed section of the instance.
+    const FIXED_SECTION_SIZE: usize;
+    /// Fixed section + offset table (including the sentinel entry).
+    const HEADER_SIZE: usize;
+    /// Number of inline-dyn fields.
+    const INLINE_DYN_COUNT: usize;
+}
+
 // -- Primitives --
 macro_rules! impl_layout_hash_primitive {
     ($t:ty, $name:literal) => {
