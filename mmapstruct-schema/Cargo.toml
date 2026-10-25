@@ -3,6 +3,10 @@ name = "mmapstruct-schema"
 version.workspace = true
 edition.workspace = true
 
+[features]
+fuzzing = ["mmapstruct/fuzzing"]
+strict-validation = ["mmapstruct/strict-validation"]
+
 [dependencies]
 mmapstruct = { path = "../mmapstruct", features = ["dyn"] }
 mmapstruct-derive = { path = "../mmapstruct-derive" }

@@ -322,7 +322,9 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
 
         let rs = quote! { range.start + 8 };
         let rs_ot = quote! { #rs + #fs_name };
-        let field_end_offset = quote! { u64::from_le_bytes(data[#rs_ot + #dyn_cnt * 8 .. #rs_ot + (#dyn_cnt + 1) * 8].try_into().unwrap()) as usize };
+        let what = format!("{}: offset table", name);
+        let field_end_offset =
+            quote! { ::mmapstruct::traits::ot_u64(data, #rs_ot + #dyn_cnt * 8, #what) as usize };
         let mut rinit = Vec::new();
         for fi in &all_fields {
             let id = &fi.ident;
@@ -335,7 +337,15 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             if is_pod {
                 let idx = fixed_section_index(&all_fields, fi.name.as_str());
                 let ty = &fi.ty;
-                let expr = quote! { ::mmapstruct::bytemuck::from_bytes(&data[#rs + #fo_name[#idx] .. #rs + #fo_name[#idx] + std::mem::size_of::<#ty>()]) };
+                let what = format!("{}::{}: {}", name, vident, fi.name);
+                let expr = quote! {
+                    ::mmapstruct::bytemuck::from_bytes(::mmapstruct::traits::pod_bytes(
+                        data,
+                        #rs + #fo_name[#idx],
+                        ::std::mem::size_of::<#ty>(),
+                        #what,
+                    ))
+                };
                 if is_tuple {
                     rinit.push(expr);
                 } else {
@@ -385,10 +395,14 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             } else if is_fixed_arr {
                 let idx = fixed_section_index(&all_fields, fi.name.as_str());
                 let ty = &fi.ty;
+                let what = format!("{}::{}", name, vident);
                 let expr = quote! {
-                    unsafe {
-                        &*(data.as_ptr().add(#rs + #fo_name[#idx]) as *const #ty)
-                    }
+                    ::mmapstruct::bytemuck::from_bytes(::mmapstruct::traits::pod_bytes(
+                        data,
+                        #rs + #fo_name[#idx],
+                        ::std::mem::size_of::<#ty>(),
+                        #what,
+                    ))
                 };
                 if is_tuple {
                     rinit.push(expr);
@@ -400,14 +414,16 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                     .iter()
                     .position(|&i| all_fields[i].name == fi.name)
                     .expect("field not found in inline_dyn_indices (else branch)");
+                let what = format!("{}: offset table", name);
                 let rc = quote! {{
                     let ot_start = #rs + #fs_name;
                     let vs = #rs + #hs_name;
-                    let off0 = u64::from_le_bytes(data[ot_start + #di * 8 .. ot_start + #di * 8 + 8].try_into().unwrap()) as usize;
+                    let off0 = ::mmapstruct::traits::ot_u64(data, ot_start + #di * 8, #what) as usize;
                     let off1 = if #di + 1 < #dyn_cnt {
-                        u64::from_le_bytes(data[ot_start + (#di + 1) * 8 .. ot_start + (#di + 1) * 8 + 8].try_into().unwrap()) as usize
+                        ::mmapstruct::traits::ot_u64(data, ot_start + (#di + 1) * 8, #what) as usize
                     } else { #field_end_offset };
-                    (vs + off0, vs + off1)
+                    // saturating: corrupt OT entries must not overflow
+                    (vs.saturating_add(off0), vs.saturating_add(off1))
                 }};
                 let ty = &fi.ty;
                 match &fi.category {
@@ -444,13 +460,22 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                         if *elem_is_pod {
                             let expr = quote! {
                                 {
+                                    let what2 = format!("{}: pod vec", stringify!(#name));
                                     let (s, _e) = #rc;
-                                    let raw = u64::from_le_bytes(data[s..s+8].try_into().unwrap());
+                                    let raw = ::mmapstruct::traits::ot_u64(data, s, &what2);
                                     let flagged = raw & ::mmapstruct::traits::BLOCK_FLAG_RESERVED != 0;
                                     let count = (raw & !::mmapstruct::traits::BLOCK_FLAG_RESERVED) as usize;
-                                    let base = s + if flagged { 16 } else { 8 };
+                                    let base = s.saturating_add(if flagged { 16 } else { 8 });
                                     let elem_size = ::std::mem::size_of::<#inner>();
-                                    ::mmapstruct::bytemuck::cast_slice(&data[base .. base + count * elem_size])
+                                    let end = base.saturating_add(count.saturating_mul(elem_size));
+                                    if end > data.len() {
+                                        panic!(
+                                            "{}: pod vec [{base}, {end}) exceeds the buffer (len {})",
+                                            what2,
+                                            data.len()
+                                        );
+                                    }
+                                    ::mmapstruct::bytemuck::cast_slice(&data[base..end])
                                 }
                             };
                             if is_tuple {
@@ -657,7 +682,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         impl ::mmapstruct::traits::MmapRead for #name {
             type Reader<'a> = #reader_name<'a>;
             fn read<'a>(data: &'a [u8], range: std::ops::Range<usize>) -> Self::Reader<'a> {
-                let disc = u32::from_le_bytes(data[range.start .. range.start + 4].try_into().unwrap());
+                let disc = ::mmapstruct::traits::ot_u64(data, range.start, stringify!(#name)) as u32;
                 match disc {
                     #(#read_arms)*
                     _ => panic!("unknown discriminant {} for {}", disc, stringify!(#name)),

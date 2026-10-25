@@ -206,17 +206,20 @@ pub(crate) fn gen_dyn_reader_init(
 ) -> proc_macro2::TokenStream {
     let hs_name = format_ident!("__MMAP_HS_{}", struct_name);
     let fs_name = format_ident!("__MMAP_FS_{}", struct_name);
+    let what = format!("{}: offset table", struct_name);
     quote! {
         {
             let ot_start = range.start + #fs_name;
             let vs = range.start + #hs_name;
-            let off0 = u64::from_le_bytes(data[ot_start + #dyn_idx * 8 .. ot_start + #dyn_idx * 8 + 8].try_into().unwrap()) as usize;
+            let off0 = ::mmapstruct::traits::ot_u64(data, ot_start + #dyn_idx * 8, #what) as usize;
             let off1 = if #dyn_idx + 1 < #dyn_count {
-                u64::from_le_bytes(data[ot_start + (#dyn_idx + 1) * 8 .. ot_start + (#dyn_idx + 1) * 8 + 8].try_into().unwrap()) as usize
+                ::mmapstruct::traits::ot_u64(data, ot_start + (#dyn_idx + 1) * 8, #what) as usize
             } else {
-                u64::from_le_bytes(data[ot_start + #dyn_count * 8 .. ot_start + (#dyn_count + 1) * 8].try_into().unwrap()) as usize
+                ::mmapstruct::traits::ot_u64(data, ot_start + #dyn_count * 8, #what) as usize
             };
-            (vs + off0, vs + off1)
+            // saturating: corrupt offset-table entries must not overflow
+            // (the bounds checks below then reject the bogus range)
+            (vs.saturating_add(off0), vs.saturating_add(off1))
         }
     }
 }

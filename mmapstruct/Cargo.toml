@@ -17,6 +17,9 @@ default = []
 safe-strings = []
 strict-validation = ["safe-strings"]
 dyn = ["mmapstruct-derive/dyn"]
+# Fuzz-target functions (mmapstruct/src/fuzzing.rs): shared between the
+# cargo-fuzz harnesses (fuzz/, nightly) and the stable corpus-replay test.
+fuzzing = ["dyn"]
 
 [lib]
 proc-macro = false

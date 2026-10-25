@@ -32,9 +32,15 @@
 // Compile-time assertion: mmapstruct assumes 64-bit platform (usize == u64).
 const _: () = assert!(core::mem::size_of::<usize>() == 8);
 
+// The derive emits `::mmapstruct::...` paths; inside the library itself
+// (fuzz target module) they must resolve to this very crate.
+extern crate self as mmapstruct;
+
 pub mod byref_array;
 pub mod file_reader;
 pub mod fixed_array;
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
 pub mod hash_map;
 pub mod indexed_array;
 pub mod list;

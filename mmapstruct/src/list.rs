@@ -181,9 +181,8 @@ impl<'a, T: MmapRead + 'a> ListReader<'a, T> {
             "ListReader: block range len {} < {LIST_BLOCK_SIZE}",
             range.len()
         );
-        let head_rel = u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap());
-        let count =
-            u64::from_le_bytes(data[range.start + 16..range.start + 24].try_into().unwrap());
+        let head_rel = crate::traits::ot_u64(data, range.start, "ListReader: head");
+        let count = crate::traits::ot_u64(data, range.start + 16, "ListReader: count");
         Self {
             data,
             range,
@@ -222,7 +221,7 @@ impl<'a, T: MmapRead + 'a> ListReader<'a, T> {
         if cur == 0 {
             return None;
         }
-        Some(self.block_base() + cur as usize)
+        Some(self.block_base().saturating_add(cur as usize))
     }
 
     /// Read the element with `index` (O(index) walk).
@@ -239,17 +238,18 @@ impl<'a, T: MmapRead + 'a> ListReader<'a, T> {
         if rel == 0 {
             return None;
         }
-        let p = self.block_base() + rel as usize;
-        if p + 8 > self.data.len() {
+        let p = self.block_base().saturating_add(rel as usize);
+        if p.saturating_add(8) > self.data.len() {
             return None;
         }
-        Some(u64::from_le_bytes(self.data[p..p + 8].try_into().unwrap()))
+        Some(crate::traits::ot_u64(self.data, p, "ListReader: next"))
     }
 
     fn read_node(&self, node: usize) -> T::Reader<'a> {
-        let len = u32::from_le_bytes(self.data[node + 8..node + 12].try_into().unwrap()) as usize;
-        let start = node + LIST_NODE_HEADER;
-        let end = start + len;
+        let len = crate::traits::ot_u64(self.data, node.saturating_add(8), "ListReader: node len")
+            as usize;
+        let start = node.saturating_add(LIST_NODE_HEADER);
+        let end = start.saturating_add(len);
         #[cfg(feature = "strict-validation")]
         {
             assert!(
@@ -321,14 +321,16 @@ impl<'a, T: MmapRead + 'a> Iterator for ListIter<'a, T> {
         if self.remaining == 0 || self.cur == 0 {
             return None;
         }
-        let node = self.block_base + self.cur as usize;
-        if node + LIST_NODE_HEADER > self.data.len() {
+        let node = self.block_base.saturating_add(self.cur as usize);
+        if node.saturating_add(LIST_NODE_HEADER) > self.data.len() {
+            // Corrupt chain link: stop the iteration instead of overflowing.
             self.remaining = 0;
             return None;
         }
-        let len = u32::from_le_bytes(self.data[node + 8..node + 12].try_into().unwrap()) as usize;
-        let payload_start = node + LIST_NODE_HEADER;
-        let payload_end = payload_start + len;
+        let len =
+            crate::traits::ot_u64(self.data, node.saturating_add(8), "ListIter: node len") as usize;
+        let payload_start = node.saturating_add(LIST_NODE_HEADER);
+        let payload_end = payload_start.saturating_add(len);
         #[cfg(feature = "strict-validation")]
         {
             assert!(
@@ -342,7 +344,7 @@ impl<'a, T: MmapRead + 'a> Iterator for ListIter<'a, T> {
             "ListIter: node payload [{payload_start}, {payload_end}) exceeds data len {}",
             self.data.len()
         );
-        self.cur = u64::from_le_bytes(self.data[node..node + 8].try_into().unwrap());
+        self.cur = crate::traits::ot_u64(self.data, node.saturating_add(0), "ListIter: next");
         self.remaining -= 1;
         Some(T::read(self.data, payload_start..payload_end))
     }

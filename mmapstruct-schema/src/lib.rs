@@ -1,6 +1,8 @@
 pub mod builder;
 pub mod context;
 pub mod format;
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
 pub mod helpers;
 pub mod navigate;
 pub mod patch;

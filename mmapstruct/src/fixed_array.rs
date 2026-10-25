@@ -21,11 +21,9 @@ impl<'a, T: MmapRead> FixedArrayReader<'a, T> {
                 _phantom: PhantomData,
             };
         }
-        let count =
-            u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap()) as usize;
+        let count = crate::traits::ot_u64(data, range.start, "FixedArrayReader: count") as usize;
         let total_size =
-            u64::from_le_bytes(data[range.start + 8..range.start + 16].try_into().unwrap())
-                as usize;
+            crate::traits::ot_u64(data, range.start + 8, "FixedArrayReader: total_size") as usize;
         let base = range.start + 16;
         let stride = total_size.checked_div(count).unwrap_or(0);
         #[cfg(feature = "strict-validation")]

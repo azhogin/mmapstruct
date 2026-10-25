@@ -20,7 +20,7 @@ pub struct IndexedArrayReader<'a, T> {
 
 impl<'a, T: MmapRead + 'a> IndexedArrayReader<'a, T> {
     pub fn new(data: &'a [u8], range: FileRange) -> Self {
-        let raw = u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap());
+        let raw = crate::traits::ot_u64(data, range.start, "IndexedArrayReader: count");
         let flagged = raw & BLOCK_FLAG_RESERVED != 0;
         let count = (raw & !BLOCK_FLAG_RESERVED) as usize;
         #[cfg(feature = "strict-validation")]
@@ -34,20 +34,26 @@ impl<'a, T: MmapRead + 'a> IndexedArrayReader<'a, T> {
                 range.len()
             );
         }
-        let slots_pos = range.start + if flagged { 16 } else { 8 };
-        let offset_bytes = &data[slots_pos..slots_pos + count * 8];
+        let slots_pos = range.start.saturating_add(if flagged { 16 } else { 8 });
+        let slots_end = slots_pos.saturating_add(count.saturating_mul(8));
+        let offset_bytes = crate::traits::bytes_range(
+            data,
+            slots_pos,
+            slots_end,
+            "IndexedArrayReader: slot table",
+        );
         let (base, total_values_size) = if flagged {
-            let resv =
-                u64::from_le_bytes(data[range.start + 8..range.start + 16].try_into().unwrap());
+            let resv = crate::traits::ot_u64(data, range.start + 8, "IndexedArrayReader: reserve");
             let reserved_bytes = (resv >> 32) as usize;
             // Reserved blocks store block-relative offsets; the implicit end
             // of the values region is the span end minus the (possibly
-            // already partially consumed) data gap.
-            (range.start, range.len() - reserved_bytes)
+            // already partially consumed) data gap. saturating: a corrupt
+            // reserve word reads as an empty values region.
+            (range.start, range.len().saturating_sub(reserved_bytes))
         } else {
-            let offsets_offset = range.start + 8;
-            let values_offset = offsets_offset + count * 8;
-            (values_offset, range.end - values_offset)
+            let offsets_offset = range.start.saturating_add(8);
+            let values_offset = offsets_offset.saturating_add(count.saturating_mul(8));
+            (values_offset, range.end.saturating_sub(values_offset))
         };
 
         Self {
@@ -90,8 +96,9 @@ impl<'a, T: MmapRead + 'a> IndexedArrayReader<'a, T> {
         if index >= self.count {
             return None;
         }
-        let start = self.base + self.offset(index);
-        let end = self.base + self.offset(index + 1);
+        let start = self.base.saturating_add(self.offset(index));
+        let end = self.base.saturating_add(self.offset(index + 1));
+        crate::traits::bytes_range(self.data, start, end, "IndexedArrayReader: element");
         #[cfg(feature = "strict-validation")]
         {
             assert!(
@@ -165,8 +172,9 @@ impl<'a, T: MmapRead + 'a> Iterator for IndexedArrayIter<'a, T> {
                 self.total_values_size
             }
         };
-        let start = self.values_start + read_off(self.pos);
-        let end = self.values_start + read_off(self.pos + 1);
+        let start = self.values_start.saturating_add(read_off(self.pos));
+        let end = self.values_start.saturating_add(read_off(self.pos + 1));
+        crate::traits::bytes_range(self.data, start, end, "IndexedArrayIter: element");
         self.pos += 1;
         Some(T::read(self.data, start..end))
     }

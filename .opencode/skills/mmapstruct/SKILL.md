@@ -129,6 +129,12 @@ For inspecting existing `.mms` files use the `mmapview` (headless) or
    `mmapview` skill), visual check via `mmapview-tui` skill
 6. Full verification: `cargo test --workspace` + `cargo test -p mmapstruct
    --features dyn` + `cargo test -p mmapstruct --features strict-validation`
+7. Robustness against corrupt files: replay the fuzz corpus
+   (`cargo test -p mmapstruct --features fuzzing,strict-validation
+   fuzz_regression`) or run the fuzzers
+   (`cargo +nightly fuzz run typed_read fuzz/seeds/typed_read`) — new
+   container readers must go through the checked helpers
+   (`pod_bytes`/`bytes_range`/`ot_u64` in traits.rs)
 
 ## Where to dig deeper
 

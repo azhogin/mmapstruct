@@ -163,9 +163,16 @@ impl<'a> RuntimeSchemaCtx<'a> {
         }
     }
 
-    /// Get the resolved `TypeDefReader` for a type index.
+    /// Get the resolved `TypeDefReader` for a type index. A corrupt
+    /// (out-of-table) index panics with a meaningful message.
     pub fn type_reader(&self, type_idx: u32) -> &TypeDefReader<'a> {
-        &self.types[type_idx as usize]
+        self.types.get(type_idx as usize).unwrap_or_else(|| {
+            panic!(
+                "type_reader: type index {} exceeds the type table ({} types)",
+                type_idx,
+                self.types.len()
+            )
+        })
     }
 
     /// Check if a type is an Array (for field_get traversal decisions).

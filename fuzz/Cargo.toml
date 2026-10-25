@@ -1,0 +1,43 @@
+[package]
+name = "mmapstruct-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Keep the fuzz crate out of the main workspace (libFuzzer profiles differ).
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.mmapstruct]
+path = "../mmapstruct"
+features = ["fuzzing"]
+
+[dependencies.mmapstruct-schema]
+path = "../mmapstruct-schema"
+features = ["fuzzing"]
+
+[[bin]]
+name = "typed_read"
+path = "fuzz_targets/typed_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "schema_interpreter"
+path = "fuzz_targets/schema_interpreter.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "runtime_schema"
+path = "fuzz_targets/runtime_schema.rs"
+test = false
+doc = false
+bench = false

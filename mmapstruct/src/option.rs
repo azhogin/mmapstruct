@@ -9,7 +9,18 @@ impl<T: MmapRead> MmapRead for Option<T> {
         T: 'a;
 
     fn read<'a>(data: &'a [u8], range: Range<usize>) -> Self::Reader<'a> {
-        if range.is_empty() || data[range.start] == 0 {
+        if range.is_empty() {
+            return None;
+        }
+        if range.start >= data.len() {
+            // Corrupt range: panic with context instead of a raw index panic.
+            panic!(
+                "Option read: present byte at {} exceeds the buffer (len {})",
+                range.start,
+                data.len()
+            );
+        }
+        if data[range.start] == 0 {
             None
         } else {
             let val_start = (range.start + 1 + std::mem::align_of::<T>() - 1)

@@ -29,21 +29,6 @@ pub(crate) fn generate_reader_struct(
     }
 }
 
-/// Generate reader init expression for a pod field (::mmapstruct::bytemuck::from_bytes).
-#[allow(dead_code)]
-pub(crate) fn generate_pod_reader_init_expr(
-    field: &FieldInfo,
-    struct_name: &proc_macro2::Ident,
-    all_fields: &[FieldInfo],
-) -> proc_macro2::TokenStream {
-    let fo_name = format_ident!("__MMAP_FO_{}", struct_name);
-    let idx = fixed_section_index(all_fields, field.name.as_str());
-    let ty = &field.ty;
-    quote! {
-        ::mmapstruct::bytemuck::from_bytes(&data[range.start + #fo_name[#idx] .. range.start + #fo_name[#idx] + std::mem::size_of::<#ty>()])
-    }
-}
-
 /// Generate reader init expression for an inline string field.
 pub(crate) fn generate_inline_string_reader_init_expr(
     field: &FieldInfo,
@@ -64,7 +49,10 @@ pub(crate) fn generate_inline_string_reader_init_expr(
     }
 }
 
-/// Generate reader init expression for a fixed-size array field.
+/// Generate reader init expression for a pod field or a fixed-size array
+/// field: bounds-checked slice + aligned `from_bytes` cast (the historical
+/// raw-pointer cast created OOB/misaligned references on truncated or
+/// empty buffers).
 pub(crate) fn generate_fixed_array_reader_init_expr(
     field: &FieldInfo,
     struct_name: &proc_macro2::Ident,
@@ -73,10 +61,14 @@ pub(crate) fn generate_fixed_array_reader_init_expr(
     let fo_name = format_ident!("__MMAP_FO_{}", struct_name);
     let idx = fixed_section_index(all_fields, field.name.as_str());
     let ty = &field.ty;
+    let what = format!("{}::{}", struct_name, field.name);
     quote! {
-        unsafe {
-            &*(data.as_ptr().add(range.start + #fo_name[#idx]) as *const #ty)
-        }
+        ::mmapstruct::bytemuck::from_bytes(::mmapstruct::traits::pod_bytes(
+            data,
+            range.start + #fo_name[#idx],
+            ::std::mem::size_of::<#ty>(),
+            #what,
+        ))
     }
 }
 
@@ -154,15 +146,26 @@ pub(crate) fn generate_inline_dyn_reader_init_expr(
             ..
         } => {
             if *elem_is_pod {
+                let what2 = format!("{}: pod vec", struct_name);
                 quote! {
                     {
                         let (s, _e) = #range_calc;
-                        let raw = u64::from_le_bytes(data[s..s+8].try_into().unwrap());
+                        let raw = ::mmapstruct::traits::ot_u64(data, s, #what2);
                         let flagged = raw & ::mmapstruct::traits::BLOCK_FLAG_RESERVED != 0;
                         let count = (raw & !::mmapstruct::traits::BLOCK_FLAG_RESERVED) as usize;
-                        let base = s + if flagged { 16 } else { 8 };
+                        let base = s.saturating_add(if flagged { 16 } else { 8 });
                         let elem_size = ::std::mem::size_of::<#inner>();
-                        ::mmapstruct::bytemuck::cast_slice(&data[base .. base + count * elem_size])
+                        let end = base.saturating_add(count.saturating_mul(elem_size));
+                        if end > data.len() {
+                            // Corrupt count/offset: bounds panic with context
+                            // (strict validation makes it meaningful).
+                            panic!(
+                                "{}: pod vec [{base}, {end}) exceeds the buffer (len {})",
+                                #what2,
+                                data.len()
+                            );
+                        }
+                        ::mmapstruct::bytemuck::cast_slice(&data[base..end])
                     }
                 }
             } else if *elem_fixed {

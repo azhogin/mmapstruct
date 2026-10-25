@@ -274,6 +274,65 @@ pub const BYREF_GAP_MAGIC: u64 = fnv1a(b"BYREF_GAP");
 // Pod I/O
 // ---------------------------------------------------------------------------
 ///
+/// Bounds-checked pod-byte slice for generated reader initialization.
+///
+/// Replaces the historical raw-pointer casts (`unsafe { &*(ptr.add(off)) }`)
+/// which created out-of-bounds/misaligned references (nounwind aborts) on
+/// truncated or empty buffers. Panics are unwinding; under
+/// `strict-validation` the message carries the struct/field context instead
+/// of a raw index panic.
+#[inline]
+pub fn pod_bytes<'a>(data: &'a [u8], off: usize, size: usize, what: &str) -> &'a [u8] {
+    let end = off.checked_add(size).unwrap_or(usize::MAX);
+    if end > data.len() {
+        #[cfg(feature = "strict-validation")]
+        panic!(
+            "{what}: pod field bytes [{off}, {}) exceed the buffer (len {})",
+            end.min(usize::MAX),
+            data.len()
+        );
+        #[cfg(not(feature = "strict-validation"))]
+        panic!("{what}: pod field bytes [{off}, {end}) exceed the buffer");
+    }
+    &data[off..end]
+}
+
+/// Bounds-checked byte-range slice for reader code: under
+/// `strict-validation` the panic names the context, otherwise a plain
+/// (unwinding) panic fires. Replaces raw `data[x..y]` indexing in readers,
+/// which would surface std's "index out of bounds" on corrupt files.
+#[inline]
+pub fn bytes_range<'a>(data: &'a [u8], start: usize, end: usize, what: &str) -> &'a [u8] {
+    if end > data.len() || start > end {
+        #[cfg(feature = "strict-validation")]
+        panic!(
+            "{what}: byte range [{start}, {end}) is invalid (buffer len {})",
+            data.len()
+        );
+        #[cfg(not(feature = "strict-validation"))]
+        panic!("{what}: byte range [{start}, {end}) is invalid");
+    }
+    &data[start..end]
+}
+
+/// Bounds-checked u64 LE read for offset-table entries in generated reader
+/// code: under `strict-validation` the panic names the context, otherwise a
+/// plain (unwinding) panic fires.
+#[inline]
+pub fn ot_u64(data: &[u8], pos: usize, what: &str) -> u64 {
+    let end = pos.checked_add(8).unwrap_or(usize::MAX);
+    if end > data.len() {
+        #[cfg(feature = "strict-validation")]
+        panic!(
+            "{what}: offset-table entry [{pos}, {end}) exceeds the buffer (len {})",
+            data.len()
+        );
+        #[cfg(not(feature = "strict-validation"))]
+        panic!("{what}: offset-table entry [{pos}, {end}) exceeds the buffer");
+    }
+    u64::from_le_bytes(data[pos..end].try_into().unwrap())
+}
+
 /// Both paths use `core::ptr::read_unaligned` so there is no alignment
 /// requirement.  With `strict-validation` an additional size check is added.
 ///
@@ -352,7 +411,9 @@ impl FileRange {
     }
 
     pub fn len(&self) -> usize {
-        self.end - self.start
+        // saturating: a corrupt range (start > end) reads as empty instead of
+        // overflowing
+        self.end.saturating_sub(self.start)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -376,7 +437,14 @@ impl<T: MmapPod> MmapRead for T {
     type Reader<'a> = &'a T;
 
     fn read<'a>(data: &'a [u8], range: Range<usize>) -> Self::Reader<'a> {
-        bytemuck::from_bytes(&data[range])
+        // bytes_range: nested pod reads (Option<T> inners, enum variant
+        // fields) receive attacker-controlled ranges — guard them here.
+        bytemuck::from_bytes(crate::traits::bytes_range(
+            data,
+            range.start,
+            range.end,
+            core::any::type_name::<T>(),
+        ))
     }
 }
 

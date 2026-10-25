@@ -36,12 +36,11 @@ impl<'a, T: MmapRead + 'a> ByRefArrayReader<'a, T> {
                 _phantom: PhantomData,
             };
         }
-        let raw = u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap());
+        let raw = crate::traits::ot_u64(data, range.start, "ByRefArrayReader: count");
         let count = (raw & !crate::traits::BLOCK_FLAG_RESERVED) as usize;
         #[allow(unused_variables)]
         let total_size =
-            u64::from_le_bytes(data[range.start + 8..range.start + 16].try_into().unwrap())
-                as usize;
+            crate::traits::ot_u64(data, range.start + 8, "ByRefArrayReader: total_size") as usize;
         #[cfg(feature = "strict-validation")]
         {
             let flagged = raw & crate::traits::BLOCK_FLAG_RESERVED != 0;

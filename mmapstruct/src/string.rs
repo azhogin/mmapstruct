@@ -34,6 +34,23 @@ impl MmapRead for String {
     type Reader<'a> = &'a str;
 
     fn read<'a>(data: &'a [u8], range: Range<usize>) -> Self::Reader<'a> {
+        if range.end > data.len() || range.start > range.end {
+            // Corrupt range (bad offset-table entry): panic with context
+            // (strict validation makes this meaningful instead of a raw
+            // index panic surfacing from a malicious file).
+            #[cfg(feature = "strict-validation")]
+            panic!(
+                "String read range [{}, {}) exceeds the buffer (len {})",
+                range.start,
+                range.end,
+                data.len()
+            );
+            #[cfg(not(feature = "strict-validation"))]
+            panic!(
+                "String read range [{}, {}) exceeds the buffer",
+                range.start, range.end
+            );
+        }
         let slice = &data[range];
         if slice.is_empty() {
             return "";

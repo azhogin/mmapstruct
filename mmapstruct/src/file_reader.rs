@@ -60,15 +60,31 @@ pub fn parse_header(data: &[u8]) -> ParsedHeader<'_> {
             };
             if header.flags & HEADER_FLAG_HAS_SCHEMA != 0 {
                 let pos = HEADER_SIZE;
+                // A truncated header section (corrupt file) is treated as
+                // schema-less rather than panicking on the size read.
+                if data.len() < pos + 4 {
+                    return (&data[HEADER_SIZE..], None, hash, crc);
+                }
                 let schema_size = read_u32_le(&data[pos..pos + 4]) as usize;
-                let padded = (schema_size + 7) & !7;
-                let schema = (pos + 4, pos + 4 + schema_size);
+                let padded = schema_size.saturating_add(7) & !7usize;
+                let schema_end = pos + 4 + schema_size;
+                let schema = if schema_end <= data.len() {
+                    Some((pos + 4, schema_end))
+                } else {
+                    None // truncated schema: no embedded schema
+                };
                 let mut payload_start = pos + 4 + padded;
                 if header.flags & HEADER_FLAG_PAYLOAD_ALIGNED != 0 {
                     let align = 8usize;
-                    payload_start += (align - (payload_start % align)) % align;
+                    payload_start =
+                        payload_start.saturating_add((align - (payload_start % align)) % align);
                 }
-                (&data[payload_start..], Some(schema), hash, crc)
+                if payload_start > data.len() {
+                    // Truncated past the payload start: everything is header.
+                    (&data[data.len()..], schema, hash, crc)
+                } else {
+                    (&data[payload_start..], schema, hash, crc)
+                }
             } else {
                 (&data[HEADER_SIZE..], None, hash, crc)
             }
