@@ -187,8 +187,9 @@ pub struct RootLayout {
     /// offset of the ByRefRange placeholder)` — the anchors for
     /// [`crate::PatchSession::set_byref`]. Empty for enum variants (byref
     /// patching requires payload-relative ranges; variant data starts at
-    /// offset 8, so enum-variant byref fields are not patchable).
-    pub byref_slots: &'static [(&'static str, usize)],
+    /// offset 8, so enum-variant byref fields are not patchable). Owned
+    /// because schema-driven patching computes the slots at runtime.
+    pub byref_slots: Vec<(String, usize)>,
 }
 
 /// Resolve the root layout of a file's payload.

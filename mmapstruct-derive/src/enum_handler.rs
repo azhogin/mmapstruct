@@ -303,7 +303,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                 fixed_section_size: #fs_name,
                 header_size: #hs_name,
                 inline_dyn_count: #dyn_cnt,
-                byref_slots: &[],
+                byref_slots: ::std::vec::Vec::new(),
             }),
         });
 

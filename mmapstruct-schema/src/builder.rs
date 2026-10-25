@@ -278,9 +278,22 @@ pub fn write_to_file_with_embedded_schema<T: MmapWrite + GetSchema + mmapstruct:
     value: &T,
     write_crc: bool,
 ) -> Vec<u8> {
+    write_to_file_with_embedded_schema_with(value, write_crc, ReservePlan::new())
+}
+
+/// [`write_to_file_with_embedded_schema`] with a per-field [`ReservePlan`]:
+/// reserved container blocks become patchable in place via
+/// `mmapstruct::PatchSession`.
+pub fn write_to_file_with_embedded_schema_with<
+    T: MmapWrite + GetSchema + mmapstruct::LayoutHash,
+>(
+    value: &T,
+    write_crc: bool,
+    reserve: mmapstruct::ReservePlan,
+) -> Vec<u8> {
     let schema = build_serialized_schema::<T>();
     let schema_bytes = write_to_buf_raw(&schema);
-    mmapstruct::write_to_buf_with_schema(value, write_crc, &schema_bytes)
+    mmapstruct::write_to_buf_with_schema_reserve(value, write_crc, &schema_bytes, reserve)
 }
 
 /// Serialize `value` into two buffers: a headerless `data` payload and a

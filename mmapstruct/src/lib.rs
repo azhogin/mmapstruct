@@ -130,7 +130,21 @@ pub fn write_to_buf_with_schema<T: traits::MmapWrite + LayoutHash + crate::schem
     write_crc: bool,
     schema_bytes: &[u8],
 ) -> Vec<u8> {
-    let mut ctx = WriteContext::new();
+    write_to_buf_with_schema_reserve(value, write_crc, schema_bytes, ReservePlan::new())
+}
+
+/// [`write_to_buf_with_schema`] with a per-field [`ReservePlan`]: reserved
+/// container blocks become patchable in place via [`PatchSession`].
+#[cfg(feature = "dyn")]
+pub fn write_to_buf_with_schema_reserve<
+    T: traits::MmapWrite + LayoutHash + crate::schema::GetSchema,
+>(
+    value: &T,
+    write_crc: bool,
+    schema_bytes: &[u8],
+    reserve: ReservePlan,
+) -> Vec<u8> {
+    let mut ctx = WriteContext::with_reserve_plan(reserve);
     value.write(&mut ctx);
     let buf = ctx.finish();
 

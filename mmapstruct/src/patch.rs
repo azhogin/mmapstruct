@@ -434,6 +434,18 @@ impl PatchSession {
         add: &[T],
     ) -> io::Result<()> {
         let layout = self.root_layout::<R>()?;
+        self.append_pod_vec_at(&layout, elems_off, add)
+    }
+
+    /// [`Self::append_pod_vec`] with an explicitly resolved [`RootLayout`] —
+    /// the entry point for schema-driven patching (no compile-time root
+    /// type available).
+    pub fn append_pod_vec_at<T: MmapPod>(
+        &mut self,
+        layout: &RootLayout,
+        elems_off: usize,
+        add: &[T],
+    ) -> io::Result<()> {
         let elem_size = std::mem::size_of::<T>();
         if elem_size == 0 {
             return Err(io::Error::new(
@@ -461,7 +473,7 @@ impl PatchSession {
                     .unwrap(),
             );
             if probe & crate::traits::BLOCK_FLAG_RESERVED != 0
-                && self.span_end_for_block(&layout, elems_off - 16).is_ok()
+                && self.span_end_for_block(layout, elems_off - 16).is_ok()
             {
                 (elems_off - 16, probe)
             } else {
@@ -497,7 +509,7 @@ impl PatchSession {
             // Reserved block: append in place into the data gap. The gap sits
             // right after the current elements; the field's span (and thus
             // the offset-table sentinel) does not change.
-            self.layout_check(&layout, block_start)?;
+            self.layout_check(layout, block_start)?;
             let resv = u64::from_le_bytes(
                 self.payload()[block_start + 8..block_start + 16]
                     .try_into()
@@ -531,7 +543,7 @@ impl PatchSession {
                 io::Error::new(io::ErrorKind::InvalidData, "element region size overflow")
             })?)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "block end overflow"))?;
-        let (sentinel_pos, sentinel) = self.tail_block_check(&layout, block_start, block_end)?;
+        let (sentinel_pos, sentinel) = self.tail_block_check(layout, block_start, block_end)?;
         self.grow(add_bytes)?;
         {
             let p = self.payload_mut();
@@ -601,6 +613,22 @@ impl PatchSession {
         value: &T,
     ) -> io::Result<()> {
         let layout = self.root_layout::<R>()?;
+        let mut ctx = WriteContext::new();
+        value.write(&mut ctx);
+        let vbytes = ctx.finish();
+        let align = std::mem::align_of::<T>().max(1);
+        self.append_indexed_bytes_at(&layout, block_off, align, &vbytes)
+    }
+
+    /// [`Self::append_indexed`] with an explicitly resolved [`RootLayout`]
+    /// and a pre-serialized element payload.
+    pub fn append_indexed_bytes_at(
+        &mut self,
+        layout: &RootLayout,
+        block_off: usize,
+        elem_align: usize,
+        vbytes: &[u8],
+    ) -> io::Result<()> {
         let payload_len = self.payload_range.len();
         if !block_off.is_multiple_of(8) || block_off + 16 > payload_len {
             return Err(io::Error::new(
@@ -620,17 +648,14 @@ impl PatchSession {
         let resv = u64::from_le_bytes(data[block_off + 8..block_off + 16].try_into().unwrap());
         let spare_slots = (resv & 0xFFFF_FFFF) as usize;
         let gap_bytes = (resv >> 32) as usize;
-        self.layout_check(&layout, block_off)?;
+        self.layout_check(layout, block_off)?;
         if spare_slots == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "indexed reserve exhausted: no spare table slots left; rewrite the file with a larger reserve",
             ));
         }
-        let span_end = self.span_end_for_block(&layout, block_off)?;
-        let mut ctx = WriteContext::new();
-        value.write(&mut ctx);
-        let vbytes = ctx.finish();
+        let span_end = self.span_end_for_block(layout, block_off)?;
         let vlen = vbytes.len();
         // Land the value at its natural alignment inside the gap (the gap
         // start itself is aligned at build time; later appends re-align).
@@ -639,7 +664,7 @@ impl PatchSession {
         // elements (String, Vec<u8>) the content is exact; for larger
         // alignments trailing pad bytes sit beyond the instance fields and
         // never affect reads.
-        let align = std::mem::align_of::<T>().max(1);
+        let align = elem_align.max(1);
         let raw_start = span_end - gap_bytes;
         let gap_start = if align > 1 {
             (raw_start + align - 1) & !(align - 1)
@@ -667,7 +692,7 @@ impl PatchSession {
         }
         {
             let p = self.payload_mut();
-            p[gap_start..gap_start + vlen].copy_from_slice(&vbytes);
+            p[gap_start..gap_start + vlen].copy_from_slice(vbytes);
             let slot_pos = block_off + 16 + count * 8;
             let slot_value = (gap_start - block_off) as u64;
             p[slot_pos..slot_pos + 8].copy_from_slice(&slot_value.to_le_bytes());
@@ -710,6 +735,22 @@ impl PatchSession {
         value: &T,
     ) -> io::Result<()> {
         let layout = self.root_layout::<R>()?;
+        let mut ctx = WriteContext::new();
+        value.write(&mut ctx);
+        let vbytes = ctx.finish();
+        let align = std::mem::align_of::<T>().max(1);
+        self.append_byref_vec_bytes_at(&layout, block_off, align, &vbytes)
+    }
+
+    /// [`Self::append_byref_vec`] with an explicitly resolved [`RootLayout`]
+    /// and a pre-serialized element payload.
+    pub fn append_byref_vec_bytes_at(
+        &mut self,
+        layout: &RootLayout,
+        block_off: usize,
+        elem_align: usize,
+        vbytes: &[u8],
+    ) -> io::Result<()> {
         let payload_len = self.payload_range.len();
         if !block_off.is_multiple_of(8) || block_off + 16 > payload_len {
             return Err(io::Error::new(
@@ -737,7 +778,7 @@ impl PatchSession {
             ));
         }
         let orig_total = total_size / 8; // original count + spare slots
-        self.layout_check(&layout, block_off)?;
+        self.layout_check(layout, block_off)?;
         if count == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -781,13 +822,10 @@ impl PatchSession {
                 "byref-vec reserve gap extends beyond the payload; inconsistent block",
             ));
         }
-        // Serialize the element and land it at its natural alignment inside
-        // the gap (padding charged to the reserve, like append_indexed).
-        let mut ctx = WriteContext::new();
-        value.write(&mut ctx);
-        let vbytes = ctx.finish();
+        // Land the element payload at its natural alignment inside the gap
+        // (padding charged to the reserve, like append_indexed).
         let vlen = vbytes.len();
-        let align = std::mem::align_of::<T>().max(1);
+        let align = elem_align.max(1);
         let gap_start = if align > 1 {
             (last_end + align - 1) & !(align - 1)
         } else {
@@ -810,7 +848,7 @@ impl PatchSession {
         }
         {
             let p = self.payload_mut();
-            p[gap_start..gap_start + vlen].copy_from_slice(&vbytes);
+            p[gap_start..gap_start + vlen].copy_from_slice(vbytes);
             let slot_pos = block_off + 16 + count * 8;
             let new_br = ByRefRange {
                 begin: gap_start as u32,
@@ -858,7 +896,7 @@ impl PatchSession {
         let slot_off = layout
             .byref_slots
             .iter()
-            .find(|(name, _)| *name == field)
+            .find(|(name, _)| name == field)
             .map(|(_, off)| *off)
             .ok_or_else(|| {
                 io::Error::new(
@@ -868,6 +906,22 @@ impl PatchSession {
                     ),
                 )
             })?;
+        let mut ctx = WriteContext::new();
+        value.write(&mut ctx);
+        let vbytes = ctx.finish();
+        let align = std::mem::align_of::<T>().max(1);
+        self.set_byref_bytes_at(slot_off, align, &vbytes)
+    }
+
+    /// [`Self::set_byref`] with the placeholder slot offset and a
+    /// pre-serialized value payload (schema-driven use: the slot offset comes
+    /// from the runtime schema's `FieldDef.offset_in_fixed`).
+    pub fn set_byref_bytes_at(
+        &mut self,
+        slot_off: usize,
+        value_align: usize,
+        vbytes: &[u8],
+    ) -> io::Result<()> {
         let payload_len = self.payload_range.len();
         if !slot_off.is_multiple_of(4) || slot_off + 8 > payload_len {
             return Err(io::Error::new(
@@ -919,12 +973,9 @@ impl PatchSession {
                 "byref gap marker size runs beyond the payload; inconsistent reserve",
             ));
         }
-        // Serialize the new value; it lands after the current marker.
-        let mut ctx = WriteContext::new();
-        value.write(&mut ctx);
-        let vbytes = ctx.finish();
+        // The new value lands after the current marker.
         let vlen = vbytes.len();
-        let align = std::mem::align_of::<T>().max(1);
+        let align = value_align.max(1);
         let raw_pos = marker_pos + 16;
         let value_pos = if align > 1 {
             (raw_pos + align - 1) & !(align - 1)
@@ -948,7 +999,7 @@ impl PatchSession {
         }
         {
             let p = self.payload_mut();
-            p[value_pos..value_pos + vlen].copy_from_slice(&vbytes);
+            p[value_pos..value_pos + vlen].copy_from_slice(vbytes);
             // Fresh marker at the new value's end, BEFORE the range switch:
             // every torn state then reads as the old or the new value.
             let remaining = free - consumed;
@@ -995,6 +1046,20 @@ impl PatchSession {
         value: &T,
     ) -> io::Result<()> {
         let layout = self.root_layout::<R>()?;
+        let mut ctx = WriteContext::new();
+        value.write(&mut ctx);
+        let vbytes = ctx.finish();
+        self.append_list_bytes_at(&layout, block_off, &vbytes)
+    }
+
+    /// [`Self::append_list`] with an explicitly resolved [`RootLayout`] and
+    /// a pre-serialized element payload.
+    pub fn append_list_bytes_at(
+        &mut self,
+        layout: &RootLayout,
+        block_off: usize,
+        vbytes: &[u8],
+    ) -> io::Result<()> {
         let payload_len = self.payload_range.len();
         if !block_off.is_multiple_of(8) || block_off + LIST_BLOCK_SIZE > payload_len {
             return Err(io::Error::new(
@@ -1035,12 +1100,9 @@ impl PatchSession {
                 u32::from_le_bytes(data[tail_pos + 8..tail_pos + 12].try_into().unwrap()) as usize;
             tail_pos + LIST_NODE_HEADER + tail_len
         };
-        let (sentinel_pos, sentinel) = self.layout_check(&layout, block_off)?;
+        let (sentinel_pos, sentinel) = self.layout_check(layout, block_off)?;
         let tail_case = chain_end == payload_len;
         // Serialize the element as a self-contained node payload.
-        let mut ctx = WriteContext::new();
-        value.write(&mut ctx);
-        let vbytes = ctx.finish();
         let vlen = vbytes.len();
         let vlen32 = u32::try_from(vlen).map_err(|_| {
             io::Error::new(
@@ -1057,7 +1119,7 @@ impl PatchSession {
             let node = p.len() - node_size; // node base (8-aligned); fresh bytes are zero
             let len_pos = node + 8;
             p[len_pos..len_pos + 4].copy_from_slice(&vlen32.to_le_bytes());
-            p[node + LIST_NODE_HEADER..].copy_from_slice(&vbytes);
+            p[node + LIST_NODE_HEADER..].copy_from_slice(vbytes);
         }
         let node_rel = (node_base - block_off) as u64;
         if head_rel == 0 {

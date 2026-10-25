@@ -3,8 +3,10 @@ pub mod context;
 pub mod format;
 pub mod helpers;
 pub mod navigate;
+pub mod patch;
 pub mod registry;
 pub mod schema;
+pub mod schema_source;
 pub mod value;
 
 // Re-export key schema types for convenience
@@ -29,5 +31,5 @@ pub use navigate::navigate_path;
 pub use builder::{
     build_serialized_schema, ensure_registry_schema, write_split, write_split_with,
     write_to_file_split, write_to_file_split_with, write_to_file_with_embedded_schema,
-    write_with_schema,
+    write_to_file_with_embedded_schema_with, write_with_schema,
 };

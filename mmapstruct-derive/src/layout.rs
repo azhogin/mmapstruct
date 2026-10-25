@@ -178,7 +178,7 @@ pub(crate) fn generate_layout_impl(
         .map(|f| {
             let name = f.name.as_str();
             let idx = fixed_section_index(fields, name);
-            quote! { (#name, #fo_name[#idx]) }
+            quote! { (#name.to_string(), #fo_name[#idx]) }
         })
         .collect();
     quote! {
@@ -191,7 +191,7 @@ pub(crate) fn generate_layout_impl(
                     fixed_section_size: #fs_name,
                     header_size: #hs_name,
                     inline_dyn_count: #inline_dyn_count,
-                    byref_slots: &[#(#byref_slots),*],
+                    byref_slots: ::std::vec![#(#byref_slots),*],
                 })
             }
         }

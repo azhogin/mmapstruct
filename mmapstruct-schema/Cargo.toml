@@ -10,3 +10,6 @@ bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("dyn"))'] }
+
+[dev-dependencies]
+tempfile = "3"
