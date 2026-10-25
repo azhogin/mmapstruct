@@ -242,7 +242,15 @@ impl PatchSession {
         Ok(())
     }
 
-    /// Flush dirty mmap pages to the backing file.
+    /// Flush dirty mmap pages to the backing file (msync).
+    ///
+    /// The single durability point of the session: appends and patches only
+    /// dirty the page cache, so call this at the cadence your workload needs
+    /// (batching turns an HDD-backed append-only log into sequential tail
+    /// writes with an occasional head+tail writeback cycle). A power loss
+    /// before the flush loses the tail records but never corrupts the file:
+    /// every write protocol leaves torn states readable as the old or the
+    /// new view.
     pub fn flush(&mut self) -> io::Result<()> {
         self.mmap.flush()
     }
@@ -251,11 +259,21 @@ impl PatchSession {
     ///
     /// The payload range always ends at EOF for both header sources, so the
     /// new bytes are appended payload bytes (zero-filled until written).
+    /// Extend the backing file by `add` bytes and re-map.
+    ///
+    /// No `msync` here on purpose: the file is *extended* (never truncated),
+    /// the page cache is per-inode so dirty pages survive the re-map, and
+    /// forcing a writeback per append would turn every tail append into a
+    /// head+tail flush cycle (painful for HDD-backed append-only logs).
+    /// Durability is the caller's concern: call [`PatchSession::flush`] at
+    /// the desired cadence (every N records, on a timer, on close).
+    ///
+    /// The payload range always ends at EOF for both header sources, so the
+    /// new bytes are appended payload bytes (zero-filled until written).
     fn grow(&mut self, add: usize) -> io::Result<()> {
         if add == 0 {
             return Ok(());
         }
-        self.mmap.flush()?;
         let new_len =
             self.mmap.len().checked_add(add).ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "file length overflow")
