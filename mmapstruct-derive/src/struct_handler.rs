@@ -67,7 +67,7 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
             }
         };
         let layout_hash_impl = generate_layout_hash_impl(name, all_fields);
-        let layout_impl = generate_layout_impl(name, layout.inline_dyn_count);
+        let layout_impl = generate_layout_impl(name, all_fields, layout.inline_dyn_count);
 
         let schema_impl = {
             #[cfg(feature = "dyn")]
@@ -124,7 +124,7 @@ pub(crate) fn handle_struct(input: &DeriveInput, ds: &syn::DataStruct) -> TokenS
         quote! {}
     };
     let layout_hash_impl = generate_layout_hash_impl(name, all_fields);
-    let layout_impl = generate_layout_impl(name, layout.inline_dyn_count);
+    let layout_impl = generate_layout_impl(name, all_fields, layout.inline_dyn_count);
 
     let schema_impl = {
         #[cfg(feature = "dyn")]

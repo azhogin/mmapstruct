@@ -163,15 +163,29 @@ pub(crate) fn generate_fixed_layout_consts(
 /// consts emitted next to it (same module scope).
 pub(crate) fn generate_layout_impl(
     struct_name: &proc_macro2::Ident,
+    fields: &[FieldInfo],
     inline_dyn_count: usize,
 ) -> proc_macro2::TokenStream {
     let fs_name = format_ident!("__MMAP_FS_{}", struct_name);
     let hs_name = format_ident!("__MMAP_HS_{}", struct_name);
+    // Root-level standalone byref fields: name + fixed-section offset of the
+    // ByRefRange placeholder (the set_byref anchor).
+    let fo_name = format_ident!("__MMAP_FO_{}", struct_name);
+    let byref_slots: Vec<_> = fields
+        .iter()
+        .filter(|f| f.is_fixed_byref())
+        .map(|f| {
+            let name = f.name.as_str();
+            let idx = fixed_section_index(fields, name);
+            quote! { (#name, #fo_name[#idx]) }
+        })
+        .collect();
     quote! {
         impl ::mmapstruct::traits::MmapLayout for #struct_name {
             const FIXED_SECTION_SIZE: usize = #fs_name;
             const HEADER_SIZE: usize = #hs_name;
             const INLINE_DYN_COUNT: usize = #inline_dyn_count;
+            const BYREF_SLOTS: &'static [(&'static str, usize)] = &[#(#byref_slots),*];
         }
     }
 }

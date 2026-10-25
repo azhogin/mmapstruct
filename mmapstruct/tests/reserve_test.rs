@@ -554,3 +554,269 @@ fn test_byref_reserve_nested_rejected_at_write() {
         p,
     );
 }
+
+// ---------------------------------------------------------------------------
+// standalone byref reserve: set (copy-on-write into the marked gap)
+// ---------------------------------------------------------------------------
+
+#[derive(MmapStruct, Debug)]
+struct NameFile {
+    id: u32,
+    #[mmap(byref)]
+    name: String,
+    vals: Vec<u32>,
+}
+
+fn name_plan() -> ReservePlan {
+    let mut p = ReservePlan::new();
+    p.set(
+        "name",
+        Reserve {
+            slots: 0,
+            bytes: 128,
+        },
+    );
+    p
+}
+
+fn name_sample() -> NameFile {
+    NameFile {
+        id: 3,
+        name: "original".to_string(),
+        vals: vec![4, 5],
+    }
+}
+
+#[test]
+fn test_byref_set_roundtrip() {
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(&name_sample(), tmp.path(), false, name_plan()).unwrap();
+
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    let reader = r.read::<NameFile>();
+    assert_eq!(*reader.id, 3);
+    assert_eq!(reader.name, "original");
+
+    // Set a longer value in place.
+    let mut session = PatchSession::open_typed::<NameFile>(tmp.path()).unwrap();
+    session
+        .set_byref::<NameFile, String>("name", &"a much longer replacement".to_string())
+        .unwrap();
+    session.flush().unwrap();
+
+    assert_eq!(
+        std::fs::metadata(tmp.path()).unwrap().len(),
+        std::fs::metadata(tmp.path()).unwrap().len()
+    );
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    let reader = r.read::<NameFile>();
+    assert_eq!(reader.name, "a much longer replacement");
+    assert_eq!(*reader.id, 3);
+    assert_eq!(reader.vals.len(), 2);
+}
+
+#[test]
+fn test_byref_set_file_size_unchanged() {
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(&name_sample(), tmp.path(), false, name_plan()).unwrap();
+    let size_before = std::fs::metadata(tmp.path()).unwrap().len();
+
+    let mut session = PatchSession::open_typed::<NameFile>(tmp.path()).unwrap();
+    session
+        .set_byref::<NameFile, String>("name", &"renamed".to_string())
+        .unwrap();
+    session.flush().unwrap();
+
+    assert_eq!(std::fs::metadata(tmp.path()).unwrap().len(), size_before);
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    assert_eq!(r.read::<NameFile>().name, "renamed");
+}
+
+#[test]
+fn test_byref_set_chain() {
+    // Multiple sets walk the marker chain; capacity shrinks monotonically.
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(&name_sample(), tmp.path(), false, name_plan()).unwrap();
+
+    let mut session = PatchSession::open_typed::<NameFile>(tmp.path()).unwrap();
+    for name in ["first", "second-value", "third and the longest one"] {
+        session
+            .set_byref::<NameFile, String>("name", &name.to_string())
+            .unwrap();
+    }
+    session.flush().unwrap();
+
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    assert_eq!(r.read::<NameFile>().name, "third and the longest one");
+}
+
+#[test]
+fn test_byref_set_exhausted() {
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(&name_sample(), tmp.path(), false, name_plan()).unwrap();
+
+    let mut session = PatchSession::open_typed::<NameFile>(tmp.path()).unwrap();
+    // 128-byte gap: 16 marker + 112 usable; 200 bytes cannot fit.
+    let long = "z".repeat(200);
+    let err = session
+        .set_byref::<NameFile, String>("name", &long)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("byref reserve exhausted"),
+        "unexpected error: {err}"
+    );
+
+    // A value that fits still succeeds after the failed attempt.
+    session
+        .set_byref::<NameFile, String>("name", &"still works".to_string())
+        .unwrap();
+    session.flush().unwrap();
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    assert_eq!(r.read::<NameFile>().name, "still works");
+}
+
+#[test]
+fn test_byref_set_unreserved_rejected() {
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file(&name_sample(), tmp.path(), false).unwrap();
+
+    let mut session = PatchSession::open_typed::<NameFile>(tmp.path()).unwrap();
+    let err = session
+        .set_byref::<NameFile, String>("name", &"x".to_string())
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("no byref reserve marker"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_byref_set_unknown_field_rejected() {
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(&name_sample(), tmp.path(), false, name_plan()).unwrap();
+
+    let mut session = PatchSession::open_typed::<NameFile>(tmp.path()).unwrap();
+    let err = session
+        .set_byref::<NameFile, String>("nonexistent", &"x".to_string())
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("not a root-level standalone byref field"),
+        "unexpected error: {err}"
+    );
+
+    // A non-byref field is also rejected via the slots table.
+    let err = session
+        .set_byref::<NameFile, String>("id", &"x".to_string())
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("not a root-level standalone byref field"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_byref_set_option_some() {
+    #[derive(MmapStruct, Debug)]
+    struct OptFile {
+        id: u32,
+        #[mmap(byref)]
+        maybe: Option<String>,
+        vals: Vec<u32>,
+    }
+    let mut p = ReservePlan::new();
+    p.set(
+        "maybe",
+        Reserve {
+            slots: 0,
+            bytes: 96,
+        },
+    );
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(
+        &OptFile {
+            id: 8,
+            maybe: Some("hello".to_string()),
+            vals: vec![1],
+        },
+        tmp.path(),
+        false,
+        p,
+    )
+    .unwrap();
+
+    let mut session = PatchSession::open_typed::<OptFile>(tmp.path()).unwrap();
+    session
+        .set_byref::<OptFile, String>("maybe", &"replaced while Some".to_string())
+        .unwrap();
+    session.flush().unwrap();
+
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    let reader = r.read::<OptFile>();
+    assert_eq!(reader.maybe, Some("replaced while Some"));
+    assert_eq!(*reader.id, 8);
+}
+
+#[test]
+fn test_byref_set_option_none_rejected() {
+    #[derive(MmapStruct, Debug)]
+    struct OptNoneFile {
+        id: u32,
+        #[mmap(byref)]
+        maybe: Option<String>,
+    }
+    let mut p = ReservePlan::new();
+    p.set(
+        "maybe",
+        Reserve {
+            slots: 0,
+            bytes: 96,
+        },
+    );
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(&OptNoneFile { id: 9, maybe: None }, tmp.path(), false, p).unwrap();
+
+    let mut session = PatchSession::open_typed::<OptNoneFile>(tmp.path()).unwrap();
+    let err = session
+        .set_byref::<OptNoneFile, String>("maybe", &"x".to_string())
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("None sentinel"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+#[should_panic(expected = "standalone byref reserve requires a root-level non-dedup field")]
+fn test_byref_set_reserve_nested_rejected_at_write() {
+    #[derive(MmapStruct, Debug)]
+    struct InnerName {
+        #[mmap(byref)]
+        label: String,
+    }
+    #[derive(MmapStruct, Debug)]
+    struct OuterName {
+        id: u32,
+        inner: InnerName,
+    }
+    let mut p = ReservePlan::new();
+    p.set(
+        "label",
+        Reserve {
+            slots: 0,
+            bytes: 64,
+        },
+    );
+    let _ = write_to_file_with(
+        &OuterName {
+            id: 1,
+            inner: InnerName {
+                label: "l".to_string(),
+            },
+        },
+        "/tmp/nonexistent-byref-set-nested.mms",
+        false,
+        p,
+    );
+}

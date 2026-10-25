@@ -178,6 +178,11 @@ pub trait MmapLayout {
     const HEADER_SIZE: usize;
     /// Number of inline-dyn fields.
     const INLINE_DYN_COUNT: usize;
+    /// Root-level standalone byref fields: `(field name, fixed-section
+    /// offset of the ByRefRange placeholder)` — the anchors for
+    /// [`crate::PatchSession::set_byref`]. Empty for structs without
+    /// standalone byref fields.
+    const BYREF_SLOTS: &'static [(&'static str, usize)] = &[];
 }
 
 // -- Primitives --
@@ -240,6 +245,12 @@ pub const ENC_LIST: u64 = fnv1a(b"LIST");
 /// blocks). Old (unflagged) blocks are unchanged and fully backward
 /// compatible; element counts below 2^63 never collide with the flag.
 pub const BLOCK_FLAG_RESERVED: u64 = 1u64 << 63;
+
+/// Magic of the standalone-byref gap marker `{magic, size}` written at the
+/// field data end at build time (and moved along the gap by
+/// `PatchSession::set_byref`); `size` counts the usable bytes after the
+/// marker.
+pub const BYREF_GAP_MAGIC: u64 = fnv1a(b"BYREF_GAP");
 
 // ---------------------------------------------------------------------------
 // Pod I/O

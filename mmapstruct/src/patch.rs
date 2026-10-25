@@ -792,6 +792,146 @@ impl PatchSession {
         Ok(())
     }
 
+    /// Replace the value of a root-level standalone `#[mmap(byref)]` field
+    /// in place (copy-on-write into the field's reserved gap).
+    ///
+    /// `field` is the Rust field name; the slot anchor comes from
+    /// [`MmapLayout::BYREF_SLOTS`] (emitted by the derive). The field must
+    /// have been written with a standalone byref reserve
+    /// ([`crate::write_context::write_byref_r`] /
+    /// [`crate::write_context::write_byref_option_r`]): a
+    /// `{BYREF_GAP_MAGIC, size}` marker sits at the value's end, tracking
+    /// the free gap bytes.
+    ///
+    /// Protocol (crash-consistent): the new value is serialized into the
+    /// free run after the current marker (never over live data), a fresh
+    /// marker with the remaining size is written at the new value's end,
+    /// and only then is the 8-byte `ByRefRange` (a single aligned word)
+    /// switched — every torn state reads as the old or the new value. The
+    /// old data bytes become unreachable garbage; gap capacity monotonically
+    /// shrinks with each set.
+    ///
+    /// Restrictions: the field must currently hold a value (`Option` sentinel
+    /// `{0, 0}` — `None` — has no data anchor and cannot be set), and the
+    /// new value plus marker overhead must fit the remaining gap.
+    pub fn set_byref<R: MmapLayout, T: MmapWrite>(
+        &mut self,
+        field: &str,
+        value: &T,
+    ) -> io::Result<()> {
+        let slot_off = R::BYREF_SLOTS
+            .iter()
+            .find(|(name, _)| *name == field)
+            .map(|(_, off)| *off)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "field {field:?} is not a root-level standalone byref field of the root layout"
+                    ),
+                )
+            })?;
+        let payload_len = self.payload_range.len();
+        if !slot_off.is_multiple_of(4) || slot_off + 8 > payload_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("byref slot offset {slot_off} is out of the payload"),
+            ));
+        }
+        let data = self.payload();
+        let old: ByRefRange =
+            unsafe { crate::traits::mmap_read_pod(&data[slot_off..slot_off + 8]) };
+        if old.begin == 0 && old.end == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "field holds the None sentinel (begin == end == 0); setting a value into a None option is not patchable (no data anchor)",
+            ));
+        }
+        if old.begin > old.end || old.end as usize > payload_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "byref range [{}, {}) is inconsistent with the payload ({payload_len})",
+                    old.begin, old.end
+                ),
+            ));
+        }
+        // Gap marker at the value's end.
+        // The marker must sit right at the value's end; a value that runs to
+        // the payload end (or whose trailing bytes lack the magic) was not
+        // written with a standalone byref reserve.
+        let marker_pos = old.end as usize;
+        if marker_pos + 16 > payload_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "no byref reserve marker at the value end; rewrite the file with a ReservePlan (standalone byref field)",
+            ));
+        }
+        let marker = u64::from_le_bytes(data[marker_pos..marker_pos + 8].try_into().unwrap());
+        if marker != crate::traits::BYREF_GAP_MAGIC {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "no byref reserve marker at the value end; rewrite the file with a ReservePlan (standalone byref field)",
+            ));
+        }
+        let free =
+            u64::from_le_bytes(data[marker_pos + 8..marker_pos + 16].try_into().unwrap()) as usize;
+        if marker_pos + 16 + free > payload_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "byref gap marker size runs beyond the payload; inconsistent reserve",
+            ));
+        }
+        // Serialize the new value; it lands after the current marker.
+        let mut ctx = WriteContext::new();
+        value.write(&mut ctx);
+        let vbytes = ctx.finish();
+        let vlen = vbytes.len();
+        let align = std::mem::align_of::<T>().max(1);
+        let raw_pos = marker_pos + 16;
+        let value_pos = if align > 1 {
+            (raw_pos + align - 1) & !(align - 1)
+        } else {
+            raw_pos
+        };
+        let consumed = (value_pos - marker_pos) + vlen; // marker move + pad + value
+        if consumed > free {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "byref reserve exhausted: gap holds {free} bytes, need {consumed}; rewrite the file with a larger reserve"
+                ),
+            ));
+        }
+        if value_pos + vlen > u32::MAX as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "byref range offsets exceed the u32 limit of ByRefRange",
+            ));
+        }
+        {
+            let p = self.payload_mut();
+            p[value_pos..value_pos + vlen].copy_from_slice(&vbytes);
+            // Fresh marker at the new value's end, BEFORE the range switch:
+            // every torn state then reads as the old or the new value.
+            let remaining = free - consumed;
+            p[value_pos + vlen..value_pos + vlen + 8]
+                .copy_from_slice(&crate::traits::BYREF_GAP_MAGIC.to_le_bytes());
+            p[value_pos + vlen + 8..value_pos + vlen + 16]
+                .copy_from_slice(&(remaining as u64).to_le_bytes());
+        }
+        // The switch: one 8-byte store of the new range (the placeholder is
+        // 4-aligned in the fixed section; on x86_64 same-cache-line 8-byte
+        // stores are atomic in practice — a tear would yield a
+        // memory-safe-but-garbled view, never out-of-bounds).
+        let new_range = ByRefRange {
+            begin: value_pos as u32,
+            end: (value_pos + vlen) as u32,
+        };
+        self.payload_mut()[slot_off..slot_off + 8].copy_from_slice(bytemuck::bytes_of(&new_range));
+        Ok(())
+    }
+
     /// Append one element to a `List<T>` block.
     ///
     /// `block_off` is the payload-relative offset of the list block

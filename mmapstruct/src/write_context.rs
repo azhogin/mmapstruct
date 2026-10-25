@@ -64,15 +64,30 @@ impl<'data, T: MmapWrite> PostponedWriter<'data> for ByRefWriter<'data, T> {
     }
 }
 
-/// Reserved zero-byte run queued after a field's postponed data — the
-/// patchable gap for future byref appends (no ByRefRange to backpatch).
+/// Reserved run queued after a field's postponed data — the patchable gap
+/// for future byref appends/sets (no ByRefRange to backpatch). `marked`
+/// gaps start with a `{BYREF_GAP_MAGIC, usable}` marker pair so the patch
+/// session can size the free run from the field's range end alone
+/// (standalone byref set); unmarked gaps are plain zero runs (byref-vec
+/// append, anchored by the block's reserve word instead).
 struct GapWriter {
     bytes: usize,
+    marked: bool,
 }
 
 impl<'data> PostponedWriter<'data> for GapWriter {
     fn write(&self, ctx: &mut WriteContext<'data>) {
-        ctx.write_padding(self.bytes);
+        if self.marked {
+            assert!(
+                self.bytes >= 16,
+                "mmapstruct: standalone byref reserve must be at least 16 bytes (gap marker overhead)"
+            );
+            ctx.write_u64_le(crate::traits::BYREF_GAP_MAGIC);
+            ctx.write_u64_le((self.bytes - 16) as u64);
+            ctx.write_padding(self.bytes - 16);
+        } else {
+            ctx.write_padding(self.bytes);
+        }
     }
 }
 
@@ -245,6 +260,22 @@ impl<'data> WriteContext<'data> {
             dedup: false,
             writer: Box::new(GapWriter {
                 bytes: bytes as usize,
+                marked: false,
+            }),
+        });
+    }
+
+    /// [`Self::queue_postponed_gap`] prefixed with a
+    /// `{BYREF_GAP_MAGIC, usable}` marker: the standalone-byref set op finds
+    /// the free run from the field's range end without any block metadata.
+    pub fn queue_postponed_gap_marked(&mut self, bytes: u64) {
+        self.postponed.push(PostponedData {
+            base: 0,
+            placeholder_offset: None,
+            dedup: false,
+            writer: Box::new(GapWriter {
+                bytes: bytes as usize,
+                marked: true,
             }),
         });
     }
@@ -348,6 +379,78 @@ impl<'data> WriteContext<'data> {
         }
         self.buf
     }
+}
+
+/// [`WriteContext::write_byref`] with an optional standalone-byref reserve:
+/// queues a marked data gap right after the value's postponed data, making
+/// the field patchable via `PatchSession::set_byref`.
+///
+/// Restrictions (fail fast): root-level non-dedup fields only (`base == 0`,
+/// `dedup == false` — the patcher must reconstruct the payload-relative
+/// range and the gap must precede any dedup group), and `reserve.bytes`
+/// must cover the 16-byte gap marker.
+/// [`WriteContext::write_byref`] variant for `Option<T>` fields with
+/// `#[mmap(byref)]`: `Some` queues the value's postponed data, `None` writes
+/// the `{0, 0}` sentinel placeholder. With a reserve, a marked gap is queued
+/// after either, so a `Some` value can be replaced in place later
+/// (`PatchSession::set_byref`); setting a `None` back to a value is not
+/// patchable (the sentinel `{0, 0}` gives no data anchor).
+pub fn write_byref_option_r<'data, T: MmapWrite>(
+    value: &'data Option<T>,
+    ctx: &mut WriteContext<'data>,
+    base: usize,
+    dedup: bool,
+    reserve: Reserve,
+) {
+    if reserve.is_none() {
+        match value {
+            Some(v) => ctx.write_byref(v, base, dedup),
+            None => ctx.write_pod(&crate::traits::ByRefRange { begin: 0, end: 0 }),
+        }
+        return;
+    }
+    if dedup || base != 0 {
+        panic!(
+            "mmapstruct: standalone byref reserve requires a root-level non-dedup field (base == 0, dedup == false); got base {base}, dedup {dedup}"
+        );
+    }
+    if reserve.bytes < 16 {
+        panic!(
+            "mmapstruct: standalone byref reserve must be at least 16 bytes (gap marker overhead); got {}",
+            reserve.bytes
+        );
+    }
+    match value {
+        Some(v) => ctx.write_byref(v, base, dedup),
+        None => ctx.write_pod(&crate::traits::ByRefRange { begin: 0, end: 0 }),
+    }
+    ctx.queue_postponed_gap_marked(reserve.bytes);
+}
+
+pub fn write_byref_r<'data, T: MmapWrite>(
+    value: &'data T,
+    ctx: &mut WriteContext<'data>,
+    base: usize,
+    dedup: bool,
+    reserve: Reserve,
+) {
+    if reserve.is_none() {
+        ctx.write_byref(value, base, dedup);
+        return;
+    }
+    if dedup || base != 0 {
+        panic!(
+            "mmapstruct: standalone byref reserve requires a root-level non-dedup field (base == 0, dedup == false); got base {base}, dedup {dedup}"
+        );
+    }
+    if reserve.bytes < 16 {
+        panic!(
+            "mmapstruct: standalone byref reserve must be at least 16 bytes (gap marker overhead); got {}",
+            reserve.bytes
+        );
+    }
+    ctx.write_byref(value, base, dedup);
+    ctx.queue_postponed_gap_marked(reserve.bytes);
 }
 
 #[cfg(not(feature = "strict-validation"))]

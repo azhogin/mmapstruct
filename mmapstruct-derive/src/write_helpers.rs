@@ -46,17 +46,24 @@ where
             match &fi.category {
                 FieldCategory::DynamicOption { .. } => {
                     quote! {
-                        let base = ctx.current_offset();
-                        if let Some(val) = #field {
-                            ctx.write_byref(val, start, #dedup_literal);
-                        } else {
-                            ctx.write_pod(&::mmapstruct::traits::ByRefRange { begin: 0, end: 0 });
-                        }
+                        ::mmapstruct::write_context::write_byref_option_r(
+                            #field,
+                            ctx,
+                            start,
+                            #dedup_literal,
+                            ctx.field_reserve(stringify!(#fident)),
+                        );
                     }
                 }
                 _ => {
                     quote! {
-                        ctx.write_byref(#field, start, #dedup_literal);
+                        ::mmapstruct::write_context::write_byref_r(
+                            #field,
+                            ctx,
+                            start,
+                            #dedup_literal,
+                            ctx.field_reserve(stringify!(#fident)),
+                        );
                     }
                 }
             }
