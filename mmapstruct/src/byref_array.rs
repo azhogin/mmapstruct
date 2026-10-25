@@ -16,6 +16,9 @@ pub struct ByRefArrayReader<'a, T> {
     /// Struct base offset — used to resolve `ByRefRange` into absolute positions.
     struct_base: usize,
     count: usize,
+    /// File-relative range of the block
+    /// (`[count: u64][total_size: u64][ranges...]`).
+    range: FileRange,
     /// Raw bytes of the `[ByRefRange; count]` array.
     ranges: &'a [u8],
     _phantom: PhantomData<T>,
@@ -28,25 +31,39 @@ impl<'a, T: MmapRead + 'a> ByRefArrayReader<'a, T> {
                 data,
                 struct_base,
                 count: 0,
+                range,
                 ranges: &[],
                 _phantom: PhantomData,
             };
         }
-        let count =
-            u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap()) as usize;
+        let raw = u64::from_le_bytes(data[range.start..range.start + 8].try_into().unwrap());
+        let count = (raw & !crate::traits::BLOCK_FLAG_RESERVED) as usize;
         #[allow(unused_variables)]
         let total_size =
             u64::from_le_bytes(data[range.start + 8..range.start + 16].try_into().unwrap())
                 as usize;
         #[cfg(feature = "strict-validation")]
         {
-            assert_eq!(
-                total_size,
-                count * 8,
-                "ByRefArrayReader: total_size {} != count {} * 8",
-                total_size,
-                count
-            );
+            let flagged = raw & crate::traits::BLOCK_FLAG_RESERVED != 0;
+            // Plain blocks: total_size == count * 8. Reserved (flagged)
+            // blocks: total_size counts the original (count + spare) slot
+            // table — the patcher's anchor for the reserve word position.
+            if flagged {
+                assert!(
+                    total_size % 8 == 0 && total_size / 8 >= count,
+                    "ByRefArrayReader: reserved total_size {} inconsistent with count {}",
+                    total_size,
+                    count
+                );
+            } else {
+                assert_eq!(
+                    total_size,
+                    count * 8,
+                    "ByRefArrayReader: total_size {} != count {} * 8",
+                    total_size,
+                    count
+                );
+            }
             assert!(
                 range.start + 16 + count * 8 <= data.len(),
                 "ByRefArrayReader: ranges end {} > data len {}",
@@ -59,9 +76,17 @@ impl<'a, T: MmapRead + 'a> ByRefArrayReader<'a, T> {
             data,
             struct_base,
             count,
+            range,
             ranges,
             _phantom: PhantomData,
         }
+    }
+
+    /// File-relative range of the block. `start` is the position of the
+    /// count field — the anchor for append-style patching of a reserved
+    /// block.
+    pub fn block_range(&self) -> FileRange {
+        self.range
     }
 
     pub fn len(&self) -> usize {
@@ -174,4 +199,59 @@ pub fn write_byref_array<'data, T: crate::traits::MmapWrite>(
     }
     // total_size = count * 8 (each ByRefRange is 8 bytes)
     ctx.write_u64_le_at((items.len() * 8) as u64, total_size_offset);
+}
+
+/// [`write_byref_array`] with an optional reserve.
+///
+/// Reserved blocks are self-describing:
+/// `[count | BLOCK_FLAG_RESERVED][total_size][count ranges][spare slots][reserve word]`
+/// (the reserve word holds spare table slots in its low 32 bits and the spare
+/// data bytes in its high 32 bits) plus a zero-byte data gap queued after the
+/// field's postponed data. The reader reads exactly `count` ranges from the
+/// block head, so spare slots and the reserve word are invisible to it — no
+/// reader changes.
+///
+/// A patch session appends in place: value bytes into the gap (found after
+/// the last range's end), a new `ByRefRange` into the first spare slot, then
+/// the count switch and the reserve-word bookkeeping.
+///
+/// Restrictions (fail fast at write time): the ranges must be payload-relative
+/// (`base == 0` — a root-level field; nested/scoped instances and enum
+/// variants have a non-zero base the patcher cannot reconstruct) and `dedup`
+/// must be off (dedup groups are written after their registration point, so
+/// the gap would land before the data).
+pub fn write_byref_array_r<'data, T: crate::traits::MmapWrite>(
+    items: &'data [T],
+    ctx: &mut WriteContext<'data>,
+    base: usize,
+    dedup: bool,
+    reserve: crate::write_context::Reserve,
+) {
+    if reserve.is_none() {
+        write_byref_array(items, ctx, base, dedup);
+        return;
+    }
+    if dedup || base != 0 {
+        panic!(
+            "mmapstruct: byref-vec reserve requires a root-level non-dedup field (base == 0, dedup == false); got base {base}, dedup {dedup}"
+        );
+    }
+    ctx.write_u64_le((items.len() as u64) | crate::traits::BLOCK_FLAG_RESERVED);
+    // total_size doubles as the original slot-table size (count + spare)
+    // in 8-byte units: the patcher derives the reserve word position from
+    // it, since count grows while the position must stay fixed.
+    ctx.write_u64_le(((items.len() + reserve.slots as usize) * 8) as u64);
+    for item in items {
+        ctx.write_byref(item, base, dedup);
+    }
+    // Spare ByRefRange slots (zeroed) — beyond the reader's count window.
+    if reserve.slots > 0 {
+        ctx.write_padding(reserve.slots as usize * 8);
+    }
+    // Reserve word: low 32 = spare slots, high 32 = spare data bytes.
+    ctx.write_u64_le(((reserve.bytes << 32) | reserve.slots as u64) & !(1u64 << 63));
+    // Data gap right after this field's postponed data.
+    if reserve.bytes > 0 {
+        ctx.queue_postponed_gap(reserve.bytes);
+    }
 }

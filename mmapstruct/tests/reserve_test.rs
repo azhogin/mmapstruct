@@ -320,3 +320,237 @@ fn test_reserve_split_file_with_sidecar() {
     assert_eq!(reader.points.len(), 3);
     assert_eq!(reader.points[2], Note { id: 42, score: 4.2 });
 }
+
+// ---------------------------------------------------------------------------
+// byref-vec reserve: spare ByRefRange slots + postponed data gap
+// ---------------------------------------------------------------------------
+
+#[derive(MmapStruct, Debug)]
+struct ByRefReserveFile {
+    id: u32,
+    #[mmap(byref)]
+    notes: Vec<String>,
+    vals: Vec<u32>,
+}
+
+fn byref_plan() -> ReservePlan {
+    let mut p = ReservePlan::new();
+    p.set(
+        "notes",
+        Reserve {
+            slots: 3,
+            bytes: 128,
+        },
+    );
+    p
+}
+
+fn byref_sample() -> ByRefReserveFile {
+    ByRefReserveFile {
+        id: 5,
+        notes: vec!["n0".to_string(), "n1".to_string()],
+        vals: vec![1, 2],
+    }
+}
+
+#[test]
+fn test_byref_reserve_roundtrip() {
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(&byref_sample(), tmp.path(), false, byref_plan()).unwrap();
+
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    let reader = r.read::<ByRefReserveFile>();
+    assert_eq!(*reader.id, 5);
+    let notes: Vec<String> = reader.notes.iter().map(|s| s.to_string()).collect();
+    assert_eq!(notes, vec!["n0", "n1"]);
+    assert_eq!(reader.vals.len(), 2);
+}
+
+#[test]
+fn test_append_byref_vec_inplace_midfile() {
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(&byref_sample(), tmp.path(), false, byref_plan()).unwrap();
+    let size_before = std::fs::metadata(tmp.path()).unwrap().len();
+
+    let mut session = PatchSession::open_typed::<ByRefReserveFile>(tmp.path()).unwrap();
+    let reader = session.read::<ByRefReserveFile>().unwrap();
+    let block_off = reader.notes.block_range().start;
+
+    session
+        .append_byref_vec::<ByRefReserveFile, String>(block_off, &"n2".to_string())
+        .unwrap();
+    session
+        .append_byref_vec::<ByRefReserveFile, String>(block_off, &"n3".to_string())
+        .unwrap();
+    session.flush().unwrap();
+
+    assert_eq!(
+        std::fs::metadata(tmp.path()).unwrap().len(),
+        size_before,
+        "in-place byref append must not grow the file"
+    );
+
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    let reader = r.read::<ByRefReserveFile>();
+    assert_eq!(*reader.id, 5);
+    let notes: Vec<String> = reader.notes.iter().map(|s| s.to_string()).collect();
+    assert_eq!(notes, vec!["n0", "n1", "n2", "n3"]);
+    assert_eq!(reader.vals.len(), 2);
+}
+
+#[test]
+fn test_append_byref_vec_exhausted_slots() {
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(&byref_sample(), tmp.path(), false, byref_plan()).unwrap();
+
+    let mut session = PatchSession::open_typed::<ByRefReserveFile>(tmp.path()).unwrap();
+    let reader = session.read::<ByRefReserveFile>().unwrap();
+    let block_off = reader.notes.block_range().start;
+
+    for i in 0..3 {
+        session
+            .append_byref_vec::<ByRefReserveFile, String>(block_off, &format!("x{i}"))
+            .unwrap();
+    }
+    let err = session
+        .append_byref_vec::<ByRefReserveFile, String>(block_off, &"overflow".to_string())
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("no spare table slots"),
+        "unexpected error: {err}"
+    );
+    session.flush().unwrap();
+
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    let reader = r.read::<ByRefReserveFile>();
+    assert_eq!(reader.notes.len(), 5);
+    let notes: Vec<String> = reader.notes.iter().map(|s| s.to_string()).collect();
+    assert_eq!(notes, vec!["n0", "n1", "x0", "x1", "x2"]);
+}
+
+#[test]
+fn test_append_byref_vec_data_gap_exhausted() {
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(&byref_sample(), tmp.path(), false, byref_plan()).unwrap();
+
+    let mut session = PatchSession::open_typed::<ByRefReserveFile>(tmp.path()).unwrap();
+    let reader = session.read::<ByRefReserveFile>().unwrap();
+    let block_off = reader.notes.block_range().start;
+
+    let long = "y".repeat(200); // gap is 128 bytes
+    let err = session
+        .append_byref_vec::<ByRefReserveFile, String>(block_off, &long)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("data reserve exhausted"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_append_byref_vec_unflagged_rejected() {
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file(&byref_sample(), tmp.path(), false).unwrap();
+
+    let mut session = PatchSession::open_typed::<ByRefReserveFile>(tmp.path()).unwrap();
+    let reader = session.read::<ByRefReserveFile>().unwrap();
+    let block_off = reader.notes.block_range().start;
+
+    let err = session
+        .append_byref_vec::<ByRefReserveFile, String>(block_off, &"z".to_string())
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("no reserve"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_append_byref_vec_empty_rejected() {
+    let tmp = NamedTempFile::new().unwrap();
+    write_to_file_with(
+        &ByRefReserveFile {
+            id: 6,
+            notes: vec![],
+            vals: vec![9],
+        },
+        tmp.path(),
+        false,
+        byref_plan(),
+    )
+    .unwrap();
+
+    let mut session = PatchSession::open_typed::<ByRefReserveFile>(tmp.path()).unwrap();
+    let reader = session.read::<ByRefReserveFile>().unwrap();
+    let block_off = reader.notes.block_range().start;
+
+    let err = session
+        .append_byref_vec::<ByRefReserveFile, String>(block_off, &"first".to_string())
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("no data anchor"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+#[should_panic(expected = "byref-vec reserve requires a root-level non-dedup field")]
+fn test_byref_reserve_dedup_rejected_at_write() {
+    #[derive(MmapStruct, Debug)]
+    struct DedupFile {
+        id: u32,
+        #[mmap(byref, dedup)]
+        notes: Vec<String>,
+    }
+    let mut p = ReservePlan::new();
+    p.set(
+        "notes",
+        Reserve {
+            slots: 2,
+            bytes: 64,
+        },
+    );
+    let _ = write_to_file_with(
+        &DedupFile {
+            id: 1,
+            notes: vec!["a".to_string(), "a".to_string()],
+        },
+        "/tmp/nonexistent-byref-dedup.mms",
+        false,
+        p,
+    );
+}
+
+#[test]
+#[should_panic(expected = "byref-vec reserve requires a root-level non-dedup field")]
+fn test_byref_reserve_nested_rejected_at_write() {
+    #[derive(MmapStruct, Debug)]
+    struct Inner {
+        #[mmap(byref)]
+        tags: Vec<String>,
+    }
+    #[derive(MmapStruct, Debug)]
+    struct Outer {
+        id: u32,
+        inner: Inner,
+    }
+    let mut p = ReservePlan::new();
+    p.set(
+        "tags",
+        Reserve {
+            slots: 2,
+            bytes: 64,
+        },
+    );
+    let _ = write_to_file_with(
+        &Outer {
+            id: 1,
+            inner: Inner {
+                tags: vec!["t".to_string()],
+            },
+        },
+        "/tmp/nonexistent-byref-nested.mms",
+        false,
+        p,
+    );
+}

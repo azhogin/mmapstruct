@@ -64,9 +64,23 @@ impl<'data, T: MmapWrite> PostponedWriter<'data> for ByRefWriter<'data, T> {
     }
 }
 
+/// Reserved zero-byte run queued after a field's postponed data — the
+/// patchable gap for future byref appends (no ByRefRange to backpatch).
+struct GapWriter {
+    bytes: usize,
+}
+
+impl<'data> PostponedWriter<'data> for GapWriter {
+    fn write(&self, ctx: &mut WriteContext<'data>) {
+        ctx.write_padding(self.bytes);
+    }
+}
+
 struct PostponedData<'data> {
     base: usize,
-    placeholder_offset: usize,
+    /// `Some` for byref values (a ByRefRange placeholder to backpatch),
+    /// `None` for raw gap runs.
+    placeholder_offset: Option<usize>,
     dedup: bool,
     writer: Box<dyn PostponedWriter<'data> + 'data>,
 }
@@ -215,9 +229,23 @@ impl<'data> WriteContext<'data> {
         self.write_padding(8);
         self.postponed.push(PostponedData {
             base,
-            placeholder_offset,
+            placeholder_offset: Some(placeholder_offset),
             dedup,
             writer: Box::new(ByRefWriter { value }),
+        });
+    }
+
+    /// Queue `bytes` of zero padding after the field's postponed data — the
+    /// gap a patch session appends byref values into. The run carries no
+    /// ByRefRange placeholder and is written in registration order (non-dedup).
+    pub fn queue_postponed_gap(&mut self, bytes: u64) {
+        self.postponed.push(PostponedData {
+            base: 0,
+            placeholder_offset: None,
+            dedup: false,
+            writer: Box::new(GapWriter {
+                bytes: bytes as usize,
+            }),
         });
     }
 
@@ -254,11 +282,13 @@ impl<'data> WriteContext<'data> {
                 let abs_begin = self.buf.len() as u32;
                 pd.writer.write(self);
                 let abs_end = self.buf.len() as u32;
-                let br = ByRefRange {
-                    begin: abs_begin - pd.base as u32,
-                    end: abs_end - pd.base as u32,
-                };
-                self.write_pod_at(&br, pd.placeholder_offset);
+                if let Some(placeholder_offset) = pd.placeholder_offset {
+                    let br = ByRefRange {
+                        begin: abs_begin - pd.base as u32,
+                        end: abs_end - pd.base as u32,
+                    };
+                    self.write_pod_at(&br, placeholder_offset);
+                }
             }
         }
 
@@ -302,7 +332,9 @@ impl<'data> WriteContext<'data> {
                     begin: abs_begin - pd.base as u32,
                     end: abs_end - pd.base as u32,
                 };
-                self.write_pod_at(&br, pd.placeholder_offset);
+                if let Some(placeholder_offset) = pd.placeholder_offset {
+                    self.write_pod_at(&br, placeholder_offset);
+                }
             }
         }
     }

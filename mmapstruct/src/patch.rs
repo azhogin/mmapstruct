@@ -29,7 +29,7 @@
 
 use crate::file_reader::parse_header;
 use crate::list::{LIST_BLOCK_SIZE, LIST_NODE_HEADER};
-use crate::traits::{LayoutHash, MmapLayout, MmapPod, MmapRead, MmapWrite};
+use crate::traits::{ByRefRange, LayoutHash, MmapLayout, MmapPod, MmapRead, MmapWrite};
 use crate::write_context::WriteContext;
 use memmap2::MmapMut;
 use std::fs::File;
@@ -644,6 +644,150 @@ impl PatchSession {
         self.patch_u64_at(
             block_off + 8,
             (((gap_bytes - consumed) as u64) << 32) | ((spare_slots - 1) as u64),
+        )?;
+        Ok(())
+    }
+
+    /// Append one element to a reserved `Vec<T>` (`#[mmap(byref)]`) block
+    /// anywhere in the file.
+    ///
+    /// Requires the block to be written with a byref reserve
+    /// ([`crate::byref_array::write_byref_array_r`] — root-level non-dedup
+    /// field + a `ReservePlan` entry). Reserved block layout:
+    /// `[count | FLAG][total_size][count ranges][spare slots][reserve word]`
+    /// where `total_size` holds the original slot-table size
+    /// `(count + spare) * 8` (the fixed anchor for the reserve word
+    /// position) and the ranges are payload-relative (base 0).
+    ///
+    /// The data gap sits in the postponed section right after the field's
+    /// last value; the new value lands there (alignment-aware, padding
+    /// charged to the reserve), a new `ByRefRange` is linked from the first
+    /// spare slot, and the count is the visibility switch.
+    ///
+    /// Crash-consistency: value bytes and the new range are written before
+    /// the count switch — readers with the old count never see them, readers
+    /// with the new count see fully written data, so there is no torn window
+    /// beyond the count atomicity itself. The reserve word is patched last
+    /// (bookkeeping for the next append only); a crash before it self-heals
+    /// because the gap position is derived from the stale word.
+    pub fn append_byref_vec<R: MmapLayout, T: MmapWrite>(
+        &mut self,
+        block_off: usize,
+        value: &T,
+    ) -> io::Result<()> {
+        let payload_len = self.payload_range.len();
+        if !block_off.is_multiple_of(8) || block_off + 16 > payload_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "byref-vec block offset {block_off} is misaligned or too close to the payload end ({payload_len})"
+                ),
+            ));
+        }
+        let data = self.payload();
+        let raw = u64::from_le_bytes(data[block_off..block_off + 8].try_into().unwrap());
+        if raw & crate::traits::BLOCK_FLAG_RESERVED == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "byref-vec block has no reserve; rewrite the file with a ReservePlan (root-level non-dedup byref field)",
+            ));
+        }
+        let count = (raw & !crate::traits::BLOCK_FLAG_RESERVED) as usize;
+        let total_size =
+            u64::from_le_bytes(data[block_off + 8..block_off + 16].try_into().unwrap()) as usize;
+        if !total_size.is_multiple_of(8) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("byref-vec total_size {total_size} is not a multiple of 8"),
+            ));
+        }
+        let orig_total = total_size / 8; // original count + spare slots
+        self.layout_check::<R>(block_off)?;
+        if count == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "empty byref vec has no data anchor to locate the reserve gap; write at least one element",
+            ));
+        }
+        // Reserve word sits at the fixed original slot-table end.
+        let resv_pos = block_off + 16 + orig_total * 8;
+        if resv_pos + 8 > payload_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "byref-vec reserve word is outside the payload; inconsistent block",
+            ));
+        }
+        let resv = u64::from_le_bytes(data[resv_pos..resv_pos + 8].try_into().unwrap());
+        let spare = (resv & 0xFFFF_FFFF) as usize;
+        let gap_bytes = (resv >> 32) as usize;
+        if orig_total != count + spare {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "byref-vec reserve accounting is inconsistent: original slots {orig_total}, count {count}, spare {spare}"
+                ),
+            ));
+        }
+        if spare == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "byref-vec reserve exhausted: no spare table slots left; rewrite the file with a larger reserve",
+            ));
+        }
+        // Data gap anchor: the end of the field's last value (ranges are
+        // payload-relative; guaranteed by the write-side base == 0 rule).
+        let last_pos = block_off + 16 + (count - 1) * 8;
+        let last_br: ByRefRange =
+            unsafe { crate::traits::mmap_read_pod(&data[last_pos..last_pos + 8]) };
+        let last_end = last_br.end as usize;
+        if last_end + gap_bytes > payload_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "byref-vec reserve gap extends beyond the payload; inconsistent block",
+            ));
+        }
+        // Serialize the element and land it at its natural alignment inside
+        // the gap (padding charged to the reserve, like append_indexed).
+        let mut ctx = WriteContext::new();
+        value.write(&mut ctx);
+        let vbytes = ctx.finish();
+        let vlen = vbytes.len();
+        let align = std::mem::align_of::<T>().max(1);
+        let gap_start = if align > 1 {
+            (last_end + align - 1) & !(align - 1)
+        } else {
+            last_end
+        };
+        let consumed = (gap_start - last_end) + vlen;
+        if consumed > gap_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "byref-vec data reserve exhausted: gap holds {gap_bytes} bytes, need {consumed}; rewrite the file with a larger reserve"
+                ),
+            ));
+        }
+        if gap_start + vlen > u32::MAX as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "byref range offsets exceed the u32 limit of ByRefRange",
+            ));
+        }
+        {
+            let p = self.payload_mut();
+            p[gap_start..gap_start + vlen].copy_from_slice(&vbytes);
+            let slot_pos = block_off + 16 + count * 8;
+            let new_br = ByRefRange {
+                begin: gap_start as u32,
+                end: (gap_start + vlen) as u32,
+            };
+            p[slot_pos..slot_pos + 8].copy_from_slice(bytemuck::bytes_of(&new_br));
+        }
+        // Count is the visibility switch; reserve bookkeeping follows.
+        self.patch_count_u64(block_off, raw, (count + 1) as u64)?;
+        self.patch_u64_at(
+            resv_pos,
+            (((gap_bytes - consumed) as u64) << 32) | ((spare - 1) as u64),
         )?;
         Ok(())
     }

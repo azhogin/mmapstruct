@@ -125,7 +125,15 @@ where
                         quote! { ::mmapstruct::traits::MmapWrite::write(#field, ctx); }
                     }
                     FieldCategory::DynamicVecByRef { dedup, .. } => {
-                        quote! { ::mmapstruct::byref_array::write_byref_array(#field, ctx, start, #dedup); }
+                        quote! {
+                            ::mmapstruct::byref_array::write_byref_array_r(
+                                #field,
+                                ctx,
+                                start,
+                                #dedup,
+                                ctx.field_reserve(stringify!(#fident)),
+                            );
+                        }
                     }
                     FieldCategory::DynamicVec { elem_fixed, .. } => {
                         if *elem_fixed {
