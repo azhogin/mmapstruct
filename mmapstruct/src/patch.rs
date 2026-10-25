@@ -29,7 +29,9 @@
 
 use crate::file_reader::parse_header;
 use crate::list::{LIST_BLOCK_SIZE, LIST_NODE_HEADER};
-use crate::traits::{ByRefRange, LayoutHash, MmapLayout, MmapPod, MmapRead, MmapWrite};
+use crate::traits::{
+    ByRefRange, LayoutHash, MmapPod, MmapRead, MmapRootLayout, MmapWrite, RootLayout,
+};
 use crate::write_context::WriteContext;
 use memmap2::MmapMut;
 use std::fs::File;
@@ -315,8 +317,9 @@ impl PatchSession {
     ///
     /// Returns `(sentinel_pos, sentinel_value)` — the offset-table sentinel
     /// (total dynamic-region size) that must be patched alongside the count.
-    fn tail_block_check<R: MmapLayout>(
+    fn tail_block_check(
         &self,
+        layout: &RootLayout,
         block_start: usize,
         block_end: usize,
     ) -> io::Result<(usize, u64)> {
@@ -325,11 +328,11 @@ impl PatchSession {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "container is not at the payload tail (block ends at {block_end}, payload ends at {payload_len}); tail-append requires the container to be the last dynamic value of the root struct, with no byref data after it"
+                    "container is not at the payload tail (block ends at {block_end}, payload ends at {payload_len}); tail-append requires the container to be the last dynamic value of the root, with no byref data after it"
                 ),
             ));
         }
-        self.layout_check::<R>(block_start)
+        self.layout_check(layout, block_start)
     }
 
     /// Validate that a container block belongs to the root layout `R`:
@@ -338,10 +341,21 @@ impl PatchSession {
     ///
     /// Returns `(sentinel_pos, sentinel_value)` — the offset-table sentinel
     /// (total dynamic-region size) that must be patched when a span grows.
-    fn layout_check<R: MmapLayout>(&self, block_start: usize) -> io::Result<(usize, u64)> {
+    /// Resolve the root layout for this payload (`R::resolve_root_layout`
+    /// with a contextual error).
+    fn root_layout<R: MmapRootLayout>(&self) -> io::Result<RootLayout> {
+        R::resolve_root_layout(self.payload()).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unknown root discriminant (or payload too small for one); the file does not match the root type",
+            )
+        })
+    }
+
+    fn layout_check(&self, layout: &RootLayout, block_start: usize) -> io::Result<(usize, u64)> {
         let payload_len = self.payload_range.len();
-        let hs = R::HEADER_SIZE;
-        if R::INLINE_DYN_COUNT == 0 || hs < 8 {
+        let hs = layout.disc_prefix + layout.header_size; // dyn values start
+        if layout.inline_dyn_count == 0 || hs < 8 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "root layout has no dynamic region (INLINE_DYN_COUNT == 0 or HEADER_SIZE < 8)",
@@ -396,11 +410,12 @@ impl PatchSession {
     ///
     /// Note: the typed reader view must be dropped before calling (it borrows
     /// the session immutably).
-    pub fn append_pod_vec<R: MmapLayout, T: MmapPod>(
+    pub fn append_pod_vec<R: MmapRootLayout, T: MmapPod>(
         &mut self,
         elems_off: usize,
         add: &[T],
     ) -> io::Result<()> {
+        let layout = self.root_layout::<R>()?;
         let elem_size = std::mem::size_of::<T>();
         if elem_size == 0 {
             return Err(io::Error::new(
@@ -428,7 +443,7 @@ impl PatchSession {
                     .unwrap(),
             );
             if probe & crate::traits::BLOCK_FLAG_RESERVED != 0
-                && self.span_end_for_block::<R>(elems_off - 16).is_ok()
+                && self.span_end_for_block(&layout, elems_off - 16).is_ok()
             {
                 (elems_off - 16, probe)
             } else {
@@ -464,7 +479,7 @@ impl PatchSession {
             // Reserved block: append in place into the data gap. The gap sits
             // right after the current elements; the field's span (and thus
             // the offset-table sentinel) does not change.
-            self.layout_check::<R>(block_start)?;
+            self.layout_check(&layout, block_start)?;
             let resv = u64::from_le_bytes(
                 self.payload()[block_start + 8..block_start + 16]
                     .try_into()
@@ -498,7 +513,7 @@ impl PatchSession {
                 io::Error::new(io::ErrorKind::InvalidData, "element region size overflow")
             })?)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "block end overflow"))?;
-        let (sentinel_pos, sentinel) = self.tail_block_check::<R>(block_start, block_end)?;
+        let (sentinel_pos, sentinel) = self.tail_block_check(&layout, block_start, block_end)?;
         self.grow(add_bytes)?;
         {
             let p = self.payload_mut();
@@ -515,16 +530,16 @@ impl PatchSession {
     ///
     /// For the last dynamic field this is the payload end; otherwise the next
     /// field's block start.
-    fn span_end_for_block<R: MmapLayout>(&self, block_off: usize) -> io::Result<usize> {
-        let hs = R::HEADER_SIZE;
+    fn span_end_for_block(&self, layout: &RootLayout, block_off: usize) -> io::Result<usize> {
+        let hs = layout.disc_prefix + layout.header_size; // dyn values start
         if block_off < hs {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "block offset is before the dynamic region",
             ));
         }
-        let fs = R::FIXED_SECTION_SIZE;
-        let n = R::INLINE_DYN_COUNT;
+        let fs = layout.disc_prefix + layout.fixed_section_size; // OT start
+        let n = layout.inline_dyn_count;
         let data = self.payload();
         let target = (block_off - hs) as u64;
         for i in 0..n {
@@ -562,11 +577,12 @@ impl PatchSession {
     /// new element reads as zero-length (memory-safe), and a crash there
     /// self-heals on the next append (the gap position is derived from the
     /// stale reserve word).
-    pub fn append_indexed<R: MmapLayout, T: MmapWrite>(
+    pub fn append_indexed<R: MmapRootLayout, T: MmapWrite>(
         &mut self,
         block_off: usize,
         value: &T,
     ) -> io::Result<()> {
+        let layout = self.root_layout::<R>()?;
         let payload_len = self.payload_range.len();
         if !block_off.is_multiple_of(8) || block_off + 16 > payload_len {
             return Err(io::Error::new(
@@ -586,14 +602,14 @@ impl PatchSession {
         let resv = u64::from_le_bytes(data[block_off + 8..block_off + 16].try_into().unwrap());
         let spare_slots = (resv & 0xFFFF_FFFF) as usize;
         let gap_bytes = (resv >> 32) as usize;
-        self.layout_check::<R>(block_off)?;
+        self.layout_check(&layout, block_off)?;
         if spare_slots == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "indexed reserve exhausted: no spare table slots left; rewrite the file with a larger reserve",
             ));
         }
-        let span_end = self.span_end_for_block::<R>(block_off)?;
+        let span_end = self.span_end_for_block(&layout, block_off)?;
         let mut ctx = WriteContext::new();
         value.write(&mut ctx);
         let vbytes = ctx.finish();
@@ -670,11 +686,12 @@ impl PatchSession {
     /// beyond the count atomicity itself. The reserve word is patched last
     /// (bookkeeping for the next append only); a crash before it self-heals
     /// because the gap position is derived from the stale word.
-    pub fn append_byref_vec<R: MmapLayout, T: MmapWrite>(
+    pub fn append_byref_vec<R: MmapRootLayout, T: MmapWrite>(
         &mut self,
         block_off: usize,
         value: &T,
     ) -> io::Result<()> {
+        let layout = self.root_layout::<R>()?;
         let payload_len = self.payload_range.len();
         if !block_off.is_multiple_of(8) || block_off + 16 > payload_len {
             return Err(io::Error::new(
@@ -702,7 +719,7 @@ impl PatchSession {
             ));
         }
         let orig_total = total_size / 8; // original count + spare slots
-        self.layout_check::<R>(block_off)?;
+        self.layout_check(&layout, block_off)?;
         if count == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -796,7 +813,7 @@ impl PatchSession {
     /// in place (copy-on-write into the field's reserved gap).
     ///
     /// `field` is the Rust field name; the slot anchor comes from
-    /// [`MmapLayout::BYREF_SLOTS`] (emitted by the derive). The field must
+    /// [`MmapRootLayout`] resolve (emitted by the derive). The field must
     /// have been written with a standalone byref reserve
     /// ([`crate::write_context::write_byref_r`] /
     /// [`crate::write_context::write_byref_option_r`]): a
@@ -814,12 +831,14 @@ impl PatchSession {
     /// Restrictions: the field must currently hold a value (`Option` sentinel
     /// `{0, 0}` — `None` — has no data anchor and cannot be set), and the
     /// new value plus marker overhead must fit the remaining gap.
-    pub fn set_byref<R: MmapLayout, T: MmapWrite>(
+    pub fn set_byref<R: MmapRootLayout, T: MmapWrite>(
         &mut self,
         field: &str,
         value: &T,
     ) -> io::Result<()> {
-        let slot_off = R::BYREF_SLOTS
+        let layout = self.root_layout::<R>()?;
+        let slot_off = layout
+            .byref_slots
             .iter()
             .find(|(name, _)| *name == field)
             .map(|(_, off)| *off)
@@ -827,7 +846,7 @@ impl PatchSession {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
-                        "field {field:?} is not a root-level standalone byref field of the root layout"
+                        "field {field:?} is not a root-level standalone byref field of the root layout (enum-variant byref fields are never patchable)"
                     ),
                 )
             })?;
@@ -952,11 +971,12 @@ impl PatchSession {
     /// so every torn state reads as the old or the new list; a crash may
     /// leave a phantom element that the next append self-heals (it re-patches
     /// from the stale tail).
-    pub fn append_list<R: MmapLayout, T: MmapWrite>(
+    pub fn append_list<R: MmapRootLayout, T: MmapWrite>(
         &mut self,
         block_off: usize,
         value: &T,
     ) -> io::Result<()> {
+        let layout = self.root_layout::<R>()?;
         let payload_len = self.payload_range.len();
         if !block_off.is_multiple_of(8) || block_off + LIST_BLOCK_SIZE > payload_len {
             return Err(io::Error::new(
@@ -997,7 +1017,7 @@ impl PatchSession {
                 u32::from_le_bytes(data[tail_pos + 8..tail_pos + 12].try_into().unwrap()) as usize;
             tail_pos + LIST_NODE_HEADER + tail_len
         };
-        let (sentinel_pos, sentinel) = self.layout_check::<R>(block_off)?;
+        let (sentinel_pos, sentinel) = self.layout_check(&layout, block_off)?;
         let tail_case = chain_end == payload_len;
         // Serialize the element as a self-contained node payload.
         let mut ctx = WriteContext::new();

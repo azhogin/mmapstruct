@@ -161,28 +161,45 @@ pub trait LayoutHash {
     const HASH: u64;
 }
 
-/// Compile-time layout facts of a struct's mmap representation, emitted by
-/// `#[derive(MmapStruct)]` for structs (not enums: enum variants have
-/// per-variant layouts).
+/// Runtime-resolved layout facts of a root instance (a struct or the active
+/// variant of an enum root).
 ///
 /// Lets patching tools locate the instance's inline-dyn offset table:
-/// the table starts at `FIXED_SECTION_SIZE` and holds
-/// `INLINE_DYN_COUNT + 1` u64 entries (the last one is the sentinel with
+/// the table starts at `fixed_section_size` and holds
+/// `inline_dyn_count + 1` u64 entries (the last one is the sentinel with
 /// the total dynamic-region size), so the payload layout is
-/// `[fixed: FIXED_SECTION_SIZE][offset table][dynamic values]` and the
-/// sentinel lives at `HEADER_SIZE - 8`.
-pub trait MmapLayout {
+/// `[fixed][offset table][dynamic values]` and the sentinel lives at
+/// `header_size - 8`.
+pub struct RootLayout {
+    /// Bytes before the instance's own layout: 0 for structs, 8 for mixed
+    /// enum variants (`u32` discriminant + align to 8 — the writer emits
+    /// exactly this, and the per-variant `__MMAP_HS_*` consts are relative
+    /// to the post-discriminant data start).
+    pub disc_prefix: usize,
     /// Size of the fixed section of the instance.
-    const FIXED_SECTION_SIZE: usize;
-    /// Fixed section + offset table (including the sentinel entry).
-    const HEADER_SIZE: usize;
+    pub fixed_section_size: usize,
+    /// Fixed section + offset table (including the sentinel entry),
+    /// relative to the post-discriminant data start.
+    pub header_size: usize,
     /// Number of inline-dyn fields.
-    const INLINE_DYN_COUNT: usize;
+    pub inline_dyn_count: usize,
     /// Root-level standalone byref fields: `(field name, fixed-section
     /// offset of the ByRefRange placeholder)` — the anchors for
-    /// [`crate::PatchSession::set_byref`]. Empty for structs without
-    /// standalone byref fields.
-    const BYREF_SLOTS: &'static [(&'static str, usize)] = &[];
+    /// [`crate::PatchSession::set_byref`]. Empty for enum variants (byref
+    /// patching requires payload-relative ranges; variant data starts at
+    /// offset 8, so enum-variant byref fields are not patchable).
+    pub byref_slots: &'static [(&'static str, usize)],
+}
+
+/// Resolve the root layout of a file's payload.
+///
+/// Emitted by `#[derive(MmapStruct)]`. Structs resolve statically (the
+/// payload is ignored); enums read the discriminant — `u32` LE at offset 0
+/// for mixed enums, matching the writer — and pick the active variant's
+/// layout. `None` means an unknown discriminant or a payload too small to
+/// hold one.
+pub trait MmapRootLayout {
+    fn resolve_root_layout(payload: &[u8]) -> Option<RootLayout>;
 }
 
 // -- Primitives --

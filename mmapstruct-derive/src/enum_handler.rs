@@ -183,6 +183,8 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
 
     let mut vars = Vec::new();
     let mut variant_consts: Vec<proc_macro2::TokenStream> = Vec::new();
+    // Per-variant arms for the MmapRootLayout resolve: disc -> variant layout.
+    let mut root_layout_arms: Vec<proc_macro2::TokenStream> = Vec::new();
 
     for (disc, variant) in de.variants.iter().enumerate() {
         let vident = &variant.ident;
@@ -291,6 +293,19 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
             inline_dyn_indices.len(),
         ));
         let dyn_cnt = inline_dyn_indices.len();
+        // The writer emits the discriminant as a u32 LE at the payload start
+        // (`ctx.write_u32_le(#disc as u32)`), so the patcher resolves the
+        // variant from the same encoding.
+        let disc_u32 = disc as u32;
+        root_layout_arms.push(quote! {
+            #disc_u32 => ::core::option::Option::Some(::mmapstruct::traits::RootLayout {
+                disc_prefix: 8usize,
+                fixed_section_size: #fs_name,
+                header_size: #hs_name,
+                inline_dyn_count: #dyn_cnt,
+                byref_slots: &[],
+            }),
+        });
 
         let rfields: Vec<_> = all_fields
             .iter()
@@ -741,6 +756,23 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         }
     };
 
+    let root_layout_impl = quote! {
+        impl ::mmapstruct::traits::MmapRootLayout for #name {
+            fn resolve_root_layout(
+                payload: &[u8],
+            ) -> ::core::option::Option<::mmapstruct::traits::RootLayout> {
+                if payload.len() < 4 {
+                    return ::core::option::Option::None;
+                }
+                let disc = u32::from_le_bytes(payload[0..4].try_into().ok()?);
+                match disc {
+                    #(#root_layout_arms)*
+                    _ => ::core::option::Option::None,
+                }
+            }
+        }
+    };
+
     let output = quote! {
         #(#variant_consts)*
         pub enum #reader_name<'a> {
@@ -753,6 +785,7 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
         #layout_hash_impl
         #reader_ord_impl
         #schema_impl
+        #root_layout_impl
     };
 
     output.into()

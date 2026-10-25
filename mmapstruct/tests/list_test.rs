@@ -341,3 +341,145 @@ fn test_list_schema_emission() {
         }
     )));
 }
+
+// ---------------------------------------------------------------------------
+// enum roots: per-variant layout resolution (MmapRootLayout) + patch appends
+// ---------------------------------------------------------------------------
+
+#[derive(MmapStruct, Debug)]
+enum LayerLog {
+    Decode {
+        model: String,
+        entries: List<String>,
+    },
+    Prefill {
+        model: String,
+        entries: List<String>,
+        #[pod]
+        batch: Vec<Note>,
+    },
+}
+
+#[test]
+fn test_enum_root_append_list_tail() {
+    // Decode file: `entries` is the variant's last inline-dyn value (tail).
+    let tmp = NamedTempFile::new().unwrap();
+    let log = LayerLog::Decode {
+        model: "m1".to_string(),
+        entries: List::from_vec(vec!["e1".into(), "e2".into()]),
+    };
+    write_to_file(&log, tmp.path(), false).unwrap();
+
+    let mut session = PatchSession::open_typed::<LayerLog>(tmp.path()).unwrap();
+    let reader = session.read::<LayerLog>().unwrap();
+    let block_off = match &reader {
+        LayerLogReader::Decode { model, entries } => {
+            assert_eq!(model, &"m1");
+            assert_eq!(entries.len(), 2);
+            entries.block_range().start
+        }
+        _ => panic!("expected Decode"),
+    };
+
+    session
+        .append_list::<LayerLog, String>(block_off, &"e3".to_string())
+        .unwrap();
+    session.flush().unwrap();
+
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    let reader = r.read::<LayerLog>();
+    match reader {
+        LayerLogReader::Decode { model, entries } => {
+            assert_eq!(model, "m1");
+            assert_eq!(entries.len(), 3);
+            assert_eq!(entries.get(2).unwrap(), "e3");
+        }
+        _ => panic!("expected Decode"),
+    }
+}
+
+#[test]
+fn test_enum_root_append_list_midfile_and_pod_vec_tail() {
+    // Prefill file: `entries` sits mid-file (batch follows it) — the new node
+    // jumps to the payload end; `batch` is the tail and grows in place
+    // (unreserved pod vec, grow path).
+    let tmp = NamedTempFile::new().unwrap();
+    let log = LayerLog::Prefill {
+        model: "m2".to_string(),
+        entries: List::from_vec(vec!["p1".into()]),
+        batch: vec![Note { id: 1, score: 1.0 }],
+    };
+    write_to_file(&log, tmp.path(), false).unwrap();
+
+    let mut session = PatchSession::open_typed::<LayerLog>(tmp.path()).unwrap();
+    let reader = session.read::<LayerLog>().unwrap();
+    let (entries_off, batch_off) = match &reader {
+        LayerLogReader::Prefill { entries, batch, .. } => (
+            entries.block_range().start,
+            session.offset_of(&batch[0]).unwrap(),
+        ),
+        _ => panic!("expected Prefill"),
+    };
+
+    // The tail container must be appended BEFORE the mid-file list: the
+    // mid-file list append lands its node at the payload end and thereby
+    // ends the previous tail's grow-path (reserved in-place appends are
+    // unaffected).
+    session
+        .append_pod_vec::<LayerLog, Note>(batch_off, &[Note { id: 2, score: 2.0 }])
+        .unwrap();
+    session
+        .append_list::<LayerLog, String>(entries_off, &"p2".to_string())
+        .unwrap();
+    session.flush().unwrap();
+
+    let r = BufReader::from_file(tmp.path()).unwrap();
+    let reader = r.read::<LayerLog>();
+    match reader {
+        LayerLogReader::Prefill {
+            model,
+            entries,
+            batch,
+        } => {
+            assert_eq!(model, "m2");
+            assert_eq!(entries.len(), 2);
+            assert_eq!(entries.get(1).unwrap(), "p2");
+            assert_eq!(batch.len(), 2);
+            assert_eq!(batch[1], Note { id: 2, score: 2.0 });
+        }
+        _ => panic!("expected Prefill"),
+    }
+}
+
+#[test]
+fn test_enum_root_foreign_type_rejected() {
+    // A one-variant enum cannot resolve a Prefill disc (1) -> clean error.
+    #[derive(MmapStruct, Debug)]
+    enum SoloLog {
+        Only {
+            model: String,
+            entries: List<String>,
+        },
+    }
+    let tmp = NamedTempFile::new().unwrap();
+    let log = LayerLog::Prefill {
+        model: "m".to_string(),
+        entries: List::new(),
+        batch: vec![],
+    };
+    write_to_file(&log, tmp.path(), false).unwrap();
+
+    let mut session = PatchSession::open_typed::<LayerLog>(tmp.path()).unwrap();
+    let reader = session.read::<LayerLog>().unwrap();
+    let block_off = match &reader {
+        LayerLogReader::Prefill { entries, .. } => entries.block_range().start,
+        _ => unreachable!(),
+    };
+    let err = session
+        .append_list::<SoloLog, String>(block_off, &"x".to_string())
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("unknown root discriminant"),
+        "unexpected error: {err}"
+    );
+}

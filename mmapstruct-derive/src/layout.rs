@@ -159,8 +159,9 @@ pub(crate) fn generate_fixed_layout_consts(
     }
 }
 
-/// Generate the `impl MmapLayout for X` referencing the `__MMAP_FS/HS`
-/// consts emitted next to it (same module scope).
+/// Generate the `impl MmapRootLayout for X` referencing the `__MMAP_FS/HS`
+/// consts emitted next to it (same module scope). Structs resolve
+/// statically — the payload is ignored.
 pub(crate) fn generate_layout_impl(
     struct_name: &proc_macro2::Ident,
     fields: &[FieldInfo],
@@ -181,11 +182,18 @@ pub(crate) fn generate_layout_impl(
         })
         .collect();
     quote! {
-        impl ::mmapstruct::traits::MmapLayout for #struct_name {
-            const FIXED_SECTION_SIZE: usize = #fs_name;
-            const HEADER_SIZE: usize = #hs_name;
-            const INLINE_DYN_COUNT: usize = #inline_dyn_count;
-            const BYREF_SLOTS: &'static [(&'static str, usize)] = &[#(#byref_slots),*];
+        impl ::mmapstruct::traits::MmapRootLayout for #struct_name {
+            fn resolve_root_layout(
+                _payload: &[u8],
+            ) -> ::core::option::Option<::mmapstruct::traits::RootLayout> {
+                Some(::mmapstruct::traits::RootLayout {
+                    disc_prefix: 0usize,
+                    fixed_section_size: #fs_name,
+                    header_size: #hs_name,
+                    inline_dyn_count: #inline_dyn_count,
+                    byref_slots: &[#(#byref_slots),*],
+                })
+            }
         }
     }
 }
