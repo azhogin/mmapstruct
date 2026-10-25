@@ -102,6 +102,7 @@ fn walk(
                 ArrayLayoutDefReader::FixedPod { .. } => "fixedpod",
                 ArrayLayoutDefReader::Indexed => "indexed",
                 ArrayLayoutDefReader::Fixed { .. } => "fixed",
+                ArrayLayoutDefReader::List => "list",
             };
             let elem_ty = type_name_of(ctx, **elem_type);
             out.push_str(&format!("{path}: [{elem_ty}] ({layout_tag}) len={len}\n"));

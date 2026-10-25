@@ -178,6 +178,22 @@ fn field_value_type(
             all.push(arr_static);
             (vt_expr, all)
         }
+        FieldCategory::DynamicList { inner } => {
+            let arr_name = format_ident!("__mmap_LST_{}_{}", struct_name, field_ident);
+            let (elem_ref, extra) = inner_dyn_value_type(struct_name, field_ident, inner);
+            let arr_static = quote! {
+                #[allow(non_upper_case_globals)]
+                static #arr_name: ::mmapstruct::schema::ArraySchema = ::mmapstruct::schema::ArraySchema {
+                    count_offset: 0u64,
+                    elem_type: #elem_ref,
+                    layout: ::mmapstruct::schema::ArrayLayout::List,
+                };
+            };
+            let vt_expr = quote! { ::mmapstruct::schema::DynValueType::Array(&#arr_name) };
+            let mut all = extra;
+            all.push(arr_static);
+            (vt_expr, all)
+        }
         FieldCategory::DynamicOption { inner } => {
             let (inner_ref, extra) = inner_dyn_value_type(struct_name, field_ident, inner);
             let vt_expr = quote! { ::mmapstruct::schema::DynValueType::Option(#inner_ref) };

@@ -65,6 +65,9 @@ pub(crate) fn reader_type(fi: &FieldInfo) -> proc_macro2::TokenStream {
         FieldCategory::DynamicOption { inner } => {
             quote! { Option<<#inner as ::mmapstruct::traits::MmapRead>::Reader<'a>> }
         }
+        FieldCategory::DynamicList { inner } => {
+            quote! { ::mmapstruct::list::ListReader<'a, #inner> }
+        }
         FieldCategory::DynamicCustom => {
             let ty = &fi.ty;
             quote! { <#ty as ::mmapstruct::traits::MmapRead>::Reader<'a> }

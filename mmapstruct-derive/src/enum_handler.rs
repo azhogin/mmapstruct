@@ -412,6 +412,14 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                             rinit.push(quote! { #id: #expr });
                         }
                     }
+                    FieldCategory::DynamicList { inner } => {
+                        let expr = quote! { { let (s, e) = #rc; ::mmapstruct::list::ListReader::<#inner>::new(data, ::mmapstruct::traits::FileRange::new(s, e)) } };
+                        if is_tuple {
+                            rinit.push(expr);
+                        } else {
+                            rinit.push(quote! { #id: #expr });
+                        }
+                    }
                     FieldCategory::DynamicVec {
                         inner,
                         elem_is_pod,
@@ -571,6 +579,9 @@ pub(crate) fn handle_enum(input: &DeriveInput, de: &syn::DataEnum) -> TokenStrea
                         } else {
                             base
                         }
+                    }
+                    FieldCategory::DynamicList { inner } => {
+                        quote! { ::mmapstruct::traits::combine_hashes(&[::mmapstruct::traits::ENC_LIST, <#inner as ::mmapstruct::traits::LayoutHash>::HASH]) }
                     }
                     _ => base,
                 }

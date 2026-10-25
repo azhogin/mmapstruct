@@ -28,7 +28,9 @@
 //!   reserved slot slack (planned as the reserve stage).
 
 use crate::file_reader::parse_header;
-use crate::traits::{LayoutHash, MmapLayout, MmapPod, MmapRead};
+use crate::list::{LIST_BLOCK_SIZE, LIST_NODE_HEADER};
+use crate::traits::{LayoutHash, MmapLayout, MmapPod, MmapRead, MmapWrite};
+use crate::write_context::WriteContext;
 use memmap2::MmapMut;
 use std::fs::File;
 use std::io;
@@ -422,6 +424,105 @@ impl PatchSession {
         }
         self.patch_u64_at(sentinel_pos, sentinel + add_bytes as u64)?;
         self.patch_count_u64(block_start, count as u64, (count + add.len()) as u64)?;
+        Ok(())
+    }
+
+    /// Append one element to a `List<T>` block that occupies the tail of the
+    /// payload.
+    ///
+    /// `block_off` is the payload-relative offset of the list block
+    /// (`[head][tail][count]`): `session.offset_of(&reader.list)` works
+    /// directly — the block is the first bytes of the field's slot — or use
+    /// `ListReader::block_range().start`.
+    ///
+    /// The block itself must be the last bytes of the payload (its nodes
+    /// trail the block; the tail check enforces that the whole chain ends at
+    /// payload end). Other dynamic fields may precede it freely.
+    ///
+    /// Crash-consistency: the new node is written first (orphaned until
+    /// linked), then the chain link (`old_tail.next`, or `head` for an empty
+    /// list — a single 8-byte aligned store) becomes the visibility switch,
+    /// then `tail` and the count are patched. Readers iterate count-bounded,
+    /// so every torn state reads as the old or the new list; a crash may
+    /// leave a phantom element that the next append self-heals (it re-patches
+    /// from the stale tail).
+    pub fn append_list<R: MmapLayout, T: MmapWrite>(
+        &mut self,
+        block_off: usize,
+        value: &T,
+    ) -> io::Result<()> {
+        let payload_len = self.payload_range.len();
+        if !block_off.is_multiple_of(8) || block_off + LIST_BLOCK_SIZE > payload_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "list block offset {block_off} is misaligned or its {LIST_BLOCK_SIZE}-byte block exceeds the payload ({payload_len})"
+                ),
+            ));
+        }
+        let data = self.payload();
+        let head = u64::from_le_bytes(data[block_off..block_off + 8].try_into().unwrap());
+        let tail = u64::from_le_bytes(data[block_off + 8..block_off + 16].try_into().unwrap());
+        let count = u64::from_le_bytes(data[block_off + 16..block_off + 24].try_into().unwrap());
+        if head == 0 && tail != 0 || head != 0 && tail == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "list head/tail pointers are inconsistent (one is zero, the other is not)",
+            ));
+        }
+        // Where does the whole field span end?
+        let chain_end = if head == 0 {
+            block_off + LIST_BLOCK_SIZE
+        } else {
+            let tail_pos = tail as usize;
+            if !tail_pos.is_multiple_of(8)
+                || tail_pos < block_off + LIST_BLOCK_SIZE
+                || tail_pos + LIST_NODE_HEADER > payload_len
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("list tail pointer {tail_pos} does not point at a plausible node"),
+                ));
+            }
+            let tail_len =
+                u32::from_le_bytes(data[tail_pos + 8..tail_pos + 12].try_into().unwrap()) as usize;
+            tail_pos + LIST_NODE_HEADER + tail_len
+        };
+        let (sentinel_pos, sentinel) = self.tail_block_check::<R>(block_off, chain_end)?;
+        // Serialize the element as a self-contained node payload.
+        let mut ctx = WriteContext::new();
+        value.write(&mut ctx);
+        let vbytes = ctx.finish();
+        let vlen = vbytes.len();
+        let vlen32 = u32::try_from(vlen).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("list node payload too large: {vlen} bytes (u32 limit)"),
+            )
+        })?;
+        let node_size = LIST_NODE_HEADER + vlen;
+        let node_base = (payload_len + 7) & !7;
+        let pad = node_base - payload_len;
+        self.grow(pad + node_size)?;
+        {
+            let p = self.payload_mut();
+            let node = p.len() - node_size; // node base (8-aligned); fresh bytes are zero
+            let len_pos = node + 8;
+            p[len_pos..len_pos + 4].copy_from_slice(&vlen32.to_le_bytes());
+            p[node + LIST_NODE_HEADER..].copy_from_slice(&vbytes);
+        }
+        if head == 0 {
+            // Empty list: the head patch is the visibility switch.
+            self.patch_u64_at(block_off, node_base as u64)?;
+            self.patch_u64_at(block_off + 8, node_base as u64)?;
+        } else {
+            // Non-empty: the old tail node's next-pointer is the switch.
+            let tail_pos = tail as usize;
+            self.patch_u64_at(tail_pos, node_base as u64)?;
+            self.patch_u64_at(block_off + 8, node_base as u64)?;
+        }
+        self.patch_u64_at(sentinel_pos, sentinel + (pad + node_size) as u64)?;
+        self.patch_count_u64(block_off + 16, count, count + 1)?;
         Ok(())
     }
 }

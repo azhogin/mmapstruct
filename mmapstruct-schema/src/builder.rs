@@ -87,6 +87,7 @@ impl Builder {
                     ArrayLayout::Fixed { stride } => {
                         schema::ArrayLayoutDef::Fixed { stride: *stride }
                     }
+                    ArrayLayout::List => schema::ArrayLayoutDef::List,
                 };
                 schema::TypeDef::Array {
                     elem_type: elem_idx,

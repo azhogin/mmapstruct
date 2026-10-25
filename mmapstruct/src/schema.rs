@@ -203,6 +203,10 @@ pub enum ArrayLayout {
         /// Byte stride of a single element.
         stride: u64,
     },
+    /// Append-only list (`List<T>`): `[head: u64, tail: u64, count: u64]`
+    /// block plus 8-byte-aligned linked nodes
+    /// (`[next: u64][len: u32][pad][payload]`) at absolute offsets.
+    List,
 }
 
 // ---------------------------------------------------------------------------
@@ -522,6 +526,11 @@ impl<'a> SchemaCtx<'a> {
                 let count_off = (dv.offset + array_schema.count_offset) as usize;
                 (unsafe { mmap_read_pod::<u64>(&self.data[count_off..count_off + 8]) }) as usize
             }
+            ArrayLayout::List => {
+                let count_off = dv.offset as usize;
+                (unsafe { mmap_read_pod::<u64>(&self.data[count_off + 16..count_off + 24]) })
+                    as usize
+            }
         }
     }
 
@@ -567,6 +576,23 @@ impl<'a> SchemaCtx<'a> {
             ArrayLayout::Fixed { stride } => {
                 let off = dv.offset + array_schema.count_offset + 16 + index as u64 * stride;
                 (off, off + stride)
+            }
+            ArrayLayout::List => {
+                // Walk the node chain from head (O(index)).
+                let head = unsafe { mmap_read_pod::<u64>(&self.data[dv.offset as usize..][..8]) };
+                let mut cur = head;
+                for _ in 0..index {
+                    if cur == 0 {
+                        return None;
+                    }
+                    cur = unsafe { mmap_read_pod::<u64>(&self.data[cur as usize..][..8]) };
+                }
+                if cur == 0 {
+                    return None;
+                }
+                let node = cur as usize;
+                let len = unsafe { mmap_read_pod::<u32>(&self.data[node + 8..][..4]) } as u64;
+                (node as u64 + 16, node as u64 + 16 + len)
             }
         };
 

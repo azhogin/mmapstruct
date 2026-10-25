@@ -50,6 +50,20 @@ pub(crate) fn extract_vec_inner(ty: &Type) -> Option<Type> {
     None
 }
 
+pub(crate) fn extract_list_inner(ty: &Type) -> Option<Type> {
+    if let Type::Path(tp) = ty {
+        let seg = tp.path.segments.last()?;
+        if seg.ident == "List" {
+            if let PathArguments::AngleBracketed(args) = &seg.arguments {
+                if let Some(GenericArgument::Type(inner)) = args.args.first() {
+                    return Some(inner.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
 pub(crate) fn extract_option_inner(ty: &Type) -> Option<Type> {
     if let Type::Path(tp) = ty {
         let seg = tp.path.segments.last()?;

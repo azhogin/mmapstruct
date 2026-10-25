@@ -224,6 +224,7 @@ pub fn inline_value_text(ctx: &RuntimeSchemaCtx, val: &SchemaValue) -> String {
                     ArrayLayoutDefReader::FixedPod { .. } => "fixedpod",
                     ArrayLayoutDefReader::Indexed => "indexed",
                     ArrayLayoutDefReader::Fixed { .. } => "fixed",
+                    ArrayLayoutDefReader::List => "list",
                 };
                 let elem_ann = type_annotation(ctx.type_reader(**elem_type));
                 let mut s = format!("[{} {} (#{}{})]", len, layout_label, val.type_idx, elem_ann);

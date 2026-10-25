@@ -188,6 +188,7 @@ fn array_layout_to_json(layout: &ArrayLayout) -> serde_json::Value {
         }
         ArrayLayout::Indexed => serde_json::json!({"kind": "indexed"}),
         ArrayLayout::Fixed { stride } => serde_json::json!({"kind": "fixed", "stride": stride}),
+        ArrayLayout::List => serde_json::json!({"kind": "list"}),
     }
 }
 

@@ -191,6 +191,17 @@ pub(crate) fn generate_inline_dyn_reader_init_expr(
                 }
             }
         }
+        FieldCategory::DynamicList { inner } => {
+            quote! {
+                {
+                    let (s, e) = #range_calc;
+                    ::mmapstruct::list::ListReader::<#inner>::new(
+                        data,
+                        ::mmapstruct::traits::FileRange::new(s, e),
+                    )
+                }
+            }
+        }
         FieldCategory::DynamicOption { .. } | FieldCategory::DynamicCustom => {
             quote! {
                 {

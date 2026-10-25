@@ -243,6 +243,7 @@ fn array_json(
                 ArrayLayoutDefReader::FixedPod { .. } => "fixedpod",
                 ArrayLayoutDefReader::Indexed => "indexed",
                 ArrayLayoutDefReader::Fixed { .. } => "fixed",
+                ArrayLayoutDefReader::List => "list",
             };
             (tag, **elem_type, scalar)
         }
@@ -355,6 +356,7 @@ pub fn type_name(ctx: &RuntimeSchemaCtx<'_>, type_idx: u32) -> String {
                 }
                 ArrayLayoutDefReader::Indexed => format!("vec<{inner}>"),
                 ArrayLayoutDefReader::Fixed { .. } => format!("fixed<{inner}>"),
+                ArrayLayoutDefReader::List => format!("list<{inner}>"),
             }
         }
         TypeDefReader::Option { inner_type } => format!("Option<{}>", type_name(ctx, **inner_type)),

@@ -26,6 +26,9 @@ pub(crate) enum FieldCategory {
         elem_is_pod: bool,
         elem_fixed: bool,
     },
+    DynamicList {
+        inner: Type,
+    },
     DynamicVecByRef {
         inner: Type,
         dedup: bool,
@@ -88,6 +91,12 @@ pub(crate) fn classify_field(field: &syn::Field) -> FieldCategory {
             elem_is_pod,
             elem_fixed,
         };
+    }
+    if let Some(inner) = extract_list_inner(ty) {
+        if is_byref {
+            panic!("#[mmap(byref)] is not supported on List fields (List is already tail-stored)");
+        }
+        return FieldCategory::DynamicList { inner };
     }
     if let Some(inner) = extract_option_inner(ty) {
         return FieldCategory::DynamicOption { inner };

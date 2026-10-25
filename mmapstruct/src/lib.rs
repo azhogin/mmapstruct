@@ -37,6 +37,7 @@ pub mod file_reader;
 pub mod fixed_array;
 pub mod hash_map;
 pub mod indexed_array;
+pub mod list;
 pub mod option;
 pub mod patch;
 pub mod pod;
@@ -51,6 +52,7 @@ pub mod schema;
 
 pub use bytemuck;
 pub use file_reader::{BufReader, MmapReader};
+pub use list::{List, ListIter, ListReader};
 pub use mmapstruct_derive::MmapStruct;
 pub use patch::PatchSession;
 #[cfg(feature = "dyn")]

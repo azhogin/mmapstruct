@@ -108,8 +108,19 @@ pub struct FieldDef {
 /// Memory layout strategy for array elements.
 #[derive(MmapStruct, Debug, PartialEq)]
 pub enum ArrayLayoutDef {
-    Pod { stride: u64 },
-    FixedPod { stride: u64, count: u64 },
+    Pod {
+        stride: u64,
+    },
+    FixedPod {
+        stride: u64,
+        count: u64,
+    },
     Indexed,
-    Fixed { stride: u64 },
+    Fixed {
+        stride: u64,
+    },
+    /// Append-only list (`List<T>`): 24-byte `[head][tail][count]` block plus
+    /// linked nodes at absolute offsets. New variant appended last to keep
+    /// the discriminant values of older schema files stable.
+    List,
 }

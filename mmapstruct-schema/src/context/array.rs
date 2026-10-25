@@ -46,6 +46,15 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                         mmap_read_pod::<u64>(&self.data[arr_range.start..arr_range.start + 8])
                     } as u64)
                 }
+                ArrayLayoutDefReader::List => {
+                    if arr_range.len() < 24 {
+                        return 0;
+                    }
+
+                    (unsafe {
+                        mmap_read_pod::<u64>(&self.data[arr_range.start + 16..arr_range.start + 24])
+                    } as u64)
+                }
             }
         } else {
             0
@@ -113,6 +122,28 @@ impl<'a> super::RuntimeSchemaCtx<'a> {
                     let off = arr_range.start + 16 + index as usize * sz;
                     let limit = off + sz;
                     (off as u64, limit as u64)
+                }
+                ArrayLayoutDefReader::List => {
+                    // Walk the node chain from head (O(index)).
+                    let head = unsafe {
+                        mmap_read_pod::<u64>(&self.data[arr_range.start..arr_range.start + 8])
+                    };
+                    let mut cur = head;
+                    for _ in 0..index {
+                        if cur == 0 {
+                            return None;
+                        }
+                        cur = unsafe {
+                            mmap_read_pod::<u64>(&self.data[cur as usize..cur as usize + 8])
+                        };
+                    }
+                    if cur == 0 {
+                        return None;
+                    }
+                    let node = cur as usize;
+                    let len =
+                        (unsafe { mmap_read_pod::<u32>(&self.data[node + 8..node + 12]) }) as u64;
+                    (node as u64 + 16, node as u64 + 16 + len)
                 }
             };
             Some(SchemaValue {
